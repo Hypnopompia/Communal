@@ -224,44 +224,14 @@ export class Downloads extends EventEmitter<DownloadEvents> {
     return out;
   }
 
-  private async connect(src: Source, hash: string): Promise<PeerChannel> {
-    const { channel, token } = await this.o.broker.open(
-      src.hub,
-      src.device,
-      hash,
-      this.o.answerTimeoutMs,
-    );
-    await channel.send({ t: 'hello', token });
-    const reply = await channel.next(
-      (h) => h.t === 'hello.ok' || h.t === 'denied' || h.t === 'busy',
-      10_000,
-    );
-    if (reply.header.t !== 'hello.ok') {
-      channel.close();
-      throw new Error(
-        reply.header.t === 'busy'
-          ? 'source busy'
-          : `denied (${(reply.header as PeerHeader<'denied'>).reason})`,
-      );
-    }
-    return channel;
+  private connect(src: Source, hash: string): Promise<PeerChannel> {
+    return this.o.broker.session(src.hub, src.device, hash, {
+      answerTimeoutMs: this.o.answerTimeoutMs,
+    });
   }
 
-  private async manifest(
-    ch: PeerChannel,
-    hash: string,
-  ): Promise<{ size: number; chunkHashes: Uint8Array }> {
-    await ch.send({ t: 'manifest.get', hash });
-    const { header } = await ch.next((h) => h.t === 'manifest' && h.hash === hash, 15_000);
-    const m = header as PeerHeader<'manifest'>;
-    const n = Math.ceil(m.size / CHUNK_SIZE);
-    const root = await createBLAKE3();
-    root.init();
-    root.update(m.chunk_hashes);
-    if (m.chunk_hashes.length !== n * 32 || root.digest('hex') !== hash) {
-      throw new Error('manifest does not match the file hash');
-    }
-    return { size: m.size, chunkHashes: m.chunk_hashes };
+  private manifest(ch: PeerChannel, hash: string) {
+    return fetchManifest(ch, hash);
   }
 
   private async download(t: TransferRow, signal: AbortSignal): Promise<string> {
@@ -512,6 +482,24 @@ export class Downloads extends EventEmitter<DownloadEvents> {
       );
     });
   }
+}
+
+/** Asks for the manifest and checks that its chunk hashes hash to `hash` (HANDOFF §7). */
+export async function fetchManifest(
+  ch: PeerChannel,
+  hash: string,
+): Promise<{ size: number; chunkHashes: Uint8Array }> {
+  await ch.send({ t: 'manifest.get', hash });
+  const { header } = await ch.next((h) => h.t === 'manifest' && h.hash === hash, 15_000);
+  const m = header as PeerHeader<'manifest'>;
+  const n = Math.ceil(m.size / CHUNK_SIZE);
+  const root = await createBLAKE3();
+  root.init();
+  root.update(m.chunk_hashes);
+  if (m.chunk_hashes.length !== n * 32 || root.digest('hex') !== hash) {
+    throw new Error('manifest does not match the file hash');
+  }
+  return { size: m.size, chunkHashes: m.chunk_hashes };
 }
 
 /** [[start, end)] ranges from chunk indices. */

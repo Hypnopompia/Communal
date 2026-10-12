@@ -8,6 +8,15 @@ import type { IndexStore } from '../index/store.js';
 import type { PeerChannel } from '../peer/transport.js';
 import type { AccessOracle } from './access.js';
 import type { InboundPeer } from './broker.js';
+import type { MediaWorker } from '../media/worker.js';
+import { analysable } from '../media/analyze.js';
+
+/** First bytes of a text or code file a peer may peek at (HANDOFF §7). */
+export const PEEK_BYTES = 64 * 1024;
+/** Preview sessions are cheap but not free: cap them separately from downloads. */
+const MAX_PREVIEW_SESSIONS = 8;
+/** A preview session with no request for this long is closed. */
+const PREVIEW_IDLE_MS = 60_000;
 
 export interface UploadLimits {
   /** Simultaneous upload sessions (HANDOFF §7 default 3); extra requests get `busy`. */
@@ -27,6 +36,8 @@ export const DEFAULT_UPLOAD_LIMITS: UploadLimits = {
 /** Test-only fault injection. Never set in production code paths. */
 export interface UploaderTestHooks {
   corruptChunk?: (hash: string, index: number) => boolean;
+  /** Called for each `thumb.get` frame received, with how many hashes it asked for. */
+  thumbRequest?: (hashes: number) => void;
 }
 
 /** Simple token bucket shared by all uploads. */
@@ -59,6 +70,7 @@ class RateLimiter {
  */
 export class Uploader {
   private active = 0;
+  private previews = 0;
   private readonly limiter: RateLimiter;
   private readonly log: Logger;
 
@@ -67,6 +79,7 @@ export class Uploader {
       store: IndexStore;
       hubs: HubManager;
       access: AccessOracle;
+      media: MediaWorker;
       myDevice: string;
       limits: () => UploadLimits;
       testHooks?: UploaderTestHooks;
@@ -113,6 +126,8 @@ export class Uploader {
 
     const limits = this.o.limits();
     if (limits.lanOnly && !channel.isLan) return deny('lan_only');
+    if ((hello.header as PeerHeader<'hello'>).purpose === 'preview')
+      return this.servePreview({ hub, offer, channel });
     const hash = token.claims.hash;
     const logBase = {
       hub,
@@ -188,6 +203,138 @@ export class Uploader {
               : 'cancelled';
       this.o.store.logUpload({ ...logBase, path, bytes, status });
       this.log.info({ hub, peer: offer.from, bytes, status }, 'upload finished');
+    }
+  }
+
+  /**
+   * Thumbnails and peeks (HANDOFF §7 `thumb.get`, `peek`). The token only got the peer this far;
+   * every hash asked for is checked against this device's own rules for the brokering hub. A
+   * refused hash looks exactly like one with no thumbnail, so nothing is confirmed to exist.
+   */
+  private async servePreview({ hub, offer, channel }: InboundPeer): Promise<void> {
+    if (this.previews >= MAX_PREVIEW_SESSIONS) {
+      await channel.send({ t: 'busy', retry_after_s: 5 }).catch(() => {});
+      return channel.close();
+    }
+    this.previews++;
+    const user = offer.from_user;
+    const allowed = new Map<string, Awaited<ReturnType<typeof this.allowedCopy>>>();
+    const copyFor = async (hash: string) => {
+      if (!allowed.has(hash)) allowed.set(hash, await this.allowedCopy(hub, user, hash));
+      return allowed.get(hash);
+    };
+    const base = { hub, requester_user: user, requester_dev: offer.from };
+    let thumbBytes = 0;
+    let served = 0;
+    let refused = 0;
+    let folder: string | undefined;
+
+    const queue: AnyPeerHeader[] = [];
+    let wake: (() => void) | undefined;
+    const unsubscribe = channel.subscribe(({ header }) => {
+      if (header.t === 'thumb.get' || header.t === 'peek') {
+        queue.push(header);
+        wake?.();
+      }
+    });
+    channel.once('close', () => wake?.());
+    try {
+      await channel.send({ t: 'hello.ok' });
+      while (!channel.isClosed) {
+        const h = queue.shift();
+        if (!h) {
+          const idle = await new Promise<boolean>((r) => {
+            const t = setTimeout(() => r(true), PREVIEW_IDLE_MS);
+            wake = () => {
+              clearTimeout(t);
+              r(false);
+            };
+          });
+          wake = undefined;
+          if (idle) break;
+          continue;
+        }
+        if (h.t === 'thumb.get') {
+          this.o.testHooks?.thumbRequest?.(h.hashes.length);
+          for (const hash of new Set(h.hashes)) {
+            const c = await copyFor(hash);
+            const data =
+              c && analysable(c.kind, c.mime) ? await this.o.media.thumbnail(hash, h.size) : null;
+            if (!data) {
+              if (!c) refused++;
+              await channel.send({ t: 'thumb.none', hash });
+              continue;
+            }
+            await this.limiter.take(data.length);
+            await channel.send({ t: 'thumb', hash, mime: 'image/webp' }, data);
+            thumbBytes += data.length;
+            served++;
+            folder ??= `${c!.share}/${c!.rel}`.replace(/[^/]*$/, '');
+          }
+        } else if (h.t === 'peek') {
+          const c = await copyFor(h.hash);
+          const data = c && (c.kind === 'text' || c.kind === 'code') ? await this.head(c) : null;
+          if (!data) {
+            await channel.send({ t: 'peek.none', hash: h.hash });
+            continue;
+          }
+          await this.limiter.take(data.length);
+          await channel.send(
+            { t: 'peek.data', hash: h.hash, truncated: c!.size > PEEK_BYTES },
+            data,
+          );
+          this.o.store.logUpload({
+            ...base,
+            hash: h.hash,
+            path: `${c!.share}/${c!.rel}`,
+            bytes: data.length,
+            status: data.length >= c!.size ? 'completed' : 'partial',
+            kind: 'file',
+          });
+        }
+      }
+    } catch (err) {
+      this.log.debug({ hub, err: (err as Error).message }, 'preview session ended');
+    } finally {
+      unsubscribe();
+      this.previews--;
+      channel.close();
+      // One row per thumbnail batch (HANDOFF §7 upload log: "kind (file/thumbnail batch)").
+      if (served > 0 || refused > 0) {
+        this.o.store.logUpload({
+          ...base,
+          hash: '',
+          path: folder ?? '',
+          bytes: thumbBytes,
+          status: served > 0 ? 'completed' : 'denied',
+          kind: 'thumbnail',
+        });
+      }
+    }
+  }
+
+  /** A local copy of `hash` this requester may see through `hub`, or undefined. */
+  private async allowedCopy(hub: string, user: string, hash: string) {
+    for (const c of this.o.store.anyCopy(hash)) {
+      if (!c.hubs.includes(hub)) continue;
+      if (await this.o.access.allows(hub, user, `${c.share}/${c.rel}`).catch(() => false)) return c;
+    }
+    return undefined;
+  }
+
+  /** The first PEEK_BYTES of an unchanged local file, or null. */
+  private async head(c: { root: string; rel: string; size: number; mtime: number }) {
+    const abs = join(c.root, ...c.rel.split('/'));
+    const st = await stat(abs).catch(() => null);
+    if (!st || st.size !== c.size || Math.floor(st.mtimeMs) !== c.mtime) return null;
+    const fh = await open(abs, 'r').catch(() => null);
+    if (!fh) return null;
+    try {
+      const buf = Buffer.alloc(Math.min(PEEK_BYTES, c.size));
+      const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+      return buf.subarray(0, bytesRead);
+    } finally {
+      await fh.close();
     }
   }
 

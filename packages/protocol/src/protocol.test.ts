@@ -112,6 +112,11 @@ describe('peer frames', () => {
         chunk_hashes: new Uint8Array(64).fill(9),
       }),
       encodePeerFrame({ t: 'busy', retry_after_s: 5 }),
+      encodePeerFrame({ t: 'thumb.get', hashes: [hash, hash], size: 320 }),
+      encodePeerFrame({ t: 'thumb', hash, mime: 'image/webp' }, new Uint8Array([1, 2, 3])),
+      encodePeerFrame({ t: 'thumb.none', hash }),
+      encodePeerFrame({ t: 'peek.data', hash, truncated: true }, new Uint8Array(10)),
+      encodePeerFrame({ t: 'peek.none', hash }),
     ];
     const stream = new Uint8Array(frames.reduce((n, f) => n + f.length, 0));
     let off = 0;
@@ -124,7 +129,18 @@ describe('peer frames', () => {
     for (let i = 0; i < stream.length; i += 7919)
       out.push(...dec.push(stream.subarray(i, i + 7919)));
 
-    expect(out.map((f) => f.header.t)).toEqual(['get', 'chunk', 'manifest', 'busy']);
+    expect(out.map((f) => f.header.t)).toEqual([
+      'get',
+      'chunk',
+      'manifest',
+      'busy',
+      'thumb.get',
+      'thumb',
+      'thumb.none',
+      'peek.data',
+      'peek.none',
+    ]);
+    expect(Array.from(out[5]!.payload)).toEqual([1, 2, 3]);
     expect(out[0]!.header).toEqual({ t: 'get', hash, ranges: [[0, 3]] });
     expect(Buffer.compare(out[1]!.payload, payload)).toBe(0);
     const m = out[2]!.header;

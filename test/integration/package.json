@@ -12,5 +12,8 @@
     "@communal/hub": "workspace:*",
     "@communal/protocol": "workspace:*",
     "pino": "^10.4.0"
+  },
+  "devDependencies": {
+    "sharp": "^0.35.5"
   }
 }

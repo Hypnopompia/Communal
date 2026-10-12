@@ -12,7 +12,7 @@ FROM node:24-bookworm-slim
 # Dev-only conveniences (COMMUNAL_DEV_TLS, COMMUNAL_AUTO_INIT) work only when built with `dev`.
 ARG COMMUNAL_BUILD=release
 ENV COMMUNAL_BUILD=$COMMUNAL_BUILD
-# ffmpeg and sharp's native deps are added with the thumbnail pipeline (M6).
+# ffmpeg (ffmpeg-static), sharp and @napi-rs/canvas ship as prebuilt binaries in node_modules (M6).
 RUN apt-get update && apt-get install -y --no-install-recommends tini \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app

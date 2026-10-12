@@ -8,6 +8,28 @@ import { CoreError, type CommunalCore } from '../core.js';
 import { HubError } from '../hub-client.js';
 import { PeopleError } from '../people.js';
 import { explain } from '../transfer/diagnosis.js';
+import { iconFor } from '../media/icons.js';
+import type { Kind as KindT } from '../index/detect.js';
+
+/** A handler's non-JSON answer: raw bytes or a byte stream (thumbnails, file streams). */
+export class RawReply {
+  constructor(
+    readonly status: number,
+    readonly headers: Record<string, string>,
+    readonly body: Buffer | AsyncIterable<Buffer>,
+  ) {}
+}
+
+const withIcon = <T extends { mime: string; kind: KindT }>(e: T, name: string) => ({
+  ...e,
+  icon: iconFor(e.mime, name, e.kind),
+});
+const baseName = (p: string) => p.slice(p.replace(/\/$/, '').lastIndexOf('/') + 1);
+const ThumbSizeQ = z.coerce
+  .number()
+  .pipe(z.union([z.literal(320), z.literal(1600)]))
+  .default(320);
+const HashParam = z.string().regex(/^[0-9a-f]{64}$/);
 
 /**
  * The core's local API (HANDOFF §3): HTTP+JSON for the CLI and the desktop renderer.
@@ -224,13 +246,79 @@ export class LocalApi {
         })
         .parse(Object.fromEntries(q));
       const { cursors, ...query } = parsed;
-      return this.core.search(query, cursors);
+      const r = await this.core.search(query, cursors);
+      return { ...r, hits: r.hits.map((h) => withIcon(h, h.name)) };
     });
     route('GET', '/v1/browse', async (_req, url) => {
       const q = z
         .object({ hub: z.string(), device: z.string(), path: z.string().default('') })
         .parse(Object.fromEntries(url.searchParams));
-      return this.core.browse(q.hub, q.device, q.path);
+      const r = await this.core.browse(q.hub, q.device, q.path);
+      return { ...r, files: r.files.map((f) => withIcon(f, baseName(f.path))) };
+    });
+
+    // ── previews (M6) ──
+    // Fetch a batch (e.g. a whole folder) into the cache; then GET each one as image/webp.
+    route('POST', '/v1/thumbs', async (_req, _url, body) => {
+      const b = z
+        .object({
+          hub: z.string(),
+          device: z.string(),
+          hashes: z.array(HashParam).min(1).max(5000),
+          size: ThumbSizeQ,
+        })
+        .parse(body);
+      return { thumbs: await this.core.fetchThumbnails(b.hub, b.device, b.hashes, b.size) };
+    });
+    route('GET', '/v1/thumbs/:hash', async (req, url) => {
+      const hash = HashParam.parse(param(req, url, 1));
+      const size = ThumbSizeQ.parse(url.searchParams.get('size') ?? undefined);
+      const data = await this.core.thumbnail(hash, size);
+      if (!data) throw new CoreError('not_found', 'no thumbnail');
+      // Content-addressed: the bytes for a hash never change.
+      return new RawReply(
+        200,
+        { 'content-type': 'image/webp', 'cache-control': 'private, max-age=31536000, immutable' },
+        data,
+      );
+    });
+    route('GET', '/v1/peek', async (_req, url) => {
+      const q = z
+        .object({ hub: z.string(), device: z.string(), hash: HashParam })
+        .parse(Object.fromEntries(url.searchParams));
+      const r = await this.core.peek(q.hub, q.device, q.hash);
+      if (!r) throw new CoreError('not_found', 'nothing to show');
+      return { text: r.data.toString('utf8'), truncated: r.truncated };
+    });
+    // Plays a file from its owner without downloading it (HTTP ranges, verified chunks).
+    route('GET', '/v1/stream/:hash', async (req, url) => {
+      const hash = HashParam.parse(param(req, url, 1));
+      const type = url.searchParams.get('type');
+      const s = await this.core.streams.get(hash).catch((e: Error) => {
+        throw new CoreError('unavailable', e.message);
+      });
+      const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '');
+      let start = 0;
+      let end = s.size - 1;
+      if (range && (range[1] || range[2])) {
+        if (range[1]) {
+          start = Number(range[1]);
+          if (range[2]) end = Math.min(end, Number(range[2]));
+        } else start = Math.max(0, s.size - Number(range[2]));
+        if (start > end || start >= s.size)
+          return new RawReply(416, { 'content-range': `bytes */${s.size}` }, Buffer.alloc(0));
+      }
+      return new RawReply(
+        range ? 206 : 200,
+        {
+          'content-type':
+            type && /^[\w.+-]+\/[\w.+-]+$/.test(type) ? type : 'application/octet-stream',
+          'accept-ranges': 'bytes',
+          'content-length': String(end - start + 1),
+          ...(range ? { 'content-range': `bytes ${start}-${end}/${s.size}` } : {}),
+        },
+        s.read(start, end),
+      );
     });
   }
 
@@ -250,6 +338,26 @@ export class LocalApi {
 
   async close() {
     await new Promise<void>((r) => (this.server ? this.server.close(() => r()) : r()));
+  }
+
+  private async sendRaw(res: ServerResponse, r: RawReply) {
+    res.writeHead(r.status, r.headers);
+    if (Buffer.isBuffer(r.body)) return void res.end(r.body);
+    try {
+      for await (const chunk of r.body) {
+        if (res.destroyed) break;
+        if (!res.write(chunk))
+          await new Promise((ok) => {
+            res.once('drain', ok);
+            res.once('close', ok);
+          });
+      }
+      res.end();
+    } catch (err) {
+      // Headers are out: all we can do is cut the response short.
+      this.core.log.info({ err: (err as Error).message }, 'stream ended early');
+      res.destroy();
+    }
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse, token?: Buffer) {
@@ -277,7 +385,9 @@ export class LocalApi {
         }
         body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
       }
-      send(200, await route.handler(req, url, body));
+      const out = await route.handler(req, url, body);
+      if (out instanceof RawReply) return await this.sendRaw(res, out);
+      send(200, out);
     } catch (err) {
       if (err instanceof z.ZodError)
         return send(400, { error: 'bad_request', message: z.prettifyError(err) });

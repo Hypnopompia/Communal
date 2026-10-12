@@ -15,8 +15,8 @@ export function toEntry(f: FileRow): Entry {
     mtime: Math.floor(f.mtime / 1000),
     mime: f.mime,
     kind: f.kind,
-    meta: {},
-    thumb: false,
+    meta: f.meta ? (JSON.parse(f.meta) as Entry['meta']) : {},
+    thumb: f.thumb === 1,
     hash: f.hash,
   };
 }

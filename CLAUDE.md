@@ -26,6 +26,7 @@ These came from the owner during development. Don't revert them to the spec's wo
 - Inside a dev container: `docker compose -f docker/compose.dev.yml exec node-a communal <cmd>` (`share add /shares/alice --name Alice`, `search <words>`, `status`), or `communal-spike peer …` for the transport benchmark between containers.
 - Running an app from source: `pnpm --filter @communal/hub dev` (a dev build with self-signed TLS, data in `apps/hub/hub-data`), `pnpm --filter @communal/cli dev -- status`.
 - People and access (per hub, `--hub` needed when on several): `communal people search|request|accept|remove|verify`, `communal group set|list|delete`, `communal acl set <path> me|hub|users:<ids>|groups:<ids>`.
+- Previews: `communal browse` (icon, metadata, ▣ = has thumbnail), `communal thumbs <hub> <device> <folder>` (batch into the cache), `communal peek <hub> <device> <hash>`.
 - Transfers: `communal get <hash>`, `communal transfers` (shows the diagnosis and tips when a source can't be reached), `communal cancel <id>`, `communal log` (who downloaded what from this device).
 - Network: `communal netcheck` (NAT type per hub, UPnP/NAT-PMP mapping, IPv6, CGNAT). The daemon maps its UDP port on the router unless `COMMUNAL_UPNP=false`.
 - Hub admin: `communal-hub users | approve <user_id> | ban <user_id> [--reason] | unban <user_id> | set join_mode open|approval`. These commands work directly on the SQLite database, so they run alongside a live hub.
@@ -64,6 +65,11 @@ How the pieces connect:
   - Core `peer/transport.ts` does hole punching plus udx and Noise, with one UDP socket per device. `transfer/broker.ts` handles hub brokering and peer identity checks in both directions. `transfer/uploader.ts` does the `hello` checks, its own access re-check via `AccessOracle`, limits and the upload log. `transfer/downloader.ts` does multi-source, verification and `.part`/`.partmap` resume.
   - Read peer frames with `PeerChannel.next()` / `subscribe()`, never a bare `on('frame')`, or frames that arrive early are lost.
 - **NAT lab:** `docker/nat/test.sh` runs a transfer between two clients behind separate NAT routers (`docker/compose.nat.yml`), plus the M5 failure scenarios.
+- **Media** (ADR 0012):
+  - Core `media/worker.ts` analyses hashed files in the background, only while nothing waits to be hashed. It records `files.meta`, `files.thumb` and `media_at`, and writes 320 px WebP thumbnails by hash into `<data>/thumbs`.
+  - `analyze.ts` covers sharp/exifr, ffmpeg (`ffmpeg-static`, no ffprobe), music-metadata and pdf.js with `@napi-rs/canvas`.
+  - Peer `preview` sessions (`hello.purpose`) serve `thumb.get` and `peek`, and **the uploader checks every hash**. The viewer side is `media/previews.ts` (batched fetch, `ThumbCache` LRU) and `transfer/stream.ts` (ranged, verified streaming).
+  - Real media fixtures for tests come from `@communal/core/testing` (`mixedFolder`, `png`, `makePdf`).
 - **Diagnostics** (ADR 0011):
   - Core `peer/netcheck.ts` probes both hub probe ports from the peer socket, classifies the NAT, maps the port with UPnP/NAT-PMP, and sends `network.profile` to each hub.
   - On `no_path` or `handshake_failed`, both sides send `connect.failed` with their observations. The downloader's report is a request, and the hub answers it with the diagnosis from `diagnose()` in `apps/hub/src/diagnosis.ts`, a pure function covering the §8 table.

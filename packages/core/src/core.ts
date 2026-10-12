@@ -19,6 +19,12 @@ import {
   type UploaderTestHooks,
 } from './transfer/uploader.js';
 import { Downloads, type DownloadOptions } from './transfer/downloader.js';
+import { Streams } from './transfer/stream.js';
+import { MediaWorker, type MediaOptions } from './media/worker.js';
+import { ThumbCache, ThumbStore } from './media/thumbs.js';
+import { Previews } from './media/previews.js';
+import { PEEK_BYTES } from './transfer/uploader.js';
+import type { ThumbSize } from './media/analyze.js';
 import { IndexSync } from './index/sync.js';
 import { searchAll, type MergedSearch } from './search.js';
 import type { HubClientOptions } from './hub-client.js';
@@ -44,6 +50,8 @@ export interface CoreOptions {
     DownloadOptions,
     'maxPeers' | 'window' | 'chunkTimeoutMs' | 'retryMs' | 'answerTimeoutMs'
   >;
+  /** Metadata and thumbnails of our own files (M6); `thumbCacheBytes` caps the viewer cache. */
+  media?: Omit<MediaOptions, 'log'> & { thumbCacheBytes?: number };
   /** Fault injection for tests only. */
   testHooks?: UploaderTestHooks;
   log?: Logger;
@@ -76,6 +84,10 @@ export class CommunalCore {
   readonly broker: PeerBroker;
   readonly uploader: Uploader;
   readonly downloads: Downloads;
+  readonly media: MediaWorker;
+  readonly thumbCache: ThumbCache;
+  readonly previews: Previews;
+  readonly streams: Streams;
   uploadLimits: UploadLimits;
   readonly log: Logger;
   private readonly hubsFile: string;
@@ -94,7 +106,15 @@ export class CommunalCore {
     });
     this.indexer = new Indexer(this.store, { ...o.indexer, log: this.log });
     this.sync = new IndexSync(this.store, this.hubs, this.log);
-    this.indexer.on('changed', () => this.sync.pushAll());
+    this.media = new MediaWorker(this.store, new ThumbStore(join(o.dataDir, 'thumbs')), {
+      ...o.media,
+      log: this.log,
+    });
+    this.indexer.on('changed', () => {
+      this.sync.pushAll();
+      this.media.kick();
+    });
+    this.media.on('changed', () => this.sync.pushAll());
     this.people = new People(this.hubs, this.store);
     // Each hub gets this device's full rule set for that hub on every sign-in (ADR 0009).
     this.hubs.on('ready', ({ hub }) => void this.pushRules(hub));
@@ -115,6 +135,7 @@ export class CommunalCore {
       store: this.store,
       hubs: this.hubs,
       access: new AccessOracle(this.hubs, this.store),
+      media: this.media,
       myDevice: this.deviceId,
       limits: () => this.uploadLimits,
       testHooks: o.testHooks,
@@ -130,6 +151,25 @@ export class CommunalCore {
       downloadsDir: o.downloadsDir ?? join(o.dataDir, 'downloads'),
       log: this.log,
     });
+    this.thumbCache = new ThumbCache(
+      join(o.dataDir, 'thumb-cache'),
+      this.store,
+      o.media?.thumbCacheBytes ?? 256 * 1024 * 1024,
+    );
+    const answerTimeoutMs = o.downloads?.answerTimeoutMs;
+    this.previews = new Previews({
+      broker: this.broker,
+      cache: this.thumbCache,
+      ...(answerTimeoutMs ? { answerTimeoutMs } : {}),
+      log: this.log,
+    });
+    this.streams = new Streams({
+      hubs: this.hubs,
+      broker: this.broker,
+      myDevice: this.deviceId,
+      ...(answerTimeoutMs ? { answerTimeoutMs } : {}),
+      log: this.log,
+    });
   }
 
   get deviceId(): string {
@@ -142,11 +182,14 @@ export class CommunalCore {
     this.network.start();
     this.hubs.start();
     await this.indexer.start();
+    this.media.start();
     this.downloads.start();
   }
 
   async stop() {
     await this.downloads.stop();
+    this.streams.closeAll();
+    this.media.stop();
     await this.indexer.stop();
     await this.hubs.stop();
     await this.network.stop();
@@ -336,6 +379,56 @@ export class CommunalCore {
     return this.downloads.add({ hash, name, ...(opts.destDir ? { destDir: opts.destDir } : {}) });
   }
 
+  // ── previews (M6) ─────────────────────────────────────────────────────────
+
+  /**
+   * Thumbnails for files on `device` (e.g. a folder being browsed), fetched in one batch and
+   * cached. Our own files' thumbnails come straight from our own store.
+   */
+  async fetchThumbnails(
+    hub: string,
+    device: string,
+    hashes: string[],
+    size: ThumbSize,
+  ): Promise<Record<string, boolean>> {
+    if (device === this.deviceId) {
+      const out: Record<string, boolean> = {};
+      for (const h of hashes)
+        out[h] = (await this.media.thumbnail(h, size).catch(() => null)) !== null;
+      return out;
+    }
+    if (!this.hubs.get(hub)?.ready) throw new CoreError('unavailable', 'hub is offline');
+    return this.previews.fetch(hub, device, hashes, size);
+  }
+
+  /** A cached (or our own) thumbnail's bytes, or null. */
+  async thumbnail(hash: string, size: ThumbSize): Promise<Buffer | null> {
+    return (
+      (await this.thumbCache.get(hash, size)) ??
+      (await this.media.thumbnail(hash, size).catch(() => null))
+    );
+  }
+
+  /** The start of a text or code file (64 KB), ours or on another device. */
+  async peek(hub: string, device: string, hash: string) {
+    if (device === this.deviceId) {
+      const c = this.store.anyCopy(hash).find((x) => x.kind === 'text' || x.kind === 'code');
+      if (!c) return null;
+      const { open } = await import('node:fs/promises');
+      const fh = await open(join(c.root, ...c.rel.split('/')), 'r').catch(() => null);
+      if (!fh) return null;
+      try {
+        const buf = Buffer.alloc(Math.min(PEEK_BYTES, c.size));
+        const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+        return { data: buf.subarray(0, bytesRead), truncated: c.size > PEEK_BYTES };
+      } finally {
+        await fh.close();
+      }
+    }
+    if (!this.hubs.get(hub)?.ready) throw new CoreError('unavailable', 'hub is offline');
+    return this.previews.peek(hub, device, hash);
+  }
+
   // ── search & browse ───────────────────────────────────────────────────────
 
   search(
@@ -365,7 +458,7 @@ export class CommunalCore {
         user_id: h.state.userId ?? null,
         network: this.network.profile(h.id) ?? null,
       })),
-      index: this.store.counts(),
+      index: { ...this.store.counts(), ...this.store.mediaCounts() },
       peer_port: this.transport.port,
       uploads: { active: this.uploader.activeUploads, limits: this.uploadLimits },
       shares: this.store.shares().map((s) => ({ name: s.name, hubs: s.hubs })),

@@ -20,11 +20,12 @@
 
 ### Peer
 
-| Type              | Why                                                                                  |
-| ----------------- | ------------------------------------------------------------------------------------ |
-| `hello.ok`        | Lets the downloader know the uploader accepted `hello`.                              |
-| `peek.data`       | Reply to `peek`.                                                                     |
-| `denied {reason}` | Uploader refusal with a machine-readable reason (bad token, revoked, `lan_only`, …). |
+| Type              | Why                                                                                          |
+| ----------------- | -------------------------------------------------------------------------------------------- |
+| `hello.ok`        | Lets the downloader know the uploader accepted `hello`.                                      |
+| `peek.data`       | Reply to `peek`.                                                                             |
+| `denied {reason}` | Uploader refusal with a machine-readable reason (bad token, revoked, `lan_only`, …).         |
+| `peek.none` (M6)  | Nothing to peek at: not text, gone, or not allowed. Indistinguishable on purpose (ADR 0012). |
 
 ## Changed or clarified bodies
 
@@ -37,6 +38,7 @@
 - **`connect.offer`** carries `from_user`, `from_root_pubkey` and `from_chain`, so the uploader can verify the downloader's cert chain (§7 `hello` checks) without another hub round trip.
 - **`connect.request` / `connect.offer` / `connect.answer`** carry udx `stream_id`s and both sides' candidates (M4). The forwarded `connect.answer` adds the owner's identity (`to_user`, `to_root_pubkey`, `to_chain`) and the transfer token the downloader presents in `hello` (ADR 0010).
 - **Peer `get` ranges** are chunk-index ranges `[start, end)`.
+- **`hello.purpose`** (M6) is `file` (the default) or `preview`. A preview session serves `thumb.get` and `peek` for any hash, and the uploader checks each one (ADR 0012).
 - **`connect.failed`** c→h carries raw `observations`. The hub combines both sides' observations into the single diagnosis (`cause`, `easier_fix`, `you`, `them`). `easier_fix` also allows `either` and `none`.
   - Since M5, the downloader's c→h `connect.failed` is a request, and the reply is the h→c `connect.failed` with the diagnosis. The owner's report is answered with `ok` (ADR 0011).
 - **`NatType`** adds `none` (no NAT: the hub saw one of our own addresses) and `blocked` (no reply from either probe port) to `endpoint_independent | symmetric | unknown` (M5, ADR 0011).

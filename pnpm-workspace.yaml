@@ -6,4 +6,10 @@ packages:
 allowBuilds:
   better-sqlite3: true
   esbuild: true
+  ffmpeg-static: true
+  sharp: true
+  '@napi-rs/canvas': true
   msgpackr-extract: false
+minimumReleaseAgeExclude:
+  - music-metadata@12.2.0
+  - strtok3@10.4.1

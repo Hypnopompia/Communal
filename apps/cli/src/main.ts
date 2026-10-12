@@ -347,22 +347,88 @@ program
 
 program
   .command('browse <hub> <device_id> [path]')
-  .description('list a folder on a device you can see (your own devices, for now)')
+  .description('list a folder on a device you can see: icon, size, metadata, hash')
   .action((hubId: string, device: string, path = '') =>
     viaDaemon(async (c) => {
       const p = new URLSearchParams({ hub: hubId, device, path });
       const r = await c.get<{
         online: boolean;
         dirs: { name: string }[];
-        files: { path: string; size: number; hash: string | null }[];
+        files: {
+          path: string;
+          size: number;
+          hash: string | null;
+          icon: string;
+          thumb: boolean;
+          meta: Record<string, string | number>;
+        }[];
       }>(`/v1/browse?${p}`);
-      for (const d of r.dirs) console.log(`${d.name}/`);
+      for (const d of r.dirs) console.log(`[folder]        ${d.name}/`);
       for (const f of r.files) {
+        const name = f.path.slice(f.path.lastIndexOf('/') + 1);
+        const meta = metaLine(f.meta);
         console.log(
-          `${f.path.slice(f.path.lastIndexOf('/') + 1)}  ${humanSize(f.size)}${f.hash ? '' : '  (hashing…)'}`,
+          `[${f.icon}]`.padEnd(16) +
+            `${name}  ${humanSize(f.size)}${meta ? `  ${meta}` : ''}${f.thumb ? '  ▣' : ''}` +
+            (f.hash ? `  ${f.hash.slice(0, 12)}` : '  (hashing…)'),
         );
       }
       console.log(`device ${r.online ? 'online' : 'offline'}`);
+    }),
+  );
+
+/** The interesting metadata of a file on one line (HANDOFF §9 fields). */
+function metaLine(m: Record<string, string | number>): string {
+  const parts: string[] = [];
+  if (m.width && m.height) parts.push(`${m.width}×${m.height}`);
+  if (typeof m.duration === 'number') {
+    const s = Math.round(m.duration);
+    parts.push(`${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
+  }
+  if (m.codec) parts.push(String(m.codec));
+  if (m.artist) parts.push([m.artist, m.title].filter(Boolean).join(' – '));
+  else if (m.title) parts.push(`“${m.title}”`);
+  if (m.album) parts.push(`(${m.album})`);
+  if (m.pages) parts.push(`${m.pages} pages`);
+  if (typeof m.taken_at === 'number')
+    parts.push(new Date(m.taken_at * 1000).toISOString().slice(0, 10));
+  return parts.join(' ');
+}
+
+program
+  .command('peek <hub> <device_id> <hash>')
+  .description('show the start (64 KB) of a text or code file on another device')
+  .action((hubId: string, device: string, hash: string) =>
+    viaDaemon(async (c) => {
+      const r = await c.get<{ text: string; truncated: boolean }>(
+        `/v1/peek?${new URLSearchParams({ hub: hubId, device, hash })}`,
+      );
+      process.stdout.write(r.text);
+      if (r.truncated) console.log('\n… (first 64 KB only)');
+    }),
+  );
+
+program
+  .command('thumbs <hub> <device_id> <path>')
+  .description("fetch a folder's thumbnails into the local cache in one request")
+  .option('--size <px>', '320 or 1600', '320')
+  .action((hubId: string, device: string, path: string, opts: { size: string }) =>
+    viaDaemon(async (c) => {
+      const p = new URLSearchParams({ hub: hubId, device, path });
+      const r = await c.get<{ files: { hash: string | null; thumb: boolean }[] }>(
+        `/v1/browse?${p}`,
+      );
+      const hashes = r.files.filter((f) => f.thumb && f.hash).map((f) => f.hash!);
+      if (hashes.length === 0) return console.log('no thumbnails in that folder');
+      const t0 = Date.now();
+      const { thumbs } = await c.post<{ thumbs: Record<string, boolean> }>('/v1/thumbs', {
+        hub: hubId,
+        device,
+        hashes,
+        size: Number(opts.size),
+      });
+      const ok = Object.values(thumbs).filter(Boolean).length;
+      console.log(`${ok}/${hashes.length} thumbnails cached in ${Date.now() - t0} ms`);
     }),
   );
 

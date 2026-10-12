@@ -139,6 +139,40 @@ export class PeerBroker {
     }
   }
 
+  /**
+   * `open`, then `hello` with the token, and the uploader's verdict. `file` sessions fetch the
+   * token's file; `preview` sessions ask for thumbnails and peeks (M6). Rejects when the
+   * uploader is busy or refuses (with `denied (<reason>)`).
+   */
+  async session(
+    hub: string,
+    target: string,
+    hash: string,
+    opts: { purpose?: 'file' | 'preview'; answerTimeoutMs?: number } = {},
+  ): Promise<PeerChannel> {
+    const { channel, token } = await this.open(hub, target, hash, opts.answerTimeoutMs);
+    await channel.send({
+      t: 'hello',
+      token,
+      ...(opts.purpose === 'preview' ? { purpose: 'preview' as const } : {}),
+    });
+    const reply = await channel
+      .next((h) => h.t === 'hello.ok' || h.t === 'denied' || h.t === 'busy', 10_000)
+      .catch((err: Error) => {
+        channel.close();
+        throw err;
+      });
+    if (reply.header.t !== 'hello.ok') {
+      channel.close();
+      throw new Error(
+        reply.header.t === 'busy'
+          ? 'source busy'
+          : `denied (${reply.header.t === 'denied' ? reply.header.reason : ''})`,
+      );
+    }
+    return channel;
+  }
+
   private async onOffer(hub: string, offer: Offer) {
     const hubKey = this.hubs.find(hub)?.state.hubPubkey;
     const client = this.hubs.get(hub);

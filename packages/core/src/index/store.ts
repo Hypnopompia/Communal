@@ -26,7 +26,14 @@ export interface FileRow {
   mime: string;
   kind: Kind;
   hash: string | null;
+  /** EntryMeta as JSON, once the media worker has looked at the file (M6). */
+  meta?: string | null;
+  /** 1 when a 320 px thumbnail exists for this file's hash. */
+  thumb?: number;
 }
+
+/** A file the media worker should analyse: hashed, of a previewable kind, not done yet. */
+export type MediaTodo = FileRow & { hash: string; root: string };
 
 export interface TransferRow {
   id: string;
@@ -153,6 +160,24 @@ const MIGRATIONS = [
   -- Why a download couldn't connect (HANDOFF §8 diagnosis, JSON), kept until it completes.
   ALTER TABLE transfers ADD COLUMN diagnosis TEXT;
   `,
+  `
+  -- M6: metadata and thumbnails, filled by the media worker after hashing (HANDOFF §9).
+  ALTER TABLE files ADD COLUMN meta TEXT;
+  ALTER TABLE files ADD COLUMN thumb INTEGER NOT NULL DEFAULT 0;
+  -- When the media worker last analysed this content (NULL: still to do).
+  ALTER TABLE files ADD COLUMN media_at INTEGER;
+  CREATE INDEX files_media_todo ON files (share, rel) WHERE hash IS NOT NULL AND media_at IS NULL;
+
+  -- Thumbnails fetched from peers, cached by hash (HANDOFF §9: LRU, size-capped).
+  CREATE TABLE thumb_cache (
+    hash    TEXT NOT NULL,
+    size    INTEGER NOT NULL,
+    bytes   INTEGER NOT NULL,
+    used_at INTEGER NOT NULL,
+    PRIMARY KEY (hash, size)
+  );
+  CREATE INDEX thumb_cache_lru ON thumb_cache (used_at);
+  `,
 ];
 
 const now = () => Math.floor(Date.now() / 1000);
@@ -248,7 +273,10 @@ export class IndexStore {
          ON CONFLICT (share, rel) DO UPDATE SET
            size = excluded.size, mtime = excluded.mtime, mime = excluded.mime, kind = excluded.kind,
            hash = CASE WHEN files.size = excluded.size AND files.mtime = excluded.mtime THEN files.hash END,
-           chunk_hashes = CASE WHEN files.size = excluded.size AND files.mtime = excluded.mtime THEN files.chunk_hashes END`,
+           chunk_hashes = CASE WHEN files.size = excluded.size AND files.mtime = excluded.mtime THEN files.chunk_hashes END,
+           meta = CASE WHEN files.size = excluded.size AND files.mtime = excluded.mtime THEN files.meta END,
+           thumb = CASE WHEN files.size = excluded.size AND files.mtime = excluded.mtime THEN files.thumb ELSE 0 END,
+           media_at = CASE WHEN files.size = excluded.size AND files.mtime = excluded.mtime THEN files.media_at END`,
       )
       .run(f);
     this.logChange(f.share, f.rel, 'upsert');
@@ -301,7 +329,7 @@ export class IndexStore {
   file(share: string, rel: string): FileRow | undefined {
     return this.raw
       .prepare(
-        'SELECT share, rel, size, mtime, mime, kind, hash FROM files WHERE share = ? AND rel = ?',
+        'SELECT share, rel, size, mtime, mime, kind, hash, meta, thumb FROM files WHERE share = ? AND rel = ?',
       )
       .get(share, rel) as FileRow | undefined;
   }
@@ -326,7 +354,7 @@ export class IndexStore {
   ): FileRow[] {
     if (shares.length === 0) return [];
     const inList = shares.map(() => '?').join(',');
-    const cols = 'share, rel, size, mtime, mime, kind, hash';
+    const cols = 'share, rel, size, mtime, mime, kind, hash, meta, thumb';
     if (!after) {
       return this.raw
         .prepare(`SELECT ${cols} FROM files WHERE share IN (${inList}) ORDER BY share, rel LIMIT ?`)
@@ -337,6 +365,105 @@ export class IndexStore {
         `SELECT ${cols} FROM files WHERE share IN (${inList}) AND (share, rel) > (?, ?) ORDER BY share, rel LIMIT ?`,
       )
       .all(...shares, after.share, after.rel, limit) as FileRow[];
+  }
+
+  // ── media (M6) ────────────────────────────────────────────────────────────
+
+  /** Hashed files the media worker hasn't analysed yet (any kind; it skips what it can't use). */
+  nextMedia(limit: number): MediaTodo[] {
+    return this.raw
+      .prepare(
+        `SELECT f.share, f.rel, f.size, f.mtime, f.mime, f.kind, f.hash, s.root FROM files f
+         JOIN shares s ON s.name = f.share WHERE f.hash IS NOT NULL AND f.media_at IS NULL LIMIT ?`,
+      )
+      .all(limit) as MediaTodo[];
+  }
+
+  /**
+   * Records what the media worker found, if the file is still the content it analysed. Logs a
+   * change (so hubs get the metadata) only when something visible changed.
+   */
+  setMedia(f: MediaTodo, meta: object, thumb: boolean): boolean {
+    const json = JSON.stringify(meta);
+    const prev = this.raw
+      .prepare('SELECT meta, thumb FROM files WHERE share = ? AND rel = ? AND hash = ?')
+      .get(f.share, f.rel, f.hash) as { meta: string | null; thumb: number } | undefined;
+    if (!prev) return false;
+    this.raw
+      .prepare(
+        'UPDATE files SET meta = ?, thumb = ?, media_at = ? WHERE share = ? AND rel = ? AND hash = ?',
+      )
+      .run(json, thumb ? 1 : 0, now(), f.share, f.rel, f.hash);
+    const visible = (prev.meta ?? '{}') !== json || prev.thumb !== (thumb ? 1 : 0);
+    if (visible) this.logChange(f.share, f.rel, 'upsert');
+    return visible;
+  }
+
+  /** How far the media worker has got (for `status`). */
+  mediaCounts(): { analysed: number; pending: number; thumbs: number } {
+    return this.raw
+      .prepare(
+        `SELECT count(media_at) AS analysed, count(hash) - count(media_at) AS pending,
+                coalesce(sum(thumb), 0) AS thumbs FROM files`,
+      )
+      .get() as { analysed: number; pending: number; thumbs: number };
+  }
+
+  /** Every content hash still present in some share (thumbnail garbage collection). */
+  liveHashes(): Set<string> {
+    return new Set(
+      this.raw
+        .prepare('SELECT DISTINCT hash FROM files WHERE hash IS NOT NULL')
+        .pluck()
+        .all() as string[],
+    );
+  }
+
+  /** Every local copy of `hash`, with the hubs its share is published to. */
+  anyCopy(hash: string): (FileRow & { root: string; hubs: string[] })[] {
+    return (
+      this.raw
+        .prepare(
+          `SELECT f.share, f.rel, f.size, f.mtime, f.mime, f.kind, f.hash, f.thumb, s.root, s.hubs
+           FROM files f JOIN shares s ON s.name = f.share WHERE f.hash = ?`,
+        )
+        .all(hash) as (FileRow & { root: string; hubs: string })[]
+    ).map((r) => ({ ...r, hubs: JSON.parse(r.hubs) as string[] }));
+  }
+
+  // ── viewer thumbnail cache ────────────────────────────────────────────────
+
+  cacheTouch(hash: string, size: number, bytes: number) {
+    this.raw
+      .prepare(
+        `INSERT INTO thumb_cache (hash, size, bytes, used_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT (hash, size) DO UPDATE SET bytes = excluded.bytes, used_at = excluded.used_at`,
+      )
+      .run(hash, size, bytes, Date.now());
+  }
+
+  cacheHas(hash: string, size: number): boolean {
+    return !!this.raw
+      .prepare('SELECT 1 FROM thumb_cache WHERE hash = ? AND size = ?')
+      .get(hash, size);
+  }
+
+  cacheTotal(): number {
+    return this.raw
+      .prepare('SELECT coalesce(sum(bytes), 0) FROM thumb_cache')
+      .pluck()
+      .get() as number;
+  }
+
+  /** Least recently used entries first, for eviction. */
+  cacheOldest(limit: number): { hash: string; size: number; bytes: number }[] {
+    return this.raw
+      .prepare('SELECT hash, size, bytes FROM thumb_cache ORDER BY used_at LIMIT ?')
+      .all(limit) as { hash: string; size: number; bytes: number }[];
+  }
+
+  cacheDrop(hash: string, size: number) {
+    this.raw.prepare('DELETE FROM thumb_cache WHERE hash = ? AND size = ?').run(hash, size);
   }
 
   // ── content by hash (serving) ─────────────────────────────────────────────

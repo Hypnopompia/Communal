@@ -2,19 +2,17 @@
 
 ## Next up
 
-**M6 — File types, metadata, thumbnails, previews.** HANDOFF §9 and §12. Starting points:
+**M7 — Subscriptions.** HANDOFF §5 "Subscriptions" and §12. Starting points:
 
 - **What already exists:**
-  - Type detection (`detect.ts`: magic bytes plus extension), and `kind`/`mime` on every entry.
-  - `meta` and `thumb` are in the protocol and the index, but always empty.
-  - The peer frames `thumb.get`, `thumb`/`thumb.none`, `peek` and `peek.data` are in the protocol. The uploader doesn't handle them yet, and its access re-check must cover them (HANDOFF §7).
+  - `watch`, `unwatch` and `watch.event` are in the protocol. The hub answers `not_implemented`, and the `watches` table isn't created yet.
+  - Downloads already queue while the owner is offline and resume when they're back.
+  - Each watch belongs to one hub (ADR 0007).
 - **To do:**
-  - Extractors: sharp/exifr, ffprobe, music-metadata, pdf.js.
-  - Thumbnails: 320 px WebP, EXIF/GPS stripped, keyed by hash, plus a 1600 px preview on demand.
-  - Viewer cache (LRU, size-capped).
-  - Batched `thumb.get`, text `peek`, and in-order streaming ranges.
-  - ffmpeg in the headless image.
-- **Done when:** a mixed fixture folder shows correct icons and metadata, and a 500-image folder's thumbnails load in one batched request.
+  - Hub: `watch` with an access check, through `Catalog.visible()` like everything else. Then `watch.event` on index deltas for visible paths only, and catch-up from `since_rev`.
+  - Client: subscriptions stored locally with a destination folder and `mirror_deletes` (asked at subscribe time, default no), auto-download of new hashes, and deletes to the OS trash.
+  - Losing access stops new downloads, and existing files stay.
+- **Done when:** adding and deleting files at the source propagates as specified, including after the subscriber was offline.
 
 **Still open from M0:** the 1 GiB transfer between two physical machines on a LAN. It needs the owner's second machine.
 
@@ -24,6 +22,62 @@
 - Settings needs a hub list (ADR 0007).
 - The access UI must show which hub each rule applies to.
 - Turn on the router port mapper (`RouterPortMapper`) the way the CLI daemon does. Settings → Network shows `GET /v1/network` and re-runs `POST /v1/network/check`. Transfers show `diagnosis.message`, `tips` and `fix` (ADR 0011).
+
+## M6 — File types, metadata, thumbnails, previews (2026-10-12)
+
+**Status: done.** Details and decisions are in ADR 0012.
+
+### What exists
+
+- **Owner side:**
+  - The media worker runs after hashing (and only while nothing waits to be hashed). It extracts metadata per HANDOFF §9: image size and capture date, video duration, size and codec, audio tags and duration, PDF pages and title.
+  - It makes 320 px WebP thumbnails with EXIF/GPS stripped and auto-rotation applied: a frame at 10 % for video, the cover for audio, page 1 for PDFs, and the embedded EXIF preview for HEIC and RAW.
+  - 1600 px previews are rendered on demand.
+  - `meta` and `thumb` reach every hub through ordinary index deltas.
+- **Peer:** `preview` sessions serve batched `thumb.get` and 64 KB `peek`s. The uploader checks every hash itself, and a refusal looks like "nothing there". The upload log gets one thumbnail-batch row per session.
+- **Viewer:**
+  - Batched thumbnail fetch: one session and one `thumb.get` per folder of up to 1,000 files.
+  - An LRU, size-capped thumbnail cache keyed by hash, which only accepts WebP from peers.
+  - Peek.
+  - In-order streaming with HTTP ranges and verified chunks, without downloading.
+  - MIME → icon ids.
+- **API:** `POST /v1/thumbs`, `GET /v1/thumbs/:hash`, `GET /v1/peek`, `GET /v1/stream/:hash`, and `icon` on browse and search.
+- **CLI:** `browse` shows icon, metadata and ▣ for a thumbnail. `peek` and `thumbs` are new.
+- **Headless image:** ffmpeg (`ffmpeg-static`), sharp and `@napi-rs/canvas` all work inside it, verified in the dev stack.
+
+### Done criteria
+
+- [x] **A mixed folder shows the right icons and metadata** (`test/integration/m6-media.test.ts`). JPEG with EXIF, PNG, MP4, MP3 with tags and cover, PDF, Markdown, Rust, CSV and an unknown binary each get the right kind, icon, metadata and thumbnail flag, through the hub's browse and search.
+- [x] **Thumbnails for a 500-image folder load in one batched request:** one brokered connection, one `thumb.get` with 500 hashes, all 500 cached in about 250 ms. A second load comes from the cache with no connection.
+
+### Also tested
+
+- `packages/core/src/media/media.test.ts`, with real fixtures generated on the fly (`@communal/core/testing`):
+  - the per-kind metadata, and that thumbnails are never larger than 320 px
+  - **no EXIF, XMP, ICC, GPS or camera make in thumbnails** of a photo that has them
+  - files pretending to be images, and ffmpeg report parsing
+- The uploader's own check: a preview session brokered for a public file can't get a private file's thumbnail or peek, or a nonexistent one's. Peek truncates at 64 KB.
+- The 1600 px preview on demand, never enlarged.
+- Streaming: a range (206), a suffix range, the whole file, an out-of-range request (416), and nothing written to disk.
+- The thumbnail cache evicts least recently used entries and refuses non-WebP bytes.
+- The 100k-file test still hashes and syncs in about 22 s, because the media worker waits for hashing. The full suite has 236 tests, including the 100k one.
+
+### Demo (dev stack)
+
+```bash
+A share add /shares/alice --name Alice; A acl set Alice/ hub
+A status                          # index: hashed, analysed, thumbs
+B browse <hub> <alice_device> Alice/   # [image] tiny.png 69 B 1×1 ▣ …
+B thumbs <hub> <alice_device> Alice/   # 1/1 thumbnails cached in 181 ms
+B peek <hub> <alice_device> <hash>     # first 64 KB of a text file
+```
+
+### Carried forward
+
+- **Desktop `<img>` and `<video>` can't send the API bearer token** for `/v1/thumbs` and `/v1/stream`. M9 needs signed short-lived URLs or an Electron protocol handler.
+- **The headless image's app layer is 222 MB** (ffmpeg 49 MB, pdf.js 35 MB, canvas 29 MB, libvips 18 MB). Prune pdf.js at deploy, and revisit with M9 packaging.
+- **HEIC and RAW get thumbnails only via their embedded preview.** sharp's prebuilt libvips has no HEVC decoder.
+- **A stream uses one source,** and an in-progress response ends if that source goes away.
 
 ## M5 — Diagnostics with no relay (2026-10-12)
 

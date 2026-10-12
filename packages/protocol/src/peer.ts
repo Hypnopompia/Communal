@@ -31,6 +31,11 @@ export const peerHeaders = {
       }),
       sig: Signature,
     }),
+    /**
+     * `file` (default): download the token's file. `preview`: thumbnails and peeks for any
+     * files the uploader lets this peer see, each checked on its own (M6, ADR 0012).
+     */
+    purpose: z.enum(['file', 'preview']).optional(),
   }),
   'hello.ok': z.looseObject({}),
   'manifest.get': z.object({ hash: Hash }),
@@ -53,6 +58,8 @@ export const peerHeaders = {
   'thumb.none': z.object({ hash: Hash }),
   peek: z.object({ hash: Hash }),
   'peek.data': z.object({ hash: Hash, truncated: z.boolean() }),
+  /** Nothing to peek at: not a text file, gone, or not allowed (indistinguishable on purpose). */
+  'peek.none': z.object({ hash: Hash }),
   denied: z.object({
     reason: z.enum([
       'bad_token',
