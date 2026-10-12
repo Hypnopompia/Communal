@@ -1,5 +1,40 @@
 import Database from 'better-sqlite3';
 import type { CertChain } from '@communal/crypto';
+import type { HubBody } from '@communal/protocol';
+
+export type Entry = HubBody<'browse.listing'>['files'][number];
+
+export interface EntryRow {
+  device_id: string;
+  path: string;
+  dir: string;
+  name: string;
+  size: number;
+  mtime: number;
+  mime: string;
+  kind: Entry['kind'];
+  meta_json: string;
+  thumb: number;
+  hash: string | null;
+}
+
+function splitPath(path: string): { dir: string; name: string } {
+  const i = path.lastIndexOf('/');
+  return { dir: path.slice(0, i + 1), name: path.slice(i + 1) };
+}
+
+export function rowToEntry(r: EntryRow): Entry {
+  return {
+    path: r.path,
+    size: r.size,
+    mtime: r.mtime,
+    mime: r.mime,
+    kind: r.kind,
+    meta: JSON.parse(r.meta_json) as Entry['meta'],
+    thumb: r.thumb === 1,
+    hash: r.hash,
+  };
+}
 
 export type JoinMode = 'open' | 'approval';
 export type UserStatus = 'active' | 'pending';
@@ -81,6 +116,55 @@ const MIGRATIONS: string[] = [
   ALTER TABLE users ADD COLUMN banned_at INTEGER;
   ALTER TABLE users ADD COLUMN ban_reason TEXT;
   `,
+  `
+  -- dir: parent folder with trailing '/' (e.g. 'Movies/2024/'); name: the file name.
+  CREATE TABLE entries (
+    device_id TEXT NOT NULL REFERENCES devices (id),
+    path      TEXT NOT NULL,
+    dir       TEXT NOT NULL,
+    name      TEXT NOT NULL,
+    size      INTEGER NOT NULL,
+    mtime     INTEGER NOT NULL,
+    mime      TEXT NOT NULL,
+    kind      TEXT NOT NULL,
+    meta_json TEXT NOT NULL,
+    thumb     INTEGER NOT NULL,
+    hash      TEXT
+  );
+  CREATE UNIQUE INDEX entries_path ON entries (device_id, path);
+  CREATE INDEX entries_dir ON entries (device_id, dir);
+  CREATE INDEX entries_hash ON entries (hash) WHERE hash IS NOT NULL;
+
+  CREATE VIRTUAL TABLE entries_fts USING fts5 (
+    name, content = 'entries', content_rowid = 'rowid', tokenize = 'unicode61 remove_diacritics 2'
+  );
+  CREATE TRIGGER entries_ai AFTER INSERT ON entries BEGIN
+    INSERT INTO entries_fts (rowid, name) VALUES (new.rowid, new.name);
+  END;
+  CREATE TRIGGER entries_ad AFTER DELETE ON entries BEGIN
+    INSERT INTO entries_fts (entries_fts, rowid, name) VALUES ('delete', old.rowid, old.name);
+  END;
+  CREATE TRIGGER entries_au AFTER UPDATE OF name ON entries BEGIN
+    INSERT INTO entries_fts (entries_fts, rowid, name) VALUES ('delete', old.rowid, old.name);
+    INSERT INTO entries_fts (rowid, name) VALUES (new.rowid, new.name);
+  END;
+
+  -- Snapshot pages land here until the last page commits them (one device at a time).
+  CREATE TABLE entries_staging (
+    device_id TEXT NOT NULL,
+    path      TEXT NOT NULL,
+    dir       TEXT NOT NULL,
+    name      TEXT NOT NULL,
+    size      INTEGER NOT NULL,
+    mtime     INTEGER NOT NULL,
+    mime      TEXT NOT NULL,
+    kind      TEXT NOT NULL,
+    meta_json TEXT NOT NULL,
+    thumb     INTEGER NOT NULL,
+    hash      TEXT,
+    PRIMARY KEY (device_id, path)
+  );
+  `,
 ];
 
 const now = () => Math.floor(Date.now() / 1000);
@@ -91,6 +175,9 @@ export class HubDb {
   constructor(file: string) {
     this.raw = new Database(file);
     this.raw.pragma('journal_mode = WAL');
+    // WAL + NORMAL: corruption-safe; a power cut can lose the last commits, which clients
+    // repair by resync (index) or retry (everything else).
+    this.raw.pragma('synchronous = NORMAL');
     this.raw.pragma('foreign_keys = ON');
     this.raw.pragma('busy_timeout = 5000');
     this.migrate();
@@ -234,6 +321,86 @@ export class HubDb {
     const row = this.raw.prepare('SELECT rev FROM index_revs WHERE device_id = ?').get(deviceId) as
       { rev: number } | undefined;
     return row?.rev ?? 0;
+  }
+
+  // ── index ─────────────────────────────────────────────────────────────────
+
+  setIndexRev(deviceId: string, rev: number) {
+    this.raw
+      .prepare(
+        'INSERT INTO index_revs (device_id, rev) VALUES (?, ?) ON CONFLICT (device_id) DO UPDATE SET rev = excluded.rev',
+      )
+      .run(deviceId, rev);
+  }
+
+  private entryParams(deviceId: string, e: Entry) {
+    return {
+      device_id: deviceId,
+      path: e.path,
+      ...splitPath(e.path),
+      size: e.size,
+      mtime: e.mtime,
+      mime: e.mime,
+      kind: e.kind,
+      meta_json: JSON.stringify(e.meta),
+      thumb: e.thumb ? 1 : 0,
+      hash: e.hash,
+    };
+  }
+
+  /** Applies a delta and advances the device's rev, atomically. */
+  applyDelta(deviceId: string, rev: number, upsert: Entry[], remove: string[]) {
+    const up = this.raw.prepare(
+      `INSERT INTO entries (device_id, path, dir, name, size, mtime, mime, kind, meta_json, thumb, hash)
+       VALUES (@device_id, @path, @dir, @name, @size, @mtime, @mime, @kind, @meta_json, @thumb, @hash)
+       ON CONFLICT (device_id, path) DO UPDATE SET size = excluded.size, mtime = excluded.mtime,
+         mime = excluded.mime, kind = excluded.kind, meta_json = excluded.meta_json,
+         thumb = excluded.thumb, hash = excluded.hash`,
+    );
+    const del = this.raw.prepare('DELETE FROM entries WHERE device_id = ? AND path = ?');
+    this.raw.transaction(() => {
+      for (const p of remove) del.run(deviceId, p);
+      for (const e of upsert) up.run(this.entryParams(deviceId, e));
+      this.setIndexRev(deviceId, rev);
+    })();
+  }
+
+  /** Starts a snapshot for a device (discarding any half-finished one). */
+  beginSnapshot(deviceId: string) {
+    this.raw.prepare('DELETE FROM entries_staging WHERE device_id = ?').run(deviceId);
+  }
+
+  stageSnapshotPage(deviceId: string, entries: Entry[]) {
+    const ins = this.raw.prepare(
+      `INSERT OR REPLACE INTO entries_staging (device_id, path, dir, name, size, mtime, mime, kind, meta_json, thumb, hash)
+       VALUES (@device_id, @path, @dir, @name, @size, @mtime, @mime, @kind, @meta_json, @thumb, @hash)`,
+    );
+    this.raw.transaction(() => {
+      for (const e of entries) ins.run(this.entryParams(deviceId, e));
+    })();
+  }
+
+  /** Replaces the device's whole index with the staged snapshot and sets its rev. */
+  commitSnapshot(deviceId: string, rev: number) {
+    this.raw.transaction(() => {
+      this.raw.prepare('DELETE FROM entries WHERE device_id = ?').run(deviceId);
+      this.raw
+        .prepare(
+          `INSERT INTO entries (device_id, path, dir, name, size, mtime, mime, kind, meta_json, thumb, hash)
+           SELECT device_id, path, dir, name, size, mtime, mime, kind, meta_json, thumb, hash
+           FROM entries_staging WHERE device_id = ?`,
+        )
+        .run(deviceId);
+      this.raw.prepare('DELETE FROM entries_staging WHERE device_id = ?').run(deviceId);
+      this.setIndexRev(deviceId, rev);
+    })();
+  }
+
+  entryCount(deviceId: string): number {
+    return this.raw
+      .prepare('SELECT count(*) FROM entries WHERE device_id = ?')
+      .pluck()
+      .get(deviceId) as number;
   }
 
   // ── connections ───────────────────────────────────────────────────────────

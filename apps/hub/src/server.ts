@@ -31,6 +31,7 @@ import {
   type HubBody,
   type HubType,
 } from '@communal/protocol';
+import { Catalog } from './catalog.js';
 import type { HubDb } from './db.js';
 
 export interface HubOptions {
@@ -72,11 +73,14 @@ interface Session {
   lastSeen: number;
   user?: string;
   device?: string;
+  /** In-progress index snapshot from this session's device. */
+  snapshot?: { rev: number; nextPage: number };
   log: Logger;
 }
 
 export class HubServer {
   readonly db: HubDb;
+  private readonly catalog: Catalog;
   private readonly opts: Required<Omit<HubOptions, 'tls' | 'log' | 'probePorts'>> & HubOptions;
   private readonly log: Logger;
   private http?: Server;
@@ -93,6 +97,7 @@ export class HubServer {
   constructor(opts: HubOptions) {
     this.opts = { ...DEFAULTS, ...opts };
     this.db = opts.db;
+    this.catalog = new Catalog(this.db, (d) => this.isOnline(d));
     this.log = opts.log ?? pino({ name: 'hub' });
   }
 
@@ -293,6 +298,19 @@ export class HubServer {
           return this.onAccountCreate(s, msg.id, msg.body);
         case 'auth':
           return this.onAuth(s, msg.id, msg.body);
+        case 'index.snapshot':
+          return this.onSnapshot(s, msg.id, msg.body);
+        case 'index.delta':
+          return this.onDelta(s, msg.id, msg.body);
+        case 'search':
+          return this.send(s, 'search.results', this.catalog.search(s.user!, msg.body), msg.id);
+        case 'sources':
+          return this.send(s, 'sources.list', this.catalog.sources(s.user!, msg.body.hash), msg.id);
+        case 'browse': {
+          const listing = this.catalog.browse(s.user!, msg.body.device_id, msg.body.path);
+          if (!listing) return this.fail(s, 'not_found', 'no such device', msg.id);
+          return this.send(s, 'browse.listing', listing, msg.id);
+        }
         default:
           return this.fail(s, 'not_implemented', `${msg.t} is not implemented yet`, msg.id);
       }
@@ -445,6 +463,41 @@ export class HubServer {
         this.send(s, 'presence', { device_id: other, user_id: owner, online: true });
     }
     if (!wasOnline) this.publishPresence(user.id, dev.id, true);
+  }
+
+  // ── index sync (HANDOFF §5) ───────────────────────────────────────────────
+  // Index messages always apply to the session's own device: a client can't touch another
+  // device's index because there's no device_id field to forge.
+
+  private onSnapshot(s: Session, re: string, body: ClientBody<'index.snapshot'>) {
+    const device = s.device!;
+    if (body.page === 0) {
+      this.db.beginSnapshot(device);
+      s.snapshot = { rev: body.rev, nextPage: 0 };
+    }
+    if (!s.snapshot || s.snapshot.rev !== body.rev || s.snapshot.nextPage !== body.page) {
+      s.snapshot = undefined;
+      this.db.beginSnapshot(device);
+      return this.fail(s, 'bad_request', 'snapshot pages out of order; start again at page 0', re);
+    }
+    this.db.stageSnapshotPage(device, body.entries);
+    s.snapshot.nextPage++;
+    if (!body.last) return this.send(s, 'ok', {}, re);
+    this.db.commitSnapshot(device, body.rev);
+    s.snapshot = undefined;
+    s.log.info({ rev: body.rev, entries: this.db.entryCount(device) }, 'index snapshot applied');
+    this.send(s, 'index.ack', { rev: body.rev }, re);
+  }
+
+  private onDelta(s: Session, re: string, body: ClientBody<'index.delta'>) {
+    const device = s.device!;
+    const current = this.db.indexRev(device);
+    if (body.base_rev !== current || body.rev <= body.base_rev) {
+      s.log.info({ have: current, base: body.base_rev }, 'index rev mismatch; asking for resync');
+      return this.send(s, 'index.resync', { reason: 'rev_mismatch' }, re);
+    }
+    this.db.applyDelta(device, body.rev, body.upsert, body.remove);
+    this.send(s, 'index.ack', { rev: body.rev }, re);
   }
 
   private *devicesInGrace(): Iterable<[string, string]> {

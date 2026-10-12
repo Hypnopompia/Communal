@@ -1,0 +1,174 @@
+import { chmodSync, rmSync } from 'node:fs';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
+import type { AddressInfo } from 'node:net';
+import { z } from 'zod';
+import { Kind } from '@communal/protocol';
+import { CoreError, type CommunalCore } from '../core.js';
+import { HubError } from '../hub-client.js';
+
+/**
+ * The core's local API (HANDOFF §3): HTTP+JSON for the CLI and the desktop renderer.
+ * - Headless: a Unix socket created with mode 0600 inside the 0700 data dir.
+ * - Desktop: 127.0.0.1 on a random port with a random bearer token.
+ */
+export type ListenOn =
+  { socketPath: string; token?: string } | { host: '127.0.0.1'; port: number; token: string };
+
+const AddHub = z.object({
+  url: z.string().url().max(512),
+  display_name: z.string().trim().min(1).max(64),
+  device_name: z.string().trim().min(1).max(64),
+});
+const AddShare = z.object({
+  name: z.string().min(1).max(255),
+  path: z.string().min(1).max(4096),
+  hubs: z.array(z.string()).optional(),
+});
+const SetHubs = z.object({ hubs: z.array(z.string()) });
+
+type Handler = (req: IncomingMessage, url: URL, body: unknown) => Promise<unknown>;
+
+export class LocalApi {
+  private server?: Server;
+  private readonly routes: { method: string; pattern: RegExp; handler: Handler }[] = [];
+
+  constructor(private readonly core: CommunalCore) {
+    const route = (method: string, path: string, handler: Handler) =>
+      this.routes.push({
+        method,
+        pattern: new RegExp(`^${path.replace(/:\w+/g, '([^/]+)')}$`),
+        handler,
+      });
+    const param = (req: IncomingMessage, url: URL, i: number) => {
+      const r = this.routes.find((x) => x.pattern.test(url.pathname) && x.method === req.method)!;
+      return decodeURIComponent(r.pattern.exec(url.pathname)![i]!);
+    };
+
+    route('GET', '/v1/status', async () => this.core.status());
+
+    route('GET', '/v1/hubs', async () => ({ hubs: this.core.status().hubs }));
+    route('POST', '/v1/hubs', async (_req, _url, body) => {
+      const b = AddHub.parse(body);
+      const platform =
+        process.platform === 'darwin' || process.platform === 'win32' ? process.platform : 'linux';
+      const { hub, status } = await this.core.addHub(b.url, {
+        display_name: b.display_name,
+        device_name: b.device_name,
+        platform,
+      });
+      return {
+        hub: {
+          id: hub.id,
+          url: hub.url,
+          user_id: hub.state.userId,
+          fingerprint: hub.state.fingerprint,
+        },
+        status,
+      };
+    });
+    route('DELETE', '/v1/hubs/:id', async (req, url) => {
+      await this.core.removeHub(param(req, url, 1));
+      return { ok: true };
+    });
+
+    route('GET', '/v1/shares', async () => ({ shares: this.core.shares() }));
+    route('POST', '/v1/shares', async (_req, _url, body) => {
+      const b = AddShare.parse(body);
+      return { share: await this.core.addShare(b.name, b.path, b.hubs) };
+    });
+    route('DELETE', '/v1/shares/:name', async (req, url) => {
+      await this.core.removeShare(param(req, url, 1));
+      return { ok: true };
+    });
+    route('PUT', '/v1/shares/:name/hubs', async (req, url, body) => {
+      this.core.setShareHubs(param(req, url, 1), SetHubs.parse(body).hubs);
+      return { ok: true };
+    });
+
+    route('GET', '/v1/search', async (_req, url) => {
+      const q = url.searchParams;
+      const parsed = z
+        .object({
+          q: z.string().max(256).default(''),
+          kind: Kind.optional(),
+          min_size: z.coerce.number().int().nonnegative().optional(),
+          limit: z.coerce.number().int().min(1).max(500).default(50),
+          cursors: z
+            .string()
+            .optional()
+            .transform((s) => (s ? (JSON.parse(s) as Record<string, string>) : undefined)),
+        })
+        .parse(Object.fromEntries(q));
+      const { cursors, ...query } = parsed;
+      return this.core.search(query, cursors);
+    });
+    route('GET', '/v1/browse', async (_req, url) => {
+      const q = z
+        .object({ hub: z.string(), device: z.string(), path: z.string().default('') })
+        .parse(Object.fromEntries(url.searchParams));
+      return this.core.browse(q.hub, q.device, q.path);
+    });
+  }
+
+  async listen(on: ListenOn): Promise<string> {
+    const token = on.token ? Buffer.from(on.token) : undefined;
+    this.server = createServer((req, res) => void this.handle(req, res, token));
+    if ('socketPath' in on) {
+      rmSync(on.socketPath, { force: true });
+      await new Promise<void>((r) => this.server!.listen(on.socketPath, r));
+      chmodSync(on.socketPath, 0o600);
+      return on.socketPath;
+    }
+    await new Promise<void>((r) => this.server!.listen(on.port, on.host, r));
+    const a = this.server.address() as AddressInfo;
+    return `http://${on.host}:${a.port}`;
+  }
+
+  async close() {
+    await new Promise<void>((r) => (this.server ? this.server.close(() => r()) : r()));
+  }
+
+  private async handle(req: IncomingMessage, res: ServerResponse, token?: Buffer) {
+    const send = (status: number, body: unknown) => {
+      res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify(body));
+    };
+    if (token) {
+      const got = Buffer.from((req.headers.authorization ?? '').replace(/^Bearer /, ''));
+      if (got.length !== token.length || !timingSafeEqual(got, token))
+        return send(401, { error: 'unauthorized' });
+    }
+    const url = new URL(req.url ?? '/', 'http://local');
+    const route = this.routes.find((r) => r.method === req.method && r.pattern.test(url.pathname));
+    if (!route) return send(404, { error: 'not_found' });
+    try {
+      let body: unknown;
+      if (req.method === 'POST' || req.method === 'PUT') {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        for await (const c of req) {
+          size += (c as Buffer).length;
+          if (size > 1024 * 1024) return send(413, { error: 'too_large' });
+          chunks.push(c as Buffer);
+        }
+        body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
+      }
+      send(200, await route.handler(req, url, body));
+    } catch (err) {
+      if (err instanceof z.ZodError)
+        return send(400, { error: 'bad_request', message: z.prettifyError(err) });
+      if (err instanceof SyntaxError)
+        return send(400, { error: 'bad_request', message: 'invalid JSON' });
+      if (err instanceof CoreError) {
+        const status = { bad_request: 400, not_found: 404, conflict: 409, unavailable: 503 }[
+          err.code
+        ];
+        return send(status, { error: err.code, message: err.message });
+      }
+      if (err instanceof HubError) return send(502, { error: err.code, message: err.message });
+      this.core.log.error({ err }, 'local API handler failed');
+      send(500, { error: 'internal' });
+    }
+  }
+}

@@ -36,6 +36,9 @@ function makeManager(saved: { hubs: HubEntry[] }) {
       saved.hubs = structuredClone(hubs);
     },
     backoff: { initialMs: 50, maxMs: 200 },
+    // Test hubs drop clients after 600 ms of silence; ping well inside that.
+    pingIntervalMs: 100,
+    silenceMs: 600,
     log: pino({ level: 'silent' }),
   });
   cleanups.push(() => m.stop());

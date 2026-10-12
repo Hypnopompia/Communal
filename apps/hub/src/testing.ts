@@ -121,6 +121,15 @@ export class RawClient {
     return this.next((m) => m.re === id);
   }
 
+  /** Pings every `ms` so short test silence windows don't drop this client. */
+  keepAlive(ms = 200): () => void {
+    const timer = setInterval(() => {
+      if (this.ws.readyState === WebSocket.OPEN) this.send('ping', {});
+    }, ms);
+    this.ws.once('close', () => clearInterval(timer));
+    return () => clearInterval(timer);
+  }
+
   close() {
     this.ws.terminate();
   }

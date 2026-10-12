@@ -1,2 +1,11 @@
 export * from './hub-client.js';
 export * from './hub-manager.js';
+export * from './core.js';
+export * from './search.js';
+export * from './api/server.js';
+export * from './api/client.js';
+export { Indexer, isIgnored } from './index/indexer.js';
+export { IndexStore, type ShareRow, type FileRow } from './index/store.js';
+export { IndexSync, PAGE as INDEX_PAGE } from './index/sync.js';
+export { detect, kindFor, type Kind } from './index/detect.js';
+export { hashFile, CHUNK_SIZE } from './index/hasher.js';

@@ -24,7 +24,12 @@ HANDOFF assumes one hub per client: Settings has a single "Hub address" and the 
   - Pagination cursors are per hub.
   - The UI shows partial results while slow hubs answer, and says which hubs are offline.
 - **M2 (index):** each share is published to a chosen set of hubs. Each hub has its own `index_rev` and gets its own snapshots and deltas.
-- **M3 (access):** access rules are **per hub**, and "Only me" is the default on every hub. "Everyone on the hub" names a specific hub. Groups and connections are per hub, though the UI can merge people by `user_id`.
+- **M3 (access): rules are per hub (owner decision, 2026-10-12).**
+  - Every access rule is keyed by hub. The same file or folder can be "Everyone on the hub" on hub A and "Only me" on hub B. "Only me" is the default on every hub.
+  - Each hub stores and enforces only its own rules.
+  - The uploader keeps rules per hub and checks a request against the rules of the hub whose token it carries. A rule from one hub never grants access through another.
+  - The UI must make the per-hub setting obvious, so a file public on one hub isn't mistaken as public everywhere.
+  - Groups and connections are per hub too, though the UI may merge people by `user_id`.
 - **M4 (transfers):**
   - The uploader accepts transfer tokens signed by **any hub it has joined and pinned**.
   - It checks the requester against **that hub's** access rules.

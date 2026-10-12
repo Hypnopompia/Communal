@@ -9,11 +9,11 @@ Communal is a private, Napster-style file-sharing app: a self-hosted **hub** kee
 ## Commands
 
 - `pnpm check`: runs format check, lint, typecheck (all packages) and tests. CI runs the same thing.
-- `pnpm test`: runs Vitest across the repo, including the multi-node tests in `test/integration` (a workspace package of its own). For a single file use `pnpm exec vitest run packages/crypto/src/crypto.test.ts`, and for a single test add `-t "<name>"`.
+- `pnpm test`: runs Vitest across the repo, including the multi-node tests in `test/integration` (a workspace package of its own). The M2 scale test indexes 100k files (about 35 s); `M2_FILES=2000 pnpm test` makes it quick while iterating. For a single file use `pnpm exec vitest run packages/crypto/src/crypto.test.ts`, and for a single test add `-t "<name>"`.
 - `pnpm typecheck`, `pnpm lint`, `pnpm format`, `pnpm build` (compiles every package to `dist/`).
 - `pnpm spike:transport`: 1 GiB peer-transport benchmark over loopback. Add `--bytes 64M` for a quick run.
 - `pnpm dev:stack`: builds and starts the hub plus `node-a` (alice) and `node-b` (bob) via `docker/compose.dev.yml`. `pnpm dev:stack:reset` wipes the volumes. Docker Desktop's CLI lives in `~/.docker/bin` and may not be on PATH.
-- Inside a dev container: `docker compose -f docker/compose.dev.yml exec node-a communal <cmd>`, or `communal-spike peer …` for the transport benchmark between containers.
+- Inside a dev container: `docker compose -f docker/compose.dev.yml exec node-a communal <cmd>` (`share add /shares/alice --name Alice`, `search <words>`, `status`), or `communal-spike peer …` for the transport benchmark between containers.
 - Running an app from source: `pnpm --filter @communal/hub dev` (a dev build with self-signed TLS, data in `apps/hub/hub-data`), `pnpm --filter @communal/cli dev -- status`.
 - Hub admin: `communal-hub users | approve <user_id> | ban <user_id> [--reason] | unban <user_id> | set join_mode open|approval`. These commands work directly on the SQLite database, so they run alongside a live hub.
 
@@ -38,6 +38,11 @@ How the pieces connect:
   - Electron hosts the core in a `utilityProcess`, and the React renderer talks to the local API.
   - The headless `communal` CLI talks to the same API.
   - **Core must never depend on Electron.**
+- **Core layout** (`packages/core`):
+  - `CommunalCore` (`core.ts`) owns `HubManager`, `IndexStore` (local SQLite: shares, files, change log, per-hub sync state), `Indexer` (scan, watch, rescan, hash) and `IndexSync` (per-hub snapshot/delta).
+  - `LocalApi` (`api/server.ts`) wraps the core for the CLI and desktop. The CLI never touches core internals while the daemon runs.
+  - Never iterate a better-sqlite3 statement across an `await`: other statements on the same connection throw. Page with keyset queries instead (`filesPage`).
+- **Hub visibility** is decided in exactly one place, `Catalog.visible()` in `apps/hub/src/catalog.ts`. M3 access rules go there, not into individual queries.
 - **Hub protocol**: `wss://<hub>/v1`, JSON envelope `{v, id, re, t, body}` (§5). **Peer protocol**: length-prefixed msgpack frames over **udx-native + Noise XX (`@hyperswarm/secret-stream`)**, using device keys as the Noise static keys (ADR 0001).
   - After the handshake, the peer must match the hub-named `device_id`, and its cert chain must verify to the account root.
   - udx accepts IP literals only, so candidates must be IPs.

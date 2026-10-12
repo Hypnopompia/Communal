@@ -24,6 +24,7 @@ services:
       COMMUNAL_DISPLAY_NAME: alice
       COMMUNAL_AUTO_INIT: 'true' # dev only: create an account on first start
       COMMUNAL_PEER_PORT: '41641'
+      COMMUNAL_RESCAN_MINUTES: '1' # bind mounts from macOS/Windows drop some file events
       COMMUNAL_ADVERTISE_ADDR: '127.0.0.1:41641' # host-reachable candidate for the desktop app
     ports: ['41641:41641/udp']
     volumes: [node-a-data:/var/lib/communal, ./fixtures/alice:/shares/alice:ro]
@@ -36,6 +37,7 @@ services:
       COMMUNAL_DISPLAY_NAME: bob
       COMMUNAL_AUTO_INIT: 'true'
       COMMUNAL_PEER_PORT: '41642'
+      COMMUNAL_RESCAN_MINUTES: '1'
       COMMUNAL_ADVERTISE_ADDR: '127.0.0.1:41642'
     ports: ['41642:41642/udp']
     volumes: [node-b-data:/var/lib/communal, ./fixtures/bob:/shares/bob:ro]

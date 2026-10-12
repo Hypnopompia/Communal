@@ -18,6 +18,9 @@ jobs:
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+        env:
+          # The full 100k-file M2 fixture runs on Linux; smaller elsewhere to keep CI quick.
+          M2_FILES: ${{ matrix.os == 'ubuntu-latest' && '100000' || '10000' }}
       - name: Transport spike (loopback, 256 MiB)
         run: pnpm --filter @communal/spike-transport exec tsx --conditions=@communal/source src/bench.ts local --bytes 256M
 

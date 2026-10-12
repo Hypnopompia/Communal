@@ -1,5 +1,48 @@
 # Progress
 
+## M2 — Indexing + search/browse (2026-10-12)
+
+**Status: done.** Details and decisions are in ADR 0008.
+
+### What exists
+
+- **Core engine** (`CommunalCore`): shares published to chosen hubs, a local SQLite index, scanning with magic-byte and extension type detection, a file watcher (2 s batches), a periodic full rescan, background BLAKE3 hashing (1 MiB chunks, hash over the chunk hashes, 4 files in parallel), and index sync per hub (snapshot, delta, resync).
+- **Hub:** an `entries` table with FTS5 search on file names, the `index.snapshot` / `index.delta` handlers (staged snapshots, rev checks, `index.resync`), and search (grouped by hash, ranked, paged, kind and size filters), browse and sources. Everything goes through one access filter, `Catalog.visible()`: owner only until M3, and banned owners hidden.
+- **Cross-hub search:** one query goes to every hub, results are merged by hash, each source is tagged with its hub, and partial results are returned when a hub is down.
+- **Local API:** HTTP+JSON over a 0600 Unix socket, or over localhost with a bearer token for desktop.
+- **CLI:** `share add|remove|list|hubs`, `search`, `browse`. `status` shows indexing progress. The daemon serves the API.
+
+### Tests
+
+- `packages/core/src/index/index.test.ts` (14): type detection, the hash definition, the indexer (ignore rules, symlinks, edits/deletes/new folders, rescan diffs, periodic rescan).
+- `apps/hub/src/catalog.test.ts` (12):
+  - index sync (deltas, stale-rev resync, multi-page snapshots, out-of-order pages)
+  - access control: index messages only affect your own device, nothing works before sign-in, search/sources/browse never show other users' files, and a hidden device looks the same as a nonexistent one
+  - paging, and FTS input that tries to inject syntax
+- `test/integration/m2-index-search.test.ts` (5):
+  - **100,000 files:** scan 5 s, hash and sync 21 s, search 10 ms
+  - deltas for adds, edits, deletes and removed folders
+  - recovery from a forced rev mismatch and from a hub that lost its index
+  - per-hub publishing with merged cross-hub search and one hub down
+  - the local API over a 0600 socket and with a token over TCP
+- The full suite (158 tests) passed 3 times in a row.
+
+### Demo (dev stack)
+
+```bash
+pnpm dev:stack
+docker compose -f docker/compose.dev.yml exec node-a communal share add /shares/alice --name Alice
+docker compose -f docker/compose.dev.yml exec node-a communal search holiday
+docker compose -f docker/compose.dev.yml exec node-a communal status       # index: files/hashed
+```
+
+### Carried forward
+
+- **Visibility is owner-only.** Search across users arrives with access rules in M3. Rules are per hub (ADR 0007).
+- **Metadata (`meta`) and thumbnails are empty** until M6.
+- **No limit on entries per device** at the hub yet. Add one before public deployment (with rate limiting, M9).
+- **Only hashed files appear in search** (browse shows all). A large first index is searchable progressively as hashing proceeds.
+
 ## M1 — Hub + accounts (2026-10-12)
 
 **Status: done.**

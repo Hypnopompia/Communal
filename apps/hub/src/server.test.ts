@@ -266,6 +266,8 @@ describe('access control: presence', () => {
 
     alice.c.close();
     const fresh = await signIn(t.url, alice.key, alice.deviceId);
+    // The waits below exceed the 2 s silence window; keep alice's session alive.
+    fresh.c.keepAlive();
     // A reconnect inside the grace window is not news to anyone.
     await sleep(150);
     expect(bob.c.backlog().some((m) => m.t === 'presence')).toBe(false);

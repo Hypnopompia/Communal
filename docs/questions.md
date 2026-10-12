@@ -35,7 +35,6 @@ With no PII (§2), a banned person can generate a new key and join again. Hubs t
 
 **Status:** decided in principle (ADR 0007). These details get settled in the milestones listed.
 
-- **Per-hub access rules (M3).** Is a share's audience set per hub, or once with hub-specific parts? ADR 0007 proposes per hub. A folder could be "everyone on hub A" and "only me" on hub B, with "only me" as the default on every hub.
 - **Groups (M3).** Groups live on a hub and contain that hub's users. Should someone connected to you on two hubs appear as one person in the People screen? They have the same `user_id` everywhere, so merging is possible.
 - **Display names** can differ per hub. Which one does the UI show for a person seen on several?
 - **Privacy:** one key everywhere lets hub admins correlate a user across hubs. A per-hub identity option could come later if users ask for it.
