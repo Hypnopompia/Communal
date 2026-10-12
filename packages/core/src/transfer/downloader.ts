@@ -10,7 +10,8 @@ import { CHUNK_SIZE, type AnyPeerHeader, type PeerHeader } from '@communal/proto
 import type { HubManager } from '../hub-manager.js';
 import type { IndexStore, TransferRow } from '../index/store.js';
 import type { PeerChannel } from '../peer/transport.js';
-import type { PeerBroker } from './broker.js';
+import { PathError, type PeerBroker } from './broker.js';
+import { mostUseful, type TransferDiagnosis } from './diagnosis.js';
 
 export interface DownloadOptions {
   store: IndexStore;
@@ -26,6 +27,8 @@ export interface DownloadOptions {
   chunkTimeoutMs?: number;
   /** When no source is online, try again after this long (or when one comes online). */
   retryMs?: number;
+  /** How long a source's device has to answer the hub's offer before it counts as offline. */
+  answerTimeoutMs?: number;
   log?: Logger;
 }
 
@@ -33,7 +36,7 @@ export interface DownloadEvents {
   progress: [{ id: string; bytes: number; size: number; peers: number }];
   done: [{ id: string; path: string }];
   failed: [{ id: string; error: string }];
-  waiting: [{ id: string; reason: string }];
+  waiting: [{ id: string; reason: string; diagnosis?: TransferDiagnosis }];
 }
 
 type Source = { hub: string; device: string };
@@ -46,7 +49,17 @@ interface Peer {
   strikes: number;
 }
 
-class Retryable extends Error {}
+class Retryable extends Error {
+  constructor(
+    message: string,
+    /** Why we couldn't connect, when a hub could tell (HANDOFF §8). */
+    readonly diagnosis?: TransferDiagnosis,
+  ) {
+    super(message);
+  }
+}
+
+const NOTHING_KNOWN = { nat: 'unknown', upnp: false, ipv6: false, cgnat: false } as const;
 
 const newTransferId = () => 't_' + toBase32(randomBytes(10));
 
@@ -75,7 +88,14 @@ export class Downloads extends EventEmitter<DownloadEvents> {
 
   constructor(opts: DownloadOptions) {
     super();
-    this.o = { maxPeers: 4, window: 32, chunkTimeoutMs: 30_000, retryMs: 30_000, ...opts };
+    this.o = {
+      maxPeers: 4,
+      window: 32,
+      chunkTimeoutMs: 30_000,
+      retryMs: 30_000,
+      answerTimeoutMs: 15_000,
+      ...opts,
+    };
     this.log = opts.log ?? pino({ name: 'downloads' });
     // A source coming online is a good moment to retry waiting downloads.
     opts.hubs.on('presence', ({ presence }) => {
@@ -151,7 +171,12 @@ export class Downloads extends EventEmitter<DownloadEvents> {
     try {
       const path = await this.download(t, abort.signal);
       const size = this.o.store.transfer(id)?.size ?? 0;
-      this.o.store.updateTransfer(id, { state: 'done', final_path: path, bytes_done: size });
+      this.o.store.updateTransfer(id, {
+        state: 'done',
+        final_path: path,
+        bytes_done: size,
+        diagnosis: null,
+      });
       this.log.info({ transfer_id: id }, 'download complete');
       this.emit('done', { id, path });
     } catch (err) {
@@ -159,8 +184,17 @@ export class Downloads extends EventEmitter<DownloadEvents> {
       if (this.stopped) {
         this.o.store.updateTransfer(id, { state: 'queued' });
       } else if (err instanceof Retryable) {
-        this.o.store.updateTransfer(id, { state: 'waiting', error: err.message });
-        this.emit('waiting', { id, reason: err.message });
+        // A diagnosis stays until the download completes or a newer one replaces it.
+        this.o.store.updateTransfer(id, {
+          state: 'waiting',
+          error: err.message,
+          ...(err.diagnosis ? { diagnosis: err.diagnosis } : {}),
+        });
+        this.emit('waiting', {
+          id,
+          reason: err.message,
+          ...(err.diagnosis ? { diagnosis: err.diagnosis } : {}),
+        });
         retry = true;
       } else {
         this.o.store.updateTransfer(id, { state: 'failed', error: (err as Error).message });
@@ -191,7 +225,12 @@ export class Downloads extends EventEmitter<DownloadEvents> {
   }
 
   private async connect(src: Source, hash: string): Promise<PeerChannel> {
-    const { channel, token } = await this.o.broker.open(src.hub, src.device, hash);
+    const { channel, token } = await this.o.broker.open(
+      src.hub,
+      src.device,
+      hash,
+      this.o.answerTimeoutMs,
+    );
     await channel.send({ t: 'hello', token });
     const reply = await channel.next(
       (h) => h.t === 'hello.ok' || h.t === 'denied' || h.t === 'busy',
@@ -227,7 +266,17 @@ export class Downloads extends EventEmitter<DownloadEvents> {
 
   private async download(t: TransferRow, signal: AbortSignal): Promise<string> {
     const sources = await this.sources(t.hash);
-    if (sources.length === 0) throw new Retryable('no source is online');
+    if (sources.length === 0) {
+      // The hubs list the file's sources as offline: no need to try reaching them.
+      throw new Retryable('no source is online', {
+        cause: 'peer_offline',
+        easier_fix: 'none',
+        you: NOTHING_KNOWN,
+        them: NOTHING_KNOWN,
+        at: Math.floor(Date.now() / 1000),
+      });
+    }
+    const diagnoses: TransferDiagnosis[] = [];
 
     // Connect to several sources at once; the first manifest that checks out wins.
     const peers: Peer[] = [];
@@ -239,8 +288,22 @@ export class Downloads extends EventEmitter<DownloadEvents> {
           if (!manifest) manifest = await this.manifest(channel, t.hash);
           peers.push({ key: source.device, source, channel, inflight: new Set(), strikes: 0 });
         } catch (err) {
+          if (err instanceof PathError) {
+            const { session_id: _s, ...d } = err.diagnosis;
+            diagnoses.push({
+              ...d,
+              device: source.device,
+              hub: source.hub,
+              at: Math.floor(Date.now() / 1000),
+            });
+          }
           this.log.info(
-            { transfer_id: t.id, source: source.device, err: (err as Error).message },
+            {
+              transfer_id: t.id,
+              source: source.device,
+              err: (err as Error).message,
+              ...(err instanceof PathError ? { cause: err.diagnosis.cause } : {}),
+            },
             'source unavailable',
           );
         }
@@ -248,7 +311,11 @@ export class Downloads extends EventEmitter<DownloadEvents> {
     );
     if (!manifest || peers.length === 0) {
       for (const p of [...peers]) p.channel.close();
-      throw new Retryable('could not connect to any source');
+      const diagnosis = mostUseful(diagnoses);
+      throw new Retryable(
+        diagnosis ? `could not connect (${diagnosis.cause})` : 'could not connect to any source',
+        diagnosis,
+      );
     }
     const { size, chunkHashes } = manifest;
     if (t.size === null) this.o.store.updateTransfer(t.id, { size });

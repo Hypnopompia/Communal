@@ -38,6 +38,9 @@
 - **`connect.request` / `connect.offer` / `connect.answer`** carry udx `stream_id`s and both sides' candidates (M4). The forwarded `connect.answer` adds the owner's identity (`to_user`, `to_root_pubkey`, `to_chain`) and the transfer token the downloader presents in `hello` (ADR 0010).
 - **Peer `get` ranges** are chunk-index ranges `[start, end)`.
 - **`connect.failed`** c→h carries raw `observations`. The hub combines both sides' observations into the single diagnosis (`cause`, `easier_fix`, `you`, `them`). `easier_fix` also allows `either` and `none`.
+  - Since M5, the downloader's c→h `connect.failed` is a request, and the reply is the h→c `connect.failed` with the diagnosis. The owner's report is answered with `ok` (ADR 0011).
+- **`NatType`** adds `none` (no NAT: the hub saw one of our own addresses) and `blocked` (no reply from either probe port) to `endpoint_independent | symmetric | unknown` (M5, ADR 0011).
+- **`welcome.nat_probe_ports`** are the ports the hub actually bound, so a hub configured with port 0 (tests) still reports usable ports.
 - **`Candidate`** is `{kind: lan|public|mapped|ipv6|advertised, host, port}`. `host` must be an IP literal (ADR 0001). The udx stream id is added in M4.
 - **Link codes** are formatted `XXXX-XXXX` (Crockford-ish alphabet, uppercase).
 - **`SharePath`** is `ShareName/rel/path`. It rejects absolute paths, `..`, `.`, empty segments, backslashes and NUL. A trailing `/` marks a folder (ACL rules, browse, watch).

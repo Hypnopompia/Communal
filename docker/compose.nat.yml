@@ -1,8 +1,10 @@
 # NAT test lab (HANDOFF §13 "Simulating bad networks"): two clients, each on its own private
 # network behind its own NAT router, and a hub on the "public" network. The clients cannot
 # reach each other's private addresses, so a transfer only works if hole punching does.
+# NAT_A / NAT_B pick each router's behaviour (cone, symmetric, udp_blocked) for the M5
+# diagnosis scenarios.
 #
-#   docker/nat/test.sh      (builds, runs a transfer through both NATs, checks it, tears down)
+#   docker/nat/test.sh      (builds, runs every scenario, checks each outcome, tears down)
 #
 # Linux only in CI; works on Docker Desktop too (needs NET_ADMIN for the routers).
 x-node: &node
@@ -26,6 +28,8 @@ services:
     build: { context: .., dockerfile: docker/nat/router.Dockerfile }
     image: communal-nat-router:dev
     cap_add: [NET_ADMIN]
+    # cone | symmetric | udp_blocked (docker/nat/router.sh); test.sh sets these per scenario.
+    environment: { NAT_MODE: '${NAT_A:-cone}' }
     sysctls: { net.ipv4.ip_forward: 1 }
     networks:
       public: { ipv4_address: 172.30.0.20 }
@@ -35,6 +39,7 @@ services:
     image: communal-nat-router:dev
     depends_on: [router-a]
     cap_add: [NET_ADMIN]
+    environment: { NAT_MODE: '${NAT_B:-cone}' }
     sysctls: { net.ipv4.ip_forward: 1 }
     networks:
       public: { ipv4_address: 172.30.0.30 }

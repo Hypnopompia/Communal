@@ -103,7 +103,13 @@ export const Audience = z.union([
   z.object({ users: z.array(UserId).optional(), groups: z.array(GroupId).optional() }).strict(),
 ]);
 
-export const NatType = z.enum(['endpoint_independent', 'symmetric', 'unknown']);
+/**
+ * What the NAT probe found (HANDOFF §8, ADR 0011): `none` = the hub saw one of our own
+ * addresses (no NAT); `endpoint_independent` = same mapped port towards both probe ports;
+ * `symmetric` = a different port per destination; `blocked` = no probe reply at all (UDP
+ * blocked); `unknown` = couldn't tell (one reply only, or the hub runs no probe).
+ */
+export const NatType = z.enum(['none', 'endpoint_independent', 'symmetric', 'blocked', 'unknown']);
 
 export const NetworkProfile = z.object({
   nat: NatType,

@@ -15,6 +15,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@achingbrain/nat-port-mapper": "^4.0.5",
     "@communal/crypto": "workspace:*",
     "@communal/protocol": "workspace:*",
     "@hyperswarm/secret-stream": "^6.9.2",

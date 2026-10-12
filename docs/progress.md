@@ -2,21 +2,19 @@
 
 ## Next up
 
-**M5 — Diagnostics (no relay).** HANDOFF §8 and §12. Starting points:
+**M6 — File types, metadata, thumbnails, previews.** HANDOFF §9 and §12. Starting points:
 
 - **What already exists:**
-  - The hub runs both UDP probe responders.
-  - The client already probes from its peer socket to learn a public candidate (`PeerTransport.probe`, `CommunalCore.probeVia`).
-  - `network.profile` is in the protocol, but the hub answers `not_implemented`.
-  - A failed punch currently surfaces only as "could not connect to any source" (`ConnectError` with reason `no_path`).
+  - Type detection (`detect.ts`: magic bytes plus extension), and `kind`/`mime` on every entry.
+  - `meta` and `thumb` are in the protocol and the index, but always empty.
+  - The peer frames `thumb.get`, `thumb`/`thumb.none`, `peek` and `peek.data` are in the protocol. The uploader doesn't handle them yet, and its access re-check must cover them (HANDOFF §7).
 - **To do:**
-  - NAT classification: send from one socket to _both_ probe ports and compare the observed ports.
-  - UPnP/NAT-PMP mapping: pick a maintained library and record it in an ADR.
-  - Global IPv6, and CGNAT detection (external IP in 100.64.0.0/10).
-  - Send `network.profile` to each hub.
-  - On failure, both sides send `connect.failed` with observations, and the hub combines them into `cause` + `easier_fix`.
-  - Show the diagnosis and tips in transfer state, the CLI and the API.
-- **Done when:** NAT-lab scenarios for symmetric NAT, blocked UDP and an offline peer each produce the right `cause`. Extend `docker/compose.nat.yml`; the routers are plain Alpine + iptables, so symmetric NAT can use `MASQUERADE --random` and blocked UDP a `DROP` rule.
+  - Extractors: sharp/exifr, ffprobe, music-metadata, pdf.js.
+  - Thumbnails: 320 px WebP, EXIF/GPS stripped, keyed by hash, plus a 1600 px preview on demand.
+  - Viewer cache (LRU, size-capped).
+  - Batched `thumb.get`, text `peek`, and in-order streaming ranges.
+  - ffmpeg in the headless image.
+- **Done when:** a mixed fixture folder shows correct icons and metadata, and a 500-image folder's thumbnails load in one batched request.
 
 **Still open from M0:** the 1 GiB transfer between two physical machines on a LAN. It needs the owner's second machine.
 
@@ -25,6 +23,78 @@
 - `better-sqlite3` and `udx-native` are native modules. They need an Electron rebuild (or matching prebuilds) and a smoke test inside Electron's `utilityProcess`.
 - Settings needs a hub list (ADR 0007).
 - The access UI must show which hub each rule applies to.
+- Turn on the router port mapper (`RouterPortMapper`) the way the CLI daemon does. Settings → Network shows `GET /v1/network` and re-runs `POST /v1/network/check`. Transfers show `diagnosis.message`, `tips` and `fix` (ADR 0011).
+
+## M5 — Diagnostics with no relay (2026-10-12)
+
+**Status: done.** Details and decisions are in ADR 0011.
+
+### What exists
+
+- **Network check (core):**
+  - The NAT probe sends from the peer socket to both hub probe ports, giving `none`, `endpoint_independent`, `symmetric`, `blocked` or `unknown`.
+  - UPnP/NAT-PMP port mapping through `@achingbrain/nat-port-mapper`. The mapping becomes a `mapped` candidate, is refreshed, and is removed on shutdown.
+  - Global IPv6 and CGNAT (100.64.0.0/10) detection.
+  - `network.profile` is sent to every hub on sign-in.
+- **Hub:**
+  - Stores `network.profile` per session (memory only).
+  - Takes `connect.failed` from both parties of a brokered session and answers the downloader with one diagnosis: `cause`, `easier_fix`, `you`, `them`.
+  - `diagnose()` is a pure function covering the HANDOFF §8 table.
+  - It waits up to 3 s for the owner's report, then falls back to the owner's profile. An unanswered offer means `peer_offline`.
+- **Core:**
+  - Both sides report `no_path` and `handshake_failed` with punch stats.
+  - Transfers keep the most useful diagnosis until they complete, and keep retrying.
+  - `explain()` holds the user-facing message, tips and whose side to fix.
+- **CLI and API:**
+  - `communal transfers` shows cause, message, tips and both sides' NAT.
+  - `communal netcheck` is new, backed by `GET /v1/network` and `POST /v1/network/check`.
+  - `GET /v1/downloads` includes the explained diagnosis.
+  - `COMMUNAL_UPNP=false` turns the router mapping off.
+- **NAT lab:** router modes `cone`, `symmetric` (`MASQUERADE --random-fully`) and `udp_blocked`, with scripted scenarios in `docker/nat/test.sh`.
+
+### Done criteria
+
+- [x] **Symmetric NAT** (`cone / symmetric`): `both_restrictive_nat`, easier fix on the owner's (cone) side. The network check reported `endpoint_independent` and `symmetric`, with two different ports seen by the hub.
+- [x] **Blocked UDP** (`cone / udp_blocked`): `udp_blocked`, easier fix `you`. The network check reported `blocked`.
+- [x] **Offline peer** (`cone / cone`, owner stopped): `peer_offline`, easier fix `none`, and the download stays queued.
+- [x] **Plus the M4 baseline,** now genuine: 12 MB between two cone NATs via hole punching, sha256 match. The whole lab takes about 2 minutes.
+
+**The M4 lab didn't actually test hole punching.** Traffic leaked between the private networks through Docker's LAN-side gateway, and once that was closed, punching hit a conntrack port clash on the routers. Both are fixed in the lab routers, and the correction is recorded in ADR 0010. The transport code didn't need changes.
+
+### Also tested
+
+- `apps/hub/src/diagnosis.test.ts`: every row of the diagnosis table, including ties, CGNAT on either or both sides, one-way reachability, and a missing owner report.
+- `apps/hub/src/broker.test.ts`, access control:
+  - `network.profile` needs a session.
+  - Only the two parties of a live session may report.
+  - Only the downloader gets the diagnosis, and it carries no punch stats.
+  - Late owner reports are waited for, and finished sessions can't be reported again.
+- `packages/core/src/peer/netcheck.test.ts`: NAT classification, the exact CGNAT range, and the messages and tips for every cause.
+- `test/integration/m5-diagnostics.test.ts` (real hubs and cores; bad networks simulated by dropping punches and overriding the measured profile):
+  - profiles per hub (with and without probe responders)
+  - a mapped candidate with CGNAT, and the mapping removed on stop
+  - `both_restrictive_nat` shown with tips over the local API, then finishing once the network is fixed
+  - `udp_blocked`, `os_firewall` on the owner's side, and `peer_offline`
+- The full suite (223 tests, including the 100k-file scale test) passes.
+
+### Fixed along the way
+
+- **Hub search was quadratic in the number of matching entries.** "Newest copy per hash" was a correlated subquery over an unindexed CTE. A prefix query over 20k files took 8 s, and over 50k files it took 49 s. That blocked the hub past its silence window, so the 100k-file M2 test had been failing since at least M4, hidden because quick runs use `M2_FILES`. It's now a grouped CTE joined once, and the 100k test takes 31 s again. Run the full `pnpm check` (no `M2_FILES`) before closing a milestone.
+
+### Demo
+
+```bash
+docker/nat/test.sh                      # all scenarios; or: docker/nat/test.sh symmetric
+B netcheck                              # nat=… per hub, router mapping, advice
+B transfers                             # waiting downloads show cause, message and tips
+```
+
+### Carried forward
+
+- **CGNAT is only detected through a UPnP/NAT-PMP router** (its external address), or when the hub sees a 100.64/10 address. Otherwise it's reported as `both_restrictive_nat`, whose tips still apply.
+- **A hub whose UDP probe ports aren't reachable** (for example behind a TCP-only proxy) makes clients look `blocked`. Hub setup docs (M9) must say to publish 3478/3479 UDP.
+- **The lab has no UPnP router,** so the real mapping path is only exercised up to "no gateway found". A miniupnpd router container could cover it later.
+- **The help link** HANDOFF suggests sending to the person with the easier fix is UI work for M9. `explain()` already provides the text.
 
 ## M4 — Direct transfers (2026-10-12)
 
@@ -42,7 +112,7 @@
 ### Done criteria
 
 - [x] **Files transfer between peers on a LAN:** integration tests, plus the Docker dev stack (a 30 MB file between containers, sha256 match).
-- [x] **Across NATs in a test lab:** `docker/nat/test.sh`. Two clients behind separate masquerading routers that can't reach each other directly; 12 MB transferred via hole punching, sha256 match.
+- [x] **Across NATs in a test lab:** `docker/nat/test.sh`. Two clients behind separate masquerading routers; 12 MB transferred, sha256 match. _Corrected in M5: the lab leaked traffic between its private networks, so this run proved less than it claimed. Genuine hole punching was verified in M5 (ADR 0010)._
 - [x] **A killed transfer resumes:** the restarted download had 10 of 40 chunks and fetched exactly the missing 30.
 - [x] **A corrupted chunk is detected and re-fetched,** both from a different honest source and from a source that corrupted it once.
 - [x] **Forged and expired tokens are rejected:** not signed by the hub (`bad_token`), expired (`expired`), another session's genuine token (`bad_token`), a token issued to someone else (`wrong_sender`).

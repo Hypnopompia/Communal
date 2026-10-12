@@ -17,3 +17,5 @@ export * from './transfer/access.js';
 export * from './transfer/uploader.js';
 export * from './transfer/downloader.js';
 export type { TransferRow, UploadLogRow } from './index/store.js';
+export * from './peer/netcheck.js';
+export * from './transfer/diagnosis.js';

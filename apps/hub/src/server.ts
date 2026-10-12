@@ -35,6 +35,7 @@ import {
   type HubType,
 } from '@communal/protocol';
 import { Catalog } from './catalog.js';
+import { diagnose, natView, type Observation } from './diagnosis.js';
 import type { HubDb } from './db.js';
 
 export interface HubOptions {
@@ -53,13 +54,23 @@ export interface HubOptions {
    * banned users' live sessions.
    */
   banPollMs?: number;
+  /**
+   * After one side of a failed connection reports, how long to wait for the other side's
+   * observations before diagnosing with what we have (ADR 0011).
+   */
+  diagnosisWaitMs?: number;
   log?: Logger;
 }
 
 /** Transfer tokens are valid for 5 minutes (HANDOFF §8). */
 const TOKEN_TTL_S = 300;
 
-const DEFAULTS = { silenceMs: 90_000, authTimeoutMs: 30_000, banPollMs: 2_000 };
+const DEFAULTS = {
+  silenceMs: 90_000,
+  authTimeoutMs: 30_000,
+  banPollMs: 2_000,
+  diagnosisWaitMs: 3_000,
+};
 
 /** Message types accepted before `auth` succeeds. */
 const PRE_AUTH = new Set<ClientMessage['t']>([
@@ -81,7 +92,24 @@ interface Session {
   device?: string;
   /** In-progress index snapshot from this session's device. */
   snapshot?: { rev: number; nextPage: number };
+  /** The device's latest `network.profile` (memory only; resent after every sign-in). */
+  profile?: ClientBody<'network.profile'>;
   log: Logger;
+}
+
+interface Brokered {
+  downloader: Session;
+  from: string;
+  to: string;
+  token: SignedToken;
+  expires: number;
+  /** The owner answered the offer (so it was reachable through the hub at that point). */
+  answered: boolean;
+  /** `connect.failed` observations from the downloader / the owner (ADR 0011). */
+  down?: Observation;
+  up?: Observation;
+  /** Wakes a pending diagnosis when the owner's report arrives. */
+  onReport?: () => void;
 }
 
 export class HubServer {
@@ -98,10 +126,7 @@ export class HubServer {
   /** device_id → its live authenticated session. */
   private readonly online = new Map<string, Session>();
   /** Brokered connections awaiting the uploader's answer (HANDOFF §8). */
-  private readonly brokered = new Map<
-    string,
-    { downloader: Session; from: string; to: string; token: SignedToken; expires: number }
-  >();
+  private readonly brokered = new Map<string, Brokered>();
   /** device_id → timer that will publish "offline" once the grace period runs out. */
   private readonly goingOffline = new Map<string, NodeJS.Timeout>();
 
@@ -110,6 +135,17 @@ export class HubServer {
     this.db = opts.db;
     this.catalog = new Catalog(this.db, (d) => this.isOnline(d));
     this.log = opts.log ?? pino({ name: 'hub' });
+  }
+
+  /** The probe ports actually bound (port 0 in options means "any"), or [0, 0] for none. */
+  get probePorts(): [number, number] {
+    const [a, b] = this.probes.map((p) => p.address().port);
+    return a && b ? [a, b] : [0, 0];
+  }
+
+  /** A signed-in device's latest `network.profile` (diagnostics; memory only). */
+  profileOf(device: string): ClientBody<'network.profile'> | undefined {
+    return this.online.get(device)?.profile;
   }
 
   get hubPubkey(): string {
@@ -364,6 +400,11 @@ export class HubServer {
           return this.onConnectRequest(s, msg.id, msg.body);
         case 'connect.answer':
           return this.onConnectAnswer(s, msg.id, msg.body);
+        case 'connect.failed':
+          return void this.onConnectFailed(s, msg.id, msg.body);
+        case 'network.profile':
+          s.profile = msg.body;
+          return this.send(s, 'ok', {}, msg.id);
         case 'acl.replace':
           return this.onAcl(s, msg.id, msg.body.device_id, msg.body.rules, true);
         default:
@@ -501,7 +542,7 @@ export class HubServer {
         device_id: dev.id,
         observed_addr: s.observedAddr,
         index_rev: this.db.indexRev(dev.id),
-        nat_probe_ports: this.opts.probePorts ?? [0, 0],
+        nat_probe_ports: this.probePorts,
       },
       re,
     );
@@ -675,7 +716,6 @@ export class HubServer {
       return this.fail(s, 'conflict', 'session id in use', re);
     const target = this.online.get(body.target);
     if (!target) {
-      const unknown = { nat: 'unknown', upnp: false, ipv6: false, cgnat: false } as const;
       return this.send(
         s,
         'connect.failed',
@@ -683,8 +723,8 @@ export class HubServer {
           session_id: body.session_id,
           cause: 'peer_offline',
           easier_fix: 'none',
-          you: unknown,
-          them: unknown,
+          you: natView(s.profile),
+          them: natView(undefined),
         },
         re,
       );
@@ -704,6 +744,7 @@ export class HubServer {
       to: body.target,
       token,
       expires: now + TOKEN_TTL_S * 1000,
+      answered: false,
     });
     this.send(target, 'connect.offer', {
       session_id: body.session_id,
@@ -723,6 +764,7 @@ export class HubServer {
     const b = this.brokered.get(body.session_id);
     // Only the device the offer went to may answer it.
     if (!b || b.to !== s.device) return this.fail(s, 'not_found', 'no such session', re);
+    b.answered = true;
     const me = this.db.getDevice(s.device!)!;
     const owner = this.db.getUser(s.user!)!;
     this.send(b.downloader, 'connect.answer', {
@@ -735,6 +777,50 @@ export class HubServer {
       token: b.token,
     });
     this.send(s, 'ok', {}, re);
+  }
+
+  /**
+   * Either side of a brokered session reports that no direct path came up (HANDOFF §8). The
+   * owner's report is just recorded. The downloader's is answered with one diagnosis built
+   * from both sides' observations, after waiting briefly for the owner's if it isn't in yet.
+   */
+  private async onConnectFailed(s: Session, re: string, body: ClientBody<'connect.failed'>) {
+    const b = this.brokered.get(body.session_id);
+    const isDown = b?.from === s.device && b?.downloader === s;
+    const isUp = b?.to === s.device;
+    // Only the two parties of a live session may report, and nobody learns about others'.
+    if (!b || (!isDown && !isUp)) return this.fail(s, 'not_found', 'no such session', re);
+    if (isUp) {
+      b.up = body.observations;
+      b.onReport?.();
+      return this.send(s, 'ok', {}, re);
+    }
+    b.down = body.observations;
+    if (b.answered && !b.up) {
+      const pending = b;
+      await new Promise<void>((resolve) => {
+        const t = setTimeout(resolve, this.opts.diagnosisWaitMs);
+        pending.onReport = () => {
+          clearTimeout(t);
+          resolve();
+        };
+      });
+      b.onReport = undefined;
+    }
+    // An owner that never reported (crashed, or its report was lost) is judged by its profile.
+    const up = b.up ?? this.online.get(b.to)?.profile;
+    const result = diagnose({ answered: b.answered, down: b.down, up });
+    this.brokered.delete(body.session_id);
+    s.log.info(
+      { session: body.session_id, to: b.to, cause: result.cause, easier_fix: result.easier_fix },
+      'direct connection failed',
+    );
+    this.send(
+      s,
+      'connect.failed',
+      { session_id: body.session_id, ...result, you: natView(b.down), them: natView(up) },
+      re,
+    );
   }
 
   // ── access rules ──────────────────────────────────────────────────────────

@@ -38,6 +38,7 @@ export async function startTestHub(
     hubId: 'test-hub',
     silenceMs: 2_000,
     authTimeoutMs: 2_000,
+    diagnosisWaitMs: 300,
     log: pino({ level: process.env.HUB_TEST_LOG ?? 'silent' }),
     ...opts,
     db,

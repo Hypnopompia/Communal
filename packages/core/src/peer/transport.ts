@@ -45,10 +45,22 @@ const PRIORITY: Record<Candidate['kind'], number> = {
   public: 4,
 };
 
+/** What hole punching saw before giving up: reported to the hub in `connect.failed`. */
+export interface PunchStats {
+  /** Punch rounds sent (one datagram to every candidate per round). */
+  attempts: number;
+  /** At least one datagram left this socket (false: nothing routable, or sending failed). */
+  udp_sent: boolean;
+  /** Something from the peer arrived (a punch, or an echo of ours). */
+  udp_received: boolean;
+}
+
 export class ConnectError extends Error {
   constructor(
     readonly reason: 'no_path' | 'handshake_failed' | 'peer_rejected' | 'closed',
     message: string,
+    /** Set when punching ran: what the network let through (ADR 0011). */
+    readonly stats?: PunchStats,
   ) {
     super(message);
   }
@@ -69,11 +81,23 @@ export interface TransportOptions {
   advertise?: { host: string; port: number }[];
   /** Offer 127.0.0.1 as a candidate (tests, and peers on the same machine). */
   loopback?: boolean;
+  /** How long hole punching (plus the handshake) may take before giving up (default 10 s). */
+  connectTimeoutMs?: number;
+  /** Fault injection for tests: drop every incoming punch/echo while this returns true. */
+  testDropPunches?: () => boolean;
   log?: Logger;
 }
 
 const isPrivateV4 = (h: string) =>
   /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|169\.254\.)/.test(h);
+
+/** Every address of this machine's interfaces, loopback included (to spot "no NAT"). */
+export function localAddresses(): Set<string> {
+  const out = new Set<string>();
+  for (const list of Object.values(networkInterfaces()))
+    for (const a of list ?? []) out.add(a.address);
+  return out;
+}
 
 /** Same machine or the same private network: what "only upload on LAN" allows. */
 export function isLanAddress(host: string): boolean {
@@ -91,6 +115,8 @@ export class PeerTransport {
   private readonly channels = new Set<PeerChannel>();
   /** Our address as seen from outside, learned by probing hubs (key: host:port). */
   private readonly publicAddrs = new Map<string, { host: string; port: number; at: number }>();
+  /** A port mapping on the router (UPnP / NAT-PMP), if one was made. */
+  private mapped?: { host: string; port: number };
   private probeWaiters: { from: string; resolve: (a: { addr: string; port: number }) => void }[] =
     [];
   private readonly log: Logger;
@@ -160,6 +186,8 @@ export class PeerTransport {
     const r = await reply;
     if (!r || !isIP(r.addr)) return null;
     const addr = { host: r.addr, port: r.port, at: Date.now() };
+    // Behind a symmetric NAT every probe reveals a new port: keep only recent ones.
+    for (const [k, v] of this.publicAddrs) if (addr.at - v.at > 600_000) this.publicAddrs.delete(k);
     this.publicAddrs.set(`${addr.host}:${addr.port}`, addr);
     return { host: addr.host, port: addr.port };
   }
@@ -180,6 +208,10 @@ export class PeerTransport {
     }
   }
 
+  setMapped(addr: { host: string; port: number } | undefined) {
+    this.mapped = addr && isIP(addr.host) ? addr : undefined;
+  }
+
   /** Addresses peers can try, best first. */
   candidates(): Candidate[] {
     const port = this.port;
@@ -194,6 +226,7 @@ export class PeerTransport {
     if (this.o.loopback) out.unshift({ kind: 'lan', host: '127.0.0.1', port });
     for (const a of this.o.advertise ?? [])
       out.push({ kind: 'advertised', host: a.host, port: a.port });
+    if (this.mapped) out.push({ kind: 'mapped', host: this.mapped.host, port: this.mapped.port });
     for (const a of this.publicAddrs.values()) {
       if (!out.some((c) => c.host === a.host && c.port === a.port)) {
         out.push({ kind: 'public', host: a.host, port: a.port });
@@ -232,6 +265,7 @@ export class PeerTransport {
     const session = msg.subarray(MAGIC.length + 1).toString();
     const st = this.sessions.get(session);
     if (!st) return; // never answer for sessions we don't know (no reflection)
+    if (this.o.testDropPunches?.()) return;
     if (type === PUNCH) this.sendDatagram(ECHO, session, from.host, from.port);
     if (!st.heard.some((h) => h.host === from.host && h.port === from.port)) {
       st.heard.push({ host: from.host, port: from.port, at: Date.now(), kind: type });
@@ -239,15 +273,19 @@ export class PeerTransport {
     st.onHeard?.();
   }
 
-  private sendDatagram(type: number, session: string, host: string, port: number) {
+  /** False when the datagram couldn't be sent (no socket, or an unroutable address). */
+  private sendDatagram(type: number, session: string, host: string, port: number): boolean {
+    if (!this.socket) return false;
     try {
-      this.socket?.trySend(
+      this.socket.trySend(
         Buffer.concat([MAGIC, Buffer.from([type]), Buffer.from(session)]),
         port,
         host,
       );
+      return true;
     } catch {
       // unroutable candidate (e.g. IPv6 on an IPv4-only host): ignore
+      return false;
     }
   }
 
@@ -268,22 +306,31 @@ export class PeerTransport {
     if (!socket) throw new ConnectError('closed', 'transport not started');
     this.expect(opts.session);
     const st = this.sessions.get(opts.session)!;
-    const deadline = Date.now() + (opts.timeoutMs ?? 10_000);
+    const deadline = Date.now() + (opts.timeoutMs ?? this.o.connectTimeoutMs ?? 10_000);
     const targets = [...opts.candidates]
       .filter((c) => isIP(c.host))
       .sort((a, b) => PRIORITY[a.kind] - PRIORITY[b.kind]);
 
     // Punch until we've heard from the peer, then pick the best path heard in a short window.
+    let attempts = 0;
+    let sent = false;
     const punchAll = () => {
-      for (const c of targets) this.sendDatagram(PUNCH, opts.session, c.host, c.port);
+      attempts++;
+      for (const c of targets)
+        sent = this.sendDatagram(PUNCH, opts.session, c.host, c.port) || sent;
     };
+    const stats = (): PunchStats => ({
+      attempts,
+      udp_sent: sent,
+      udp_received: st.heard.length > 0,
+    });
     punchAll();
     const timer = setInterval(punchAll, 100);
     try {
       if (st.heard.length === 0) {
         await new Promise<void>((resolve, reject) => {
           const t = setTimeout(
-            () => reject(new ConnectError('no_path', 'no network path to the peer')),
+            () => reject(new ConnectError('no_path', 'no network path to the peer', stats())),
             Math.max(0, deadline - Date.now()),
           );
           st.onHeard = () => {
@@ -311,7 +358,7 @@ export class PeerTransport {
     try {
       await new Promise<void>((resolve, reject) => {
         const t = setTimeout(
-          () => reject(new ConnectError('handshake_failed', 'secure handshake timed out')),
+          () => reject(new ConnectError('handshake_failed', 'secure handshake timed out', stats())),
           Math.max(1_000, deadline - Date.now()),
         );
         secure.once('connect', () => {
@@ -320,7 +367,7 @@ export class PeerTransport {
         });
         secure.once('error', (e: Error) => {
           clearTimeout(t);
-          reject(new ConnectError('handshake_failed', e.message));
+          reject(new ConnectError('handshake_failed', e.message, stats()));
         });
         secure.once('close', () => {
           clearTimeout(t);

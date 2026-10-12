@@ -1,8 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { lookup } from 'node:dns/promises';
-import { isIP } from 'node:net';
 import { pino, type Logger } from 'pino';
 import { deviceId, type KeyPair } from '@communal/crypto';
 import type { ClientBody, HubBody } from '@communal/protocol';
@@ -11,6 +9,7 @@ import { Indexer, type IndexerOptions } from './index/indexer.js';
 import { IndexStore, type Audience, type ShareRow } from './index/store.js';
 import { People } from './people.js';
 import { PeerTransport, type TransportOptions } from './peer/transport.js';
+import { NetworkCheck, type NetworkProfile, type PortMapper } from './peer/netcheck.js';
 import { PeerBroker } from './transfer/broker.js';
 import { AccessOracle } from './transfer/access.js';
 import {
@@ -32,10 +31,19 @@ export interface CoreOptions {
   indexer?: Omit<IndexerOptions, 'log'>;
   /** Peer transport: UDP port, operator-advertised addresses, loopback candidates (tests). */
   peer?: Omit<TransportOptions, 'device' | 'log'>;
+  /**
+   * Network diagnostics (M5). `mapper` opens our UDP port on the router (UPnP/NAT-PMP); it's
+   * off unless given, so tests never touch a real router. `override` patches the measured
+   * profile (tests).
+   */
+  network?: { mapper?: PortMapper; override?: () => Partial<NetworkProfile> | undefined };
   uploads?: Partial<UploadLimits>;
   /** Where downloads land by default (default: <dataDir>/downloads). */
   downloadsDir?: string;
-  downloads?: Pick<DownloadOptions, 'maxPeers' | 'window' | 'chunkTimeoutMs' | 'retryMs'>;
+  downloads?: Pick<
+    DownloadOptions,
+    'maxPeers' | 'window' | 'chunkTimeoutMs' | 'retryMs' | 'answerTimeoutMs'
+  >;
   /** Fault injection for tests only. */
   testHooks?: UploaderTestHooks;
   log?: Logger;
@@ -64,6 +72,7 @@ export class CommunalCore {
   readonly sync: IndexSync;
   readonly people: People;
   readonly transport: PeerTransport;
+  readonly network: NetworkCheck;
   readonly broker: PeerBroker;
   readonly uploader: Uploader;
   readonly downloads: Downloads;
@@ -89,14 +98,18 @@ export class CommunalCore {
     this.people = new People(this.hubs, this.store);
     // Each hub gets this device's full rule set for that hub on every sign-in (ADR 0009).
     this.hubs.on('ready', ({ hub }) => void this.pushRules(hub));
-    // Learn our public address through each hub's probe responder (hole punching candidate).
-    this.hubs.on(
-      'ready',
-      ({ hub, welcome }) => void this.probeVia(hub, welcome.nat_probe_ports[0]),
-    );
 
     this.transport = new PeerTransport({ ...o.peer, device: o.device, log: this.log });
-    this.broker = new PeerBroker(this.hubs, this.transport, o.device, this.log);
+    // On each sign-in: probe the hub from the peer socket (NAT type, and our public address as
+    // a hole-punching candidate), then send it our network profile (HANDOFF §8).
+    this.network = new NetworkCheck({
+      transport: this.transport,
+      hubs: this.hubs,
+      mapper: o.network?.mapper ?? null,
+      ...(o.network?.override ? { override: o.network.override } : {}),
+      log: this.log,
+    });
+    this.broker = new PeerBroker(this.hubs, this.transport, o.device, this.network, this.log);
     this.uploadLimits = { ...DEFAULT_UPLOAD_LIMITS, ...o.uploads };
     this.uploader = new Uploader({
       store: this.store,
@@ -126,6 +139,7 @@ export class CommunalCore {
   async start() {
     // The transport first: candidates sent to hubs need its port.
     await this.transport.start();
+    this.network.start();
     this.hubs.start();
     await this.indexer.start();
     this.downloads.start();
@@ -135,6 +149,7 @@ export class CommunalCore {
     await this.downloads.stop();
     await this.indexer.stop();
     await this.hubs.stop();
+    await this.network.stop();
     await this.transport.stop();
     this.store.close();
   }
@@ -286,20 +301,6 @@ export class CommunalCore {
     await this.pushRules(hub);
   }
 
-  private async probeVia(hub: string, port: number) {
-    const url = this.hubs.find(hub)?.url;
-    if (!url || !port) return;
-    try {
-      const host = new URL(url).hostname.replace(/^\[|\]$/g, '');
-      const ip = isIP(host) ? host : (await lookup(host)).address;
-      const addr = await this.transport.probe(ip, port);
-      if (addr)
-        this.log.info({ hub, public_addr: `${addr.host}:${addr.port}` }, 'learned public address');
-    } catch (err) {
-      this.log.debug({ hub, err: (err as Error).message }, 'public address probe failed');
-    }
-  }
-
   /** Sends this device's rules for `hub` to it (no-op while offline; repeated on sign-in). */
   private async pushRules(hub: string) {
     const client = this.hubs.get(hub);
@@ -362,6 +363,7 @@ export class CommunalCore {
         ready: h.ready,
         registered: h.state.registered,
         user_id: h.state.userId ?? null,
+        network: this.network.profile(h.id) ?? null,
       })),
       index: this.store.counts(),
       peer_port: this.transport.port,

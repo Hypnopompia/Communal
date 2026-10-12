@@ -118,3 +118,147 @@ describe('access control: connect.request / connect.answer', () => {
     });
   });
 });
+
+const obs = (patch: Record<string, unknown> = {}) => ({
+  nat: 'endpoint_independent' as const,
+  upnp: false,
+  ipv6: false,
+  cgnat: false,
+  attempts: 50,
+  udp_sent: true,
+  udp_received: false,
+  ...patch,
+});
+const profile = {
+  nat: 'symmetric' as const,
+  upnp: false,
+  ipv6: false,
+  cgnat: false,
+  lan_addrs: ['10.0.0.5'],
+};
+
+describe('access control: network.profile / connect.failed', () => {
+  async function brokered(n: number) {
+    const w = await world();
+    await w.bob.c.request('connect.request', req(n, w.alice.deviceId));
+    await w.alice.c.next('connect.offer');
+    return w;
+  }
+
+  it('network.profile needs a signed-in session and is acknowledged', async () => {
+    const { RawClient } = await import('./testing.js');
+    const anon = await RawClient.connect(t.url);
+    await anon.next('challenge');
+    expect(await anon.request('network.profile', profile)).toMatchObject({
+      t: 'error',
+      body: { code: 'unauthenticated' },
+    });
+    anon.close();
+    const { alice } = await world();
+    expect((await alice.c.request('network.profile', profile)).t).toBe('ok');
+  });
+
+  it('combines both sides into one diagnosis for the downloader only', async () => {
+    const { alice, bob } = await brokered(10);
+    await alice.c.request('connect.answer', {
+      session_id: sid(10),
+      stream_id: 9,
+      candidates: cand,
+    });
+    expect(
+      (
+        await alice.c.request('connect.failed', {
+          session_id: sid(10),
+          observations: obs({ nat: 'symmetric' }),
+        })
+      ).t,
+    ).toBe('ok');
+    const r = await bob.c.request('connect.failed', {
+      session_id: sid(10),
+      observations: obs(),
+    });
+    expect(r).toMatchObject({
+      t: 'connect.failed',
+      body: {
+        session_id: sid(10),
+        cause: 'both_restrictive_nat',
+        easier_fix: 'you',
+        you: { nat: 'endpoint_independent', upnp: false, ipv6: false, cgnat: false },
+        them: { nat: 'symmetric', upnp: false, ipv6: false, cgnat: false },
+      },
+    });
+    // The punching stats stay with the hub; the answer carries the four profile fields only.
+    expect(Object.keys((r.body as { them: object }).them).sort()).toEqual([
+      'cgnat',
+      'ipv6',
+      'nat',
+      'upnp',
+    ]);
+    // The owner never receives a diagnosis, and the session is finished.
+    expect(alice.c.backlog().some((m) => m.t === 'connect.failed')).toBe(false);
+    expect(
+      await bob.c.request('connect.failed', { session_id: sid(10), observations: obs() }),
+    ).toMatchObject({ t: 'error', body: { code: 'not_found' } });
+  });
+
+  it('waits for the owner report that arrives after the downloader', async () => {
+    const { alice, bob } = await brokered(11);
+    await alice.c.request('connect.answer', {
+      session_id: sid(11),
+      stream_id: 9,
+      candidates: cand,
+    });
+    const id = bob.c.send('connect.failed', { session_id: sid(11), observations: obs() });
+    await new Promise((r) => setTimeout(r, 50));
+    await alice.c.request('connect.failed', {
+      session_id: sid(11),
+      observations: obs({ nat: 'blocked' }),
+    });
+    expect(await bob.c.next((m) => m.re === id)).toMatchObject({
+      body: { cause: 'udp_blocked', easier_fix: 'them' },
+    });
+  });
+
+  it('falls back to the owner profile when it never reports, and to peer_offline when it never answered', async () => {
+    const { alice, bob } = await brokered(12);
+    await alice.c.request('network.profile', { ...profile, nat: 'blocked' });
+    await alice.c.request('connect.answer', {
+      session_id: sid(12),
+      stream_id: 9,
+      candidates: cand,
+    });
+    expect(
+      await bob.c.request('connect.failed', { session_id: sid(12), observations: obs() }),
+    ).toMatchObject({
+      body: { cause: 'udp_blocked', easier_fix: 'them', them: { nat: 'blocked' } },
+    });
+
+    await bob.c.request('connect.request', req(13, alice.deviceId));
+    await alice.c.next('connect.offer');
+    expect(
+      await bob.c.request('connect.failed', { session_id: sid(13), observations: obs() }),
+    ).toMatchObject({ body: { cause: 'peer_offline', easier_fix: 'none' } });
+  });
+
+  it('refuses reports from anyone but the two parties, and for unknown sessions', async () => {
+    const { alice, bob } = await brokered(14);
+    const carol = await signUp(t.url, 'carol');
+    for (const c of [carol.c]) {
+      expect(
+        await c.request('connect.failed', { session_id: sid(14), observations: obs() }),
+      ).toMatchObject({ t: 'error', body: { code: 'not_found' } });
+    }
+    expect(
+      await bob.c.request('connect.failed', { session_id: sid(15), observations: obs() }),
+    ).toMatchObject({ t: 'error', body: { code: 'not_found' } });
+    // Carol's attempt changed nothing: the real parties still get their diagnosis.
+    await alice.c.request('connect.answer', {
+      session_id: sid(14),
+      stream_id: 9,
+      candidates: cand,
+    });
+    expect(
+      await bob.c.request('connect.failed', { session_id: sid(14), observations: obs() }),
+    ).toMatchObject({ t: 'connect.failed' });
+  });
+});

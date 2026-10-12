@@ -75,3 +75,10 @@ Brokered sessions expire with their token. A session id can't be reused while it
 - **Docker detail:** the LAN networks must not be `internal`, because Docker drops off-subnet packets on internal bridges even when they're addressed to a router container. Clients replace their default route with the lab router instead.
 
 M5 extends the lab with symmetric NAT, blocked UDP and offline cases for `connect.failed` diagnosis.
+
+**Correction (M5):** the M4 lab result didn't prove hole punching. Each router's default route pointed at Docker's gateway on its LAN side. A punch to the other client's private (`lan`) candidate therefore left the router un-NATed, was routed by the Docker host straight onto the other LAN, and won, because LAN candidates rank first. The ping check only tested one direction. Two fixes followed:
+
+- The routers now have no default route.
+- Like a home router's WAN side, they drop unsolicited packets addressed to themselves. An accepted one leaves a conntrack entry on the public port, and the inside client's own punch is then NATed to a different port, so the holes never line up.
+
+With both fixes, punching between two cone NATs works for real (ADR 0011, `docker/nat/test.sh`). The test now checks isolation in both directions.

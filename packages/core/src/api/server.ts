@@ -7,6 +7,7 @@ import { Kind } from '@communal/protocol';
 import { CoreError, type CommunalCore } from '../core.js';
 import { HubError } from '../hub-client.js';
 import { PeopleError } from '../people.js';
+import { explain } from '../transfer/diagnosis.js';
 
 /**
  * The core's local API (HANDOFF §3): HTTP+JSON for the CLI and the desktop renderer.
@@ -156,7 +157,12 @@ export class LocalApi {
       return { ok: true };
     });
 
-    route('GET', '/v1/downloads', async () => ({ downloads: this.core.downloads.list() }));
+    // A failed connection's diagnosis comes with its user message, tips and whose side to fix.
+    route('GET', '/v1/downloads', async () => ({
+      downloads: this.core.downloads
+        .list()
+        .map((d) => ({ ...d, diagnosis: d.diagnosis && explain(d.diagnosis) })),
+    }));
     route('POST', '/v1/downloads', async (_req, _url, body) => {
       const b = z
         .object({
@@ -183,6 +189,11 @@ export class LocalApi {
       return {
         log: this.core.store.uploadLog({ user: p.user, pathPrefix: p.path, limit: p.limit }),
       };
+    });
+    route('GET', '/v1/network', async () => this.core.network.summary());
+    route('POST', '/v1/network/check', async () => {
+      await this.core.network.recheck();
+      return this.core.network.summary();
     });
     route('GET', '/v1/settings/uploads', async () => this.core.uploadLimits);
     route('PUT', '/v1/settings/uploads', async (_req, _url, body) => {

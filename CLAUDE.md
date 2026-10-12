@@ -21,12 +21,13 @@ These came from the owner during development. Don't revert them to the spec's wo
 - `pnpm test`: runs Vitest across the repo, including the multi-node tests in `test/integration` (a workspace package of its own). The M2 scale test indexes 100k files (about 35 s); `M2_FILES=2000 pnpm test` makes it quick while iterating. For a single file use `pnpm exec vitest run packages/crypto/src/crypto.test.ts`, and for a single test add `-t "<name>"`.
 - `pnpm typecheck`, `pnpm lint`, `pnpm format`, `pnpm build` (compiles every package to `dist/`).
 - `pnpm spike:transport`: the M0 transport benchmark (1 GiB over loopback; `--bytes 64M` for a quick run). The real transport now lives in core `peer/transport.ts`. The spike stays as a benchmark.
-- `docker/nat/test.sh`: the NAT lab. It builds, transfers a file between two clients behind separate NAT routers, checks it, and tears down.
+- `docker/nat/test.sh [cone|symmetric|udp_blocked…]`: the NAT lab. Each scenario puts two clients behind their own routers (`NAT_A`/`NAT_B` modes in `docker/nat/router.sh`), then checks a direct transfer (and `peer_offline` after the owner stops), or the right `connect.failed` cause. It tears down afterwards. A full run takes a few minutes.
 - `pnpm dev:stack`: builds and starts the hub plus `node-a` (alice) and `node-b` (bob) via `docker/compose.dev.yml`. `pnpm dev:stack:reset` wipes the volumes. Docker Desktop's CLI lives in `~/.docker/bin` and may not be on PATH.
 - Inside a dev container: `docker compose -f docker/compose.dev.yml exec node-a communal <cmd>` (`share add /shares/alice --name Alice`, `search <words>`, `status`), or `communal-spike peer …` for the transport benchmark between containers.
 - Running an app from source: `pnpm --filter @communal/hub dev` (a dev build with self-signed TLS, data in `apps/hub/hub-data`), `pnpm --filter @communal/cli dev -- status`.
 - People and access (per hub, `--hub` needed when on several): `communal people search|request|accept|remove|verify`, `communal group set|list|delete`, `communal acl set <path> me|hub|users:<ids>|groups:<ids>`.
-- Transfers: `communal get <hash>`, `communal transfers`, `communal cancel <id>`, `communal log` (who downloaded what from this device).
+- Transfers: `communal get <hash>`, `communal transfers` (shows the diagnosis and tips when a source can't be reached), `communal cancel <id>`, `communal log` (who downloaded what from this device).
+- Network: `communal netcheck` (NAT type per hub, UPnP/NAT-PMP mapping, IPv6, CGNAT). The daemon maps its UDP port on the router unless `COMMUNAL_UPNP=false`.
 - Hub admin: `communal-hub users | approve <user_id> | ban <user_id> [--reason] | unban <user_id> | set join_mode open|approval`. These commands work directly on the SQLite database, so they run alongside a live hub.
 
 Shell notes for this machine:
@@ -62,7 +63,12 @@ How the pieces connect:
 - **Transfers** (ADR 0010):
   - Core `peer/transport.ts` does hole punching plus udx and Noise, with one UDP socket per device. `transfer/broker.ts` handles hub brokering and peer identity checks in both directions. `transfer/uploader.ts` does the `hello` checks, its own access re-check via `AccessOracle`, limits and the upload log. `transfer/downloader.ts` does multi-source, verification and `.part`/`.partmap` resume.
   - Read peer frames with `PeerChannel.next()` / `subscribe()`, never a bare `on('frame')`, or frames that arrive early are lost.
-- **NAT lab:** `docker/nat/test.sh` runs a transfer between two clients behind separate NAT routers (`docker/compose.nat.yml`).
+- **NAT lab:** `docker/nat/test.sh` runs a transfer between two clients behind separate NAT routers (`docker/compose.nat.yml`), plus the M5 failure scenarios.
+- **Diagnostics** (ADR 0011):
+  - Core `peer/netcheck.ts` probes both hub probe ports from the peer socket, classifies the NAT, maps the port with UPnP/NAT-PMP, and sends `network.profile` to each hub.
+  - On `no_path` or `handshake_failed`, both sides send `connect.failed` with their observations. The downloader's report is a request, and the hub answers it with the diagnosis from `diagnose()` in `apps/hub/src/diagnosis.ts`, a pure function covering the §8 table.
+  - The transfer row keeps the diagnosis, and `explain()` in core `transfer/diagnosis.ts` holds the user-facing text.
+  - `CommunalCore` leaves the router mapper off unless given one, so tests never touch a real router. Simulate bad networks with `peer.testDropPunches` and `network.override`.
 - **Hub visibility** is decided in exactly one place, `Catalog.visible()` in `apps/hub/src/catalog.ts`. Never filter access in individual queries. Each entry carries its governing rule (`entries.rule_path`), which `HubDb` re-tags whenever rules change (ADR 0009).
 - **Access rules are per hub, and the client's copy is authoritative** (core `index.db` table `acl`). It's pushed whole with `acl.replace` on every sign-in. List grants only work while the two users are connected.
 - **Clients never trust a hub's claims about identity:** run `checkSummary` on every `UserSummary` (core `people.ts`).
@@ -91,6 +97,8 @@ How the pieces connect:
 - Social state for later milestones (connections etc.) can be seeded directly with `HubDb` methods such as `putConnection`.
 - Integration tests run the real hub and `HubClient`s, with timers shortened through constructor options. Never use real 30 s / 90 s waits.
 - **Keep clients alive inside a test hub's silence window.** A test hub with `silenceMs: 600` drops a client that pings every 30 s, and events sent while it's reconnecting are lost. Two flaky tests came from this. Give clients `pingIntervalMs` well under the hub's `silenceMs`, and call `RawClient.keepAlive()` for raw clients in long tests.
+- **Close a milestone with the full `pnpm check`** (no `M2_FILES`). A quadratic hub search query once hid behind the quick variant for two milestones.
+- **The NAT lab must prove punching, not routing.** Routers have no default route and drop unsolicited WAN input (ADR 0010 correction). Keep the both-direction isolation check.
 - **Wait for conditions, not fixed sleeps.** Use the `until(cond)` helpers in the integration tests. Several tests were rewritten from sleeps to polling.
 
 ## Invariants that span multiple components

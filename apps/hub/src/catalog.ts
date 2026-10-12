@@ -75,11 +75,15 @@ export class Catalog {
         // planner can't flatten it back into the GROUP BY), then group by hash.
         `WITH ranked AS MATERIALIZED (
            SELECT e.hash AS hash, ${rank} AS r, e.mtime AS m, e.name AS name FROM ${from} WHERE ${where.join(' AND ')}
-         )
+         ),
+         -- Newest copy per hash, grouped once. (A correlated subquery here rescanned the whole
+         -- CTE per group: quadratic, 49 s for a prefix query over 50k files.)
+         newest AS MATERIALIZED (SELECT hash, max(m) AS m FROM ranked GROUP BY hash)
          -- SQLite: with a single min(), bare columns (name) come from the best-ranked row, so the
          -- hit is named after the copy that actually matched the query.
-         SELECT hash, min(r) AS r, name, (SELECT max(m) FROM ranked x WHERE x.hash = ranked.hash) AS m FROM ranked
-         GROUP BY hash ORDER BY r, m DESC, hash LIMIT @limit OFFSET @offset`,
+         SELECT ranked.hash AS hash, min(r) AS r, name, newest.m AS m
+         FROM ranked JOIN newest ON newest.hash = ranked.hash
+         GROUP BY ranked.hash ORDER BY r, m DESC, hash LIMIT @limit OFFSET @offset`,
       )
       .all(params) as { hash: string; name: string }[];
     const more = groups.length > q.limit;

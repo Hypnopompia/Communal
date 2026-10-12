@@ -25,6 +25,8 @@ import {
   type HubClientState,
   type HubEntry,
   type MergedSearch,
+  RouterPortMapper,
+  type Explained,
 } from '@communal/core';
 import { PROTOCOL_VERSION } from '@communal/protocol';
 
@@ -613,6 +615,7 @@ type Download = {
   bytes_done: number;
   error: string | null;
   final_path: string | null;
+  diagnosis: Explained | null;
 };
 
 program
@@ -642,9 +645,74 @@ program
         const pct = d.size ? ` ${Math.floor((d.bytes_done / d.size) * 100)}%` : '';
         const extra = d.state === 'done' ? `  → ${d.final_path}` : d.error ? `  (${d.error})` : '';
         console.log(`${d.id}  ${d.state.padEnd(9)}${pct.padStart(5)}  ${d.name}${extra}`);
+        // Why it couldn't connect, and what would fix it (HANDOFF §8). No relay, ever.
+        const g = d.diagnosis;
+        if (g && d.state !== 'done') {
+          console.log(`    cause: ${g.cause}  (easier fix: ${g.easier_fix})`);
+          console.log(`    ${g.message}`);
+          for (const tip of g.tips) console.log(`    - ${tip}`);
+          if (g.fix) console.log(`    ${g.fix}`);
+          if (g.cause !== 'peer_offline')
+            console.log(`    you: ${natLine(g.you)}\n    them: ${natLine(g.them)}`);
+        }
       }
     }),
   );
+
+program
+  .command('netcheck')
+  .description('check this network: NAT type per hub, UPnP/NAT-PMP, IPv6, carrier-grade NAT')
+  .option('--json', 'raw JSON')
+  .action((opts: { json?: boolean }) =>
+    viaDaemon(async (c) => {
+      const r = await c.post<{
+        port: number;
+        mapping: { method: string; host: string; port: number } | null;
+        router_ip: string | null;
+        hubs: Record<
+          string,
+          { profile: NetProfile; observed: ({ host: string; port: number } | null)[] }
+        >;
+      }>('/v1/network/check', {});
+      if (opts.json) return console.log(JSON.stringify(r, null, 2));
+      console.log(`peer port: UDP ${r.port}`);
+      console.log(
+        r.mapping
+          ? `router port mapping: ${r.mapping.method} ${r.mapping.host}:${r.mapping.port}`
+          : 'router port mapping: none (no UPnP/NAT-PMP, or it is turned off)',
+      );
+      if (r.router_ip) console.log(`router's external address: ${r.router_ip}`);
+      const ids = Object.keys(r.hubs);
+      if (ids.length === 0) console.log('no hub connected');
+      for (const id of ids) {
+        const h = r.hubs[id]!;
+        const seen = h.observed.map((o) => (o ? `${o.host}:${o.port}` : 'no reply')).join(', ');
+        console.log(`${id}: ${natLine(h.profile)}${seen ? `  (hub sees ${seen})` : ''}`);
+        console.log(`    ${natAdvice(h.profile)}`);
+      }
+    }),
+  );
+
+type NetProfile = { nat: string; upnp: boolean; ipv6: boolean; cgnat: boolean };
+
+function natLine(p: NetProfile): string {
+  const flags = [p.upnp && 'upnp', p.ipv6 && 'ipv6', p.cgnat && 'cgnat'].filter(Boolean);
+  return `nat=${p.nat}${flags.length ? ` ${flags.join(' ')}` : ''}`;
+}
+
+/** One line on what the profile means for direct connections. */
+function natAdvice(p: NetProfile): string {
+  if (p.nat === 'blocked')
+    return 'UDP is blocked here: direct transfers will not work on this network.';
+  if (p.upnp || p.nat === 'none') return 'Reachable: others can connect to this device directly.';
+  if (p.cgnat)
+    return 'Carrier-grade NAT: works only with peers who are reachable (UPnP or a forwarded port).';
+  if (p.nat === 'symmetric')
+    return 'Symmetric NAT: works only with peers who are reachable. Enable UPnP or forward the peer port.';
+  if (p.nat === 'endpoint_independent')
+    return 'Ordinary NAT: hole punching works with most peers. UPnP or a forwarded port makes it certain.';
+  return 'Could not tell (the hub may not run its UDP probe).';
+}
 
 program
   .command('cancel <download_id>')
@@ -721,6 +789,8 @@ program
       hubClient: { client, insecureTls },
       indexer: { rescanMs: rescanMinutes * 60_000 },
       peer: { port: Number(env.COMMUNAL_PEER_PORT ?? 0), advertise },
+      // UPnP / NAT-PMP port mapping on the home router, unless turned off (HANDOFF §8).
+      network: env.COMMUNAL_UPNP === 'false' ? {} : { mapper: new RouterPortMapper({ log }) },
       uploads: {
         ...(env.COMMUNAL_MAX_UPLOADS ? { maxConcurrent: Number(env.COMMUNAL_MAX_UPLOADS) } : {}),
         ...(env.COMMUNAL_UPLOAD_KBPS

@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import type { Kind } from './detect.js';
+import type { TransferDiagnosis } from '../transfer/diagnosis.js';
 
 export type Audience = 'me' | 'hub' | { users?: string[]; groups?: string[] };
 
@@ -37,6 +38,8 @@ export interface TransferRow {
   bytes_done: number;
   error: string | null;
   final_path: string | null;
+  /** Why the last attempt couldn't connect, as diagnosed by the hub (M5). */
+  diagnosis: TransferDiagnosis | null;
   created_at: number;
   updated_at: number;
 }
@@ -146,9 +149,19 @@ const MIGRATIONS = [
   );
   CREATE INDEX upload_log_at ON upload_log (at);
   `,
+  `
+  -- Why a download couldn't connect (HANDOFF §8 diagnosis, JSON), kept until it completes.
+  ALTER TABLE transfers ADD COLUMN diagnosis TEXT;
+  `,
 ];
 
 const now = () => Math.floor(Date.now() / 1000);
+
+type RawTransfer = Omit<TransferRow, 'diagnosis'> & { diagnosis: string | null };
+const parseTransfer = (r: RawTransfer): TransferRow => ({
+  ...r,
+  diagnosis: r.diagnosis ? (JSON.parse(r.diagnosis) as TransferDiagnosis) : null,
+});
 
 export class IndexStore {
   readonly raw: Database.Database;
@@ -362,32 +375,39 @@ export class IndexStore {
 
   updateTransfer(
     id: string,
-    patch: Partial<Pick<TransferRow, 'state' | 'size' | 'bytes_done' | 'error' | 'final_path'>>,
+    patch: Partial<
+      Pick<TransferRow, 'state' | 'size' | 'bytes_done' | 'error' | 'final_path' | 'diagnosis'>
+    >,
   ) {
     const cols = Object.keys(patch);
     if (cols.length === 0) return;
+    const values: Record<string, unknown> = { ...patch };
+    if (patch.diagnosis !== undefined)
+      values.diagnosis = patch.diagnosis ? JSON.stringify(patch.diagnosis) : null;
     this.raw
       .prepare(
         `UPDATE transfers SET ${cols.map((c) => `${c} = @${c}`).join(', ')}, updated_at = @ts WHERE id = @id`,
       )
-      .run({ ...patch, id, ts: now() });
+      .run({ ...values, id, ts: now() });
   }
 
   transfer(id: string): TransferRow | undefined {
-    return this.raw.prepare('SELECT * FROM transfers WHERE id = ?').get(id) as
-      TransferRow | undefined;
+    const row = this.raw.prepare('SELECT * FROM transfers WHERE id = ?').get(id) as
+      RawTransfer | undefined;
+    return row && parseTransfer(row);
   }
 
   transfers(states?: TransferRow['state'][]): TransferRow[] {
-    if (!states)
-      return this.raw
-        .prepare('SELECT * FROM transfers ORDER BY created_at DESC')
-        .all() as TransferRow[];
-    return this.raw
-      .prepare(
-        `SELECT * FROM transfers WHERE state IN (${states.map(() => '?').join(',')}) ORDER BY created_at`,
-      )
-      .all(...states) as TransferRow[];
+    const rows = (
+      states
+        ? this.raw
+            .prepare(
+              `SELECT * FROM transfers WHERE state IN (${states.map(() => '?').join(',')}) ORDER BY created_at`,
+            )
+            .all(...states)
+        : this.raw.prepare('SELECT * FROM transfers ORDER BY created_at DESC').all()
+    ) as RawTransfer[];
+    return rows.map(parseTransfer);
   }
 
   // ── upload log ────────────────────────────────────────────────────────────

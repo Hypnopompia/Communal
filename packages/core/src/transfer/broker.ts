@@ -10,9 +10,31 @@ import {
 } from '@communal/crypto';
 import { newSessionId, type HubBody } from '@communal/protocol';
 import type { HubManager } from '../hub-manager.js';
-import { ConnectError, type PeerChannel, type PeerTransport } from '../peer/transport.js';
+import type { NetworkCheck } from '../peer/netcheck.js';
+import {
+  ConnectError,
+  type PeerChannel,
+  type PeerTransport,
+  type PunchStats,
+} from '../peer/transport.js';
 
 export type Offer = HubBody<'connect.offer'>;
+/** The hub's verdict on a connection that couldn't be made directly (HANDOFF §8). */
+export type Diagnosis = HubBody<'connect.failed'>;
+
+/** No direct path to the peer, with the hub's diagnosis of why. */
+export class PathError extends Error {
+  constructor(
+    readonly diagnosis: Diagnosis,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/** Failures worth diagnosing: nothing (or nothing usable) got through. */
+const unreachable = (err: unknown): err is ConnectError =>
+  err instanceof ConnectError && (err.reason === 'no_path' || err.reason === 'handshake_failed');
 
 /** An incoming connection the uploader should serve, already authenticated. */
 export interface InboundPeer {
@@ -36,6 +58,7 @@ export class PeerBroker {
     private readonly hubs: HubManager,
     private readonly transport: PeerTransport,
     private readonly device: KeyPair,
+    private readonly network: NetworkCheck,
     log?: Logger,
   ) {
     this.log = log ?? pino({ name: 'broker' });
@@ -53,7 +76,10 @@ export class PeerBroker {
     this.inbound = cb;
   }
 
-  /** Connects to `target` through `hub` to fetch `hash`. Resolves with the channel and token. */
+  /**
+   * Connects to `target` through `hub` to fetch `hash`. Resolves with the channel and token.
+   * When no direct path comes up, rejects with a `PathError` carrying the hub's diagnosis.
+   */
   async open(
     hub: string,
     target: string,
@@ -68,7 +94,7 @@ export class PeerBroker {
     const answered = new Promise<HubBody<'connect.answer'>>((resolve, reject) => {
       const t = setTimeout(() => {
         this.answers.delete(session);
-        reject(new ConnectError('no_path', 'the other device did not answer'));
+        reject(new ConnectError('no_path', 'the other device did not answer', NO_PUNCH));
       }, timeoutMs);
       this.answers.set(session, (a) => {
         clearTimeout(t);
@@ -86,19 +112,27 @@ export class PeerBroker {
         candidates: this.transport.candidates(),
       });
       if (reply.t === 'connect.failed')
-        throw new ConnectError('closed', `owner unavailable (${reply.body.cause})`);
-      const answer = await answered;
-      const channel = await this.transport.connect({
-        session,
-        localStreamId,
-        remoteStreamId: answer.stream_id,
-        candidates: answer.candidates,
-        initiator: true,
-        verifyPeer: (pk) =>
-          deviceId(pk) === target &&
-          chainOk(answer.to_root_pubkey, answer.to_user, pk, answer.to_chain),
-      });
-      return { channel, token: answer.token };
+        throw new PathError(reply.body, `could not connect (${reply.body.cause})`);
+      try {
+        const answer = await answered;
+        const channel = await this.transport.connect({
+          session,
+          localStreamId,
+          remoteStreamId: answer.stream_id,
+          candidates: answer.candidates,
+          initiator: true,
+          verifyPeer: (pk) =>
+            deviceId(pk) === target &&
+            chainOk(answer.to_root_pubkey, answer.to_user, pk, answer.to_chain),
+        });
+        return { channel, token: answer.token };
+      } catch (err) {
+        if (!unreachable(err)) throw err;
+        // Ask the hub what went wrong; it combines our view with the owner's.
+        const diagnosis = await this.report(hub, session, err.stats);
+        if (!diagnosis) throw err;
+        throw new PathError(diagnosis, `could not connect (${diagnosis.cause})`);
+      }
     } finally {
       this.answers.delete(session);
       this.transport.forget(session);
@@ -143,9 +177,34 @@ export class PeerBroker {
     } catch (err) {
       this.log.info({ hub, err: (err as Error).message }, 'inbound connection failed');
       this.transport.forget(offer.session_id);
+      // Our half of the picture, so the hub can tell the downloader what went wrong.
+      if (unreachable(err)) await this.report(hub, offer.session_id, err.stats);
+    }
+  }
+
+  /** Sends `connect.failed` with our observations; the downloader gets the diagnosis back. */
+  private async report(
+    hub: string,
+    session: string,
+    stats: PunchStats | undefined,
+  ): Promise<Diagnosis | undefined> {
+    const client = this.hubs.get(hub);
+    if (!client?.ready) return undefined;
+    try {
+      const reply = await client.request('connect.failed', {
+        session_id: session,
+        observations: this.network.observations(hub, stats),
+      });
+      return reply.t === 'connect.failed' ? reply.body : undefined;
+    } catch (err) {
+      // Expected for the owner when the downloader's report already closed the session.
+      this.log.debug({ hub, err: (err as Error).message }, 'connect.failed not accepted');
+      return undefined;
     }
   }
 }
+
+const NO_PUNCH: PunchStats = { attempts: 0, udp_sent: false, udp_received: false };
 
 function chainOk(
   rootB64: string,
