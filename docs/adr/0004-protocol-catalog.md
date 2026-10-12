@@ -35,6 +35,8 @@
 - **`device.revoke`** carries the full signed `Revocation`. The spec's `{device_id, sig}` didn't say what is signed or by whom.
 - **`acl.set`** `audience` can be `null`, which clears a rule so the path inherits again.
 - **`connect.offer`** carries `from_user`, `from_root_pubkey` and `from_chain`, so the uploader can verify the downloader's cert chain (§7 `hello` checks) without another hub round trip.
+- **`connect.request` / `connect.offer` / `connect.answer`** carry udx `stream_id`s and both sides' candidates (M4). The forwarded `connect.answer` adds the owner's identity (`to_user`, `to_root_pubkey`, `to_chain`) and the transfer token the downloader presents in `hello` (ADR 0010).
+- **Peer `get` ranges** are chunk-index ranges `[start, end)`.
 - **`connect.failed`** c→h carries raw `observations`. The hub combines both sides' observations into the single diagnosis (`cause`, `easier_fix`, `you`, `them`). `easier_fix` also allows `either` and `none`.
 - **`Candidate`** is `{kind: lan|public|mapped|ipv6|advertised, host, port}`. `host` must be an IP literal (ADR 0001). The udx stream id is added in M4.
 - **Link codes** are formatted `XXXX-XXXX` (Crockford-ish alphabet, uppercase).

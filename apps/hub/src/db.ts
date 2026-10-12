@@ -1,6 +1,8 @@
 import Database from 'better-sqlite3';
 import type { CertChain } from '@communal/crypto';
-import type { HubBody } from '@communal/protocol';
+import { governingRule, type HubBody } from '@communal/protocol';
+
+export { governingRule };
 
 export type Entry = HubBody<'browse.listing'>['files'][number];
 
@@ -25,19 +27,6 @@ function splitPath(path: string): { dir: string; name: string } {
 }
 
 export type Audience = 'me' | 'hub' | { users?: string[]; groups?: string[] };
-
-/** The governing rule for `path` among `rulePaths`: its own, else the nearest ancestor folder. */
-export function governingRule(rulePaths: ReadonlySet<string>, path: string): string | null {
-  if (rulePaths.has(path)) return path;
-  let end = path.endsWith('/') ? path.length - 1 : path.length;
-  for (;;) {
-    const i = path.lastIndexOf('/', end - 1);
-    if (i < 0) return null;
-    const dir = path.slice(0, i + 1);
-    if (rulePaths.has(dir)) return dir;
-    end = i;
-  }
-}
 
 export function rowToEntry(r: EntryRow): Entry {
   return {

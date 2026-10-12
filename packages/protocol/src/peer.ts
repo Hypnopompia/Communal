@@ -15,6 +15,7 @@ export const CHUNK_SIZE = 1024 * 1024;
 /** Largest frame we'll accept: one chunk plus generous header room. */
 export const MAX_PEER_FRAME = CHUNK_SIZE + 64 * 1024;
 
+/** Chunk-index range [start, end): start inclusive, end exclusive (ADR 0010). */
 const Range = z.tuple([z.number().int().nonnegative(), z.number().int().nonnegative()]);
 const Ranges = z.array(Range).min(1).max(1024);
 
@@ -31,7 +32,7 @@ export const peerHeaders = {
       sig: Signature,
     }),
   }),
-  'hello.ok': z.object({}),
+  'hello.ok': z.looseObject({}),
   'manifest.get': z.object({ hash: Hash }),
   manifest: z.object({
     hash: Hash,

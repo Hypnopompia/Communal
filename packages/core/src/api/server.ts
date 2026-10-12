@@ -156,6 +156,48 @@ export class LocalApi {
       return { ok: true };
     });
 
+    route('GET', '/v1/downloads', async () => ({ downloads: this.core.downloads.list() }));
+    route('POST', '/v1/downloads', async (_req, _url, body) => {
+      const b = z
+        .object({
+          hash: z.string().regex(/^[0-9a-f]{64}$/),
+          name: z.string().min(1).max(255).optional(),
+          dest: z.string().min(1).max(4096).optional(),
+        })
+        .parse(body);
+      return { download: await this.core.download(b.hash, { name: b.name, destDir: b.dest }) };
+    });
+    route('DELETE', '/v1/downloads/:id', async (req, url) => {
+      if (!this.core.downloads.cancel(param(req, url, 1)))
+        throw new CoreError('not_found', 'no such download');
+      return { ok: true };
+    });
+    route('GET', '/v1/uploads/log', async (_req, url) => {
+      const p = z
+        .object({
+          user: z.string().optional(),
+          path: z.string().optional(),
+          limit: z.coerce.number().int().min(1).max(1000).default(100),
+        })
+        .parse(Object.fromEntries(url.searchParams));
+      return {
+        log: this.core.store.uploadLog({ user: p.user, pathPrefix: p.path, limit: p.limit }),
+      };
+    });
+    route('GET', '/v1/settings/uploads', async () => this.core.uploadLimits);
+    route('PUT', '/v1/settings/uploads', async (_req, _url, body) => {
+      const b = z
+        .object({
+          maxConcurrent: z.number().int().min(0).max(100),
+          bytesPerSecond: z.number().int().min(0),
+          lanOnly: z.boolean(),
+        })
+        .partial()
+        .parse(body);
+      this.core.uploadLimits = { ...this.core.uploadLimits, ...b };
+      return this.core.uploadLimits;
+    });
+
     route('GET', '/v1/search', async (_req, url) => {
       const q = url.searchParams;
       const parsed = z

@@ -156,6 +156,17 @@ export class Catalog {
     };
   }
 
+  /** Whether the viewer can see a file with this hash on that device (brokering, HANDOFF §6). */
+  canFetch(viewer: string, deviceId: string, hash: string): boolean {
+    return (
+      this.db.raw
+        .prepare(
+          `SELECT 1 FROM entries e WHERE e.device_id = @device AND e.hash = @hash AND ${this.visible()} LIMIT 1`,
+        )
+        .get({ viewer, device: deviceId, hash }) !== undefined
+    );
+  }
+
   /** A device is browsable when the viewer can see at least one entry on it. */
   private canBrowse(viewer: string, deviceId: string): boolean {
     return (

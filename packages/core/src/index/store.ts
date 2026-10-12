@@ -27,6 +27,33 @@ export interface FileRow {
   hash: string | null;
 }
 
+export interface TransferRow {
+  id: string;
+  hash: string;
+  name: string;
+  dest_dir: string;
+  size: number | null;
+  state: 'queued' | 'active' | 'waiting' | 'done' | 'failed' | 'cancelled';
+  bytes_done: number;
+  error: string | null;
+  final_path: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface UploadLogRow {
+  id: number;
+  at: number;
+  hub: string;
+  requester_user: string;
+  requester_dev: string;
+  path: string;
+  hash: string;
+  bytes: number;
+  status: 'completed' | 'partial' | 'cancelled' | 'denied';
+  kind: 'file' | 'thumbnail';
+}
+
 export interface Change {
   seq: number;
   share: string;
@@ -87,6 +114,37 @@ const MIGRATIONS = [
     fingerprint TEXT NOT NULL,
     verified_at INTEGER NOT NULL
   );
+  `,
+  `
+  -- Downloads, so they survive restarts and resume (HANDOFF §7).
+  CREATE TABLE transfers (
+    id         TEXT PRIMARY KEY,
+    hash       TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    dest_dir   TEXT NOT NULL,
+    size       INTEGER,
+    state      TEXT NOT NULL CHECK (state IN ('queued', 'active', 'waiting', 'done', 'failed', 'cancelled')),
+    bytes_done INTEGER NOT NULL DEFAULT 0,
+    error      TEXT,
+    final_path TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  -- Who downloaded what from this device. Local only, never sent to a hub (HANDOFF §2).
+  CREATE TABLE upload_log (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    at             INTEGER NOT NULL,
+    hub            TEXT NOT NULL,
+    requester_user TEXT NOT NULL,
+    requester_dev  TEXT NOT NULL,
+    path           TEXT NOT NULL,
+    hash           TEXT NOT NULL,
+    bytes          INTEGER NOT NULL,
+    status         TEXT NOT NULL CHECK (status IN ('completed', 'partial', 'cancelled', 'denied')),
+    kind           TEXT NOT NULL CHECK (kind IN ('file', 'thumbnail'))
+  );
+  CREATE INDEX upload_log_at ON upload_log (at);
   `,
 ];
 
@@ -266,6 +324,101 @@ export class IndexStore {
         `SELECT ${cols} FROM files WHERE share IN (${inList}) AND (share, rel) > (?, ?) ORDER BY share, rel LIMIT ?`,
       )
       .all(...shares, after.share, after.rel, limit) as FileRow[];
+  }
+
+  // ── content by hash (serving) ─────────────────────────────────────────────
+
+  /** Local copies of a file, in shares published to `hub`, with their chunk hashes. */
+  copiesOf(hash: string, hub: string): (FileRow & { root: string; chunkHashes: Buffer })[] {
+    return (
+      this.raw
+        .prepare(
+          `SELECT f.share, f.rel, f.size, f.mtime, f.mime, f.kind, f.hash, f.chunk_hashes AS chunkHashes, s.root, s.hubs
+           FROM files f JOIN shares s ON s.name = f.share WHERE f.hash = ? AND f.chunk_hashes IS NOT NULL`,
+        )
+        .all(hash) as (FileRow & { root: string; chunkHashes: Buffer; hubs: string })[]
+    )
+      .filter((r) => (JSON.parse(r.hubs) as string[]).includes(hub))
+      .map(({ hubs: _h, ...r }) => r);
+  }
+
+  // ── transfers ─────────────────────────────────────────────────────────────
+
+  addTransfer(t: {
+    id: string;
+    hash: string;
+    name: string;
+    dest_dir: string;
+    size: number | null;
+  }) {
+    const ts = now();
+    this.raw
+      .prepare(
+        `INSERT INTO transfers (id, hash, name, dest_dir, size, state, created_at, updated_at)
+         VALUES (@id, @hash, @name, @dest_dir, @size, 'queued', @ts, @ts)`,
+      )
+      .run({ ...t, ts });
+  }
+
+  updateTransfer(
+    id: string,
+    patch: Partial<Pick<TransferRow, 'state' | 'size' | 'bytes_done' | 'error' | 'final_path'>>,
+  ) {
+    const cols = Object.keys(patch);
+    if (cols.length === 0) return;
+    this.raw
+      .prepare(
+        `UPDATE transfers SET ${cols.map((c) => `${c} = @${c}`).join(', ')}, updated_at = @ts WHERE id = @id`,
+      )
+      .run({ ...patch, id, ts: now() });
+  }
+
+  transfer(id: string): TransferRow | undefined {
+    return this.raw.prepare('SELECT * FROM transfers WHERE id = ?').get(id) as
+      TransferRow | undefined;
+  }
+
+  transfers(states?: TransferRow['state'][]): TransferRow[] {
+    if (!states)
+      return this.raw
+        .prepare('SELECT * FROM transfers ORDER BY created_at DESC')
+        .all() as TransferRow[];
+    return this.raw
+      .prepare(
+        `SELECT * FROM transfers WHERE state IN (${states.map(() => '?').join(',')}) ORDER BY created_at`,
+      )
+      .all(...states) as TransferRow[];
+  }
+
+  // ── upload log ────────────────────────────────────────────────────────────
+
+  logUpload(e: Omit<UploadLogRow, 'id' | 'at'>) {
+    this.raw
+      .prepare(
+        `INSERT INTO upload_log (at, hub, requester_user, requester_dev, path, hash, bytes, status, kind)
+         VALUES (@at, @hub, @requester_user, @requester_dev, @path, @hash, @bytes, @status, @kind)`,
+      )
+      .run({ ...e, at: now() });
+  }
+
+  uploadLog(filter: { user?: string; pathPrefix?: string; limit?: number } = {}): UploadLogRow[] {
+    const where: string[] = [];
+    if (filter.user) where.push('requester_user = @user');
+    if (filter.pathPrefix) where.push('substr(path, 1, length(@prefix)) = @prefix');
+    return this.raw
+      .prepare(
+        `SELECT * FROM upload_log ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY id DESC LIMIT @limit`,
+      )
+      .all({
+        user: filter.user,
+        prefix: filter.pathPrefix,
+        limit: filter.limit ?? 100,
+      }) as UploadLogRow[];
+  }
+
+  /** Configurable retention (HANDOFF §7). */
+  pruneUploadLog(olderThanDays: number) {
+    this.raw.prepare('DELETE FROM upload_log WHERE at < ?').run(now() - olderThanDays * 86_400);
   }
 
   // ── access rules (per hub) ────────────────────────────────────────────────

@@ -1,5 +1,52 @@
 # Progress
 
+## M4 — Direct transfers (2026-10-12)
+
+**Status: done.** Details and decisions are in ADR 0010.
+
+### What exists
+
+- **Hub brokering:** `connect.request` (with an access check), a 5-minute signed token, `connect.offer` to the owner, and `connect.answer` back with the owner's identity and the token. `peer_offline` when the owner is away. There is no relay.
+- **Peer transport (core):** one UDP socket; candidates from LAN, IPv6, advertised and public addresses (learned via the hub's UDP probe); hole punching; udx + Noise on device keys; identity and cert-chain checks both ways; keepalives.
+- **Uploader:** the full `hello` check (token from the brokering hub, issued for this session), LAN-only, its own per-hub access re-check, unchanged-file check, concurrency limit (`busy`), bandwidth cap, and the local upload log with retention.
+- **Downloader:** multi-source with windows of ~32 chunks, manifest and per-chunk verification with re-fetch from other peers, `.part` + `.partmap` resume, waiting/retry (also on presence), slow-peer reassignment, safe file names.
+- **CLI and API:** `communal get <hash>`, `transfers`, `cancel`, `log`. Settings through environment variables: `COMMUNAL_PEER_PORT`, `COMMUNAL_ADVERTISE_ADDR`, `COMMUNAL_MAX_UPLOADS`, `COMMUNAL_UPLOAD_KBPS`, `COMMUNAL_LAN_ONLY`, `COMMUNAL_DOWNLOADS`, `COMMUNAL_LOG_RETENTION_DAYS`.
+- **NAT test lab:** `docker/compose.nat.yml` + `docker/nat/test.sh` (also a CI job).
+
+### Done criteria
+
+- [x] **Files transfer between peers on a LAN:** integration tests, plus the Docker dev stack (a 30 MB file between containers, sha256 match).
+- [x] **Across NATs in a test lab:** `docker/nat/test.sh`. Two clients behind separate masquerading routers that can't reach each other directly; 12 MB transferred via hole punching, sha256 match.
+- [x] **A killed transfer resumes:** the restarted download had 10 of 40 chunks and fetched exactly the missing 30.
+- [x] **A corrupted chunk is detected and re-fetched,** both from a different honest source and from a source that corrupted it once.
+- [x] **Forged and expired tokens are rejected:** not signed by the hub (`bad_token`), expired (`expired`), another session's genuine token (`bad_token`), a token issued to someone else (`wrong_sender`).
+
+### Also tested
+
+- multi-source (both sources contribute)
+- the uploader refusing despite a stale or malicious hub allowing it (logged `denied`)
+- `busy` at the limit, then queueing while the owner is offline and finishing when they return
+- hub broker access control: hidden files look missing, only the addressed device may answer, session ids can't be reused
+- the helpers: ranges, safe names, LAN classification
+- 190 tests, passing 3 times in a row
+
+### Demo (dev stack)
+
+```bash
+A acl set Alice/ hub
+B search big                 # → hash
+B get <hash>; B transfers     # done 100% → /var/lib/communal/downloads/…
+A log                         # who downloaded what (local only)
+docker/nat/test.sh            # the NAT lab
+```
+
+### Carried forward
+
+- **Diagnosing failed connections** (`connect.failed` causes, `easier_fix`), NAT classification, UPnP/NAT-PMP, CGNAT: M5. Today a failed punch shows up as "could not connect to any source".
+- **Revocation lists** in peer cert-chain checks: M8.
+- **Streaming** (in-order ranges for previews), thumbnails and `peek`: M6.
+- **Throughput on macOS loopback** is CPU-bound in UDP syscalls (ADR 0001). Fine for LAN speeds; batched sends would help.
+
 ## M3 — Social graph + access control (2026-10-12)
 
 **Status: done.** Details and decisions are in ADR 0009. Rules are per hub (ADR 0007, owner decision).

@@ -36,7 +36,7 @@ const IGNORED_NAMES = new Set([
   '$recycle.bin',
   'system volume information',
 ]);
-const IGNORED_SUFFIXES = ['.part', '.crdownload', '.tmp', '.partial', '.download'];
+const IGNORED_SUFFIXES = ['.part', '.partmap', '.crdownload', '.tmp', '.partial', '.download'];
 
 export function isIgnored(name: string): boolean {
   if (name.startsWith('.')) return true;

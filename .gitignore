@@ -6,3 +6,4 @@ coverage/
 *.log
 .env
 hub-data/
+docker/fixtures/alice/big-video.mkv

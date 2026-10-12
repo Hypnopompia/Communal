@@ -32,6 +32,8 @@ import {
  */
 
 const Empty = z.object({}).strict();
+/** udx stream id: one per side per peer connection (ADR 0010). */
+const StreamId = z.number().int().min(1).max(0xffffffff);
 const ClientInfo = z.object({ name: z.string().max(32), version: z.string().max(32) });
 const DeviceName = z.string().min(1).max(64);
 const DisplayName = z.string().trim().min(1).max(64);
@@ -166,8 +168,19 @@ export const clientBodies = {
   }),
   unwatch: z.object({ device_id: DeviceId, path: SharePath }),
 
-  'connect.request': z.object({ target: DeviceId, hash: Hash, session_id: SessionId }),
-  'connect.answer': z.object({ session_id: SessionId, candidates: z.array(Candidate).max(16) }),
+  /** Downloader asks the hub to broker a connection (ADR 0010: + its stream id and candidates). */
+  'connect.request': z.object({
+    target: DeviceId,
+    hash: Hash,
+    session_id: SessionId,
+    stream_id: StreamId,
+    candidates: z.array(Candidate).max(16),
+  }),
+  'connect.answer': z.object({
+    session_id: SessionId,
+    stream_id: StreamId,
+    candidates: z.array(Candidate).max(16),
+  }),
   'connect.failed': z.object({
     session_id: SessionId,
     observations: NatObservation.extend({
@@ -275,11 +288,19 @@ export const hubBodies = {
     from_root_pubkey: PublicKey,
     from_chain: CertChain,
     token: TransferToken,
+    stream_id: StreamId,
     candidates: z.array(Candidate).max(16),
   }),
+  /** Forwarded to the downloader with the uploader's identity, so it can check the peer too. */
   'connect.answer': z.object({
     session_id: SessionId,
+    stream_id: StreamId,
     candidates: z.array(Candidate).max(16),
+    to_user: UserId,
+    to_root_pubkey: PublicKey,
+    to_chain: CertChain,
+    /** The same hub-signed token the uploader got; the downloader presents it in `hello`. */
+    token: TransferToken,
   }),
   'connect.failed': z.object({
     session_id: SessionId,

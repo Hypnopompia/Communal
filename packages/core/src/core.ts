@@ -1,6 +1,8 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import { pino, type Logger } from 'pino';
 import { deviceId, type KeyPair } from '@communal/crypto';
 import type { ClientBody, HubBody } from '@communal/protocol';
@@ -8,6 +10,16 @@ import { HubManager, type HubEntry, type SharedClientOptions } from './hub-manag
 import { Indexer, type IndexerOptions } from './index/indexer.js';
 import { IndexStore, type Audience, type ShareRow } from './index/store.js';
 import { People } from './people.js';
+import { PeerTransport, type TransportOptions } from './peer/transport.js';
+import { PeerBroker } from './transfer/broker.js';
+import { AccessOracle } from './transfer/access.js';
+import {
+  DEFAULT_UPLOAD_LIMITS,
+  Uploader,
+  type UploadLimits,
+  type UploaderTestHooks,
+} from './transfer/uploader.js';
+import { Downloads, type DownloadOptions } from './transfer/downloader.js';
 import { IndexSync } from './index/sync.js';
 import { searchAll, type MergedSearch } from './search.js';
 import type { HubClientOptions } from './hub-client.js';
@@ -18,6 +30,14 @@ export interface CoreOptions {
   /** Hub client settings shared by every hub (client name, dev TLS, timers for tests…). */
   hubClient?: Omit<SharedClientOptions, 'device' | 'log'>;
   indexer?: Omit<IndexerOptions, 'log'>;
+  /** Peer transport: UDP port, operator-advertised addresses, loopback candidates (tests). */
+  peer?: Omit<TransportOptions, 'device' | 'log'>;
+  uploads?: Partial<UploadLimits>;
+  /** Where downloads land by default (default: <dataDir>/downloads). */
+  downloadsDir?: string;
+  downloads?: Pick<DownloadOptions, 'maxPeers' | 'window' | 'chunkTimeoutMs' | 'retryMs'>;
+  /** Fault injection for tests only. */
+  testHooks?: UploaderTestHooks;
   log?: Logger;
 }
 
@@ -43,6 +63,11 @@ export class CommunalCore {
   readonly indexer: Indexer;
   readonly sync: IndexSync;
   readonly people: People;
+  readonly transport: PeerTransport;
+  readonly broker: PeerBroker;
+  readonly uploader: Uploader;
+  readonly downloads: Downloads;
+  uploadLimits: UploadLimits;
   readonly log: Logger;
   private readonly hubsFile: string;
 
@@ -64,6 +89,34 @@ export class CommunalCore {
     this.people = new People(this.hubs, this.store);
     // Each hub gets this device's full rule set for that hub on every sign-in (ADR 0009).
     this.hubs.on('ready', ({ hub }) => void this.pushRules(hub));
+    // Learn our public address through each hub's probe responder (hole punching candidate).
+    this.hubs.on(
+      'ready',
+      ({ hub, welcome }) => void this.probeVia(hub, welcome.nat_probe_ports[0]),
+    );
+
+    this.transport = new PeerTransport({ ...o.peer, device: o.device, log: this.log });
+    this.broker = new PeerBroker(this.hubs, this.transport, o.device, this.log);
+    this.uploadLimits = { ...DEFAULT_UPLOAD_LIMITS, ...o.uploads };
+    this.uploader = new Uploader({
+      store: this.store,
+      hubs: this.hubs,
+      access: new AccessOracle(this.hubs, this.store),
+      myDevice: this.deviceId,
+      limits: () => this.uploadLimits,
+      testHooks: o.testHooks,
+      log: this.log,
+    });
+    this.broker.onInbound((p) => void this.uploader.serve(p));
+    this.downloads = new Downloads({
+      ...o.downloads,
+      store: this.store,
+      hubs: this.hubs,
+      broker: this.broker,
+      myDevice: this.deviceId,
+      downloadsDir: o.downloadsDir ?? join(o.dataDir, 'downloads'),
+      log: this.log,
+    });
   }
 
   get deviceId(): string {
@@ -71,13 +124,18 @@ export class CommunalCore {
   }
 
   async start() {
+    // The transport first: candidates sent to hubs need its port.
+    await this.transport.start();
     this.hubs.start();
     await this.indexer.start();
+    this.downloads.start();
   }
 
   async stop() {
+    await this.downloads.stop();
     await this.indexer.stop();
     await this.hubs.stop();
+    await this.transport.stop();
     this.store.close();
   }
 
@@ -228,6 +286,20 @@ export class CommunalCore {
     await this.pushRules(hub);
   }
 
+  private async probeVia(hub: string, port: number) {
+    const url = this.hubs.find(hub)?.url;
+    if (!url || !port) return;
+    try {
+      const host = new URL(url).hostname.replace(/^\[|\]$/g, '');
+      const ip = isIP(host) ? host : (await lookup(host)).address;
+      const addr = await this.transport.probe(ip, port);
+      if (addr)
+        this.log.info({ hub, public_addr: `${addr.host}:${addr.port}` }, 'learned public address');
+    } catch (err) {
+      this.log.debug({ hub, err: (err as Error).message }, 'public address probe failed');
+    }
+  }
+
   /** Sends this device's rules for `hub` to it (no-op while offline; repeated on sign-in). */
   private async pushRules(hub: string) {
     const client = this.hubs.get(hub);
@@ -243,6 +315,24 @@ export class CommunalCore {
         'could not send access rules; will retry on reconnect',
       );
     }
+  }
+
+  // ── transfers ─────────────────────────────────────────────────────────────
+
+  /** Starts downloading a file by hash. Without a name, the first source's file name is used. */
+  async download(hash: string, opts: { name?: string; destDir?: string } = {}) {
+    let name = opts.name;
+    if (!name) {
+      for (const r of await this.hubs.requestAll('sources', { hash })) {
+        if (r.ok && r.msg.t === 'sources.list' && r.msg.body.sources[0]) {
+          const p = r.msg.body.sources[0].path;
+          name = p.slice(p.lastIndexOf('/') + 1);
+          break;
+        }
+      }
+    }
+    if (!name) throw new CoreError('not_found', 'no visible source has that file');
+    return this.downloads.add({ hash, name, ...(opts.destDir ? { destDir: opts.destDir } : {}) });
   }
 
   // ── search & browse ───────────────────────────────────────────────────────
@@ -274,6 +364,8 @@ export class CommunalCore {
         user_id: h.state.userId ?? null,
       })),
       index: this.store.counts(),
+      peer_port: this.transport.port,
+      uploads: { active: this.uploader.activeUploads, limits: this.uploadLimits },
       shares: this.store.shares().map((s) => ({ name: s.name, hubs: s.hubs })),
     };
   }

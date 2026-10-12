@@ -603,6 +603,90 @@ group
     }),
   );
 
+// ── transfers ───────────────────────────────────────────────────────────────
+
+type Download = {
+  id: string;
+  name: string;
+  state: string;
+  size: number | null;
+  bytes_done: number;
+  error: string | null;
+  final_path: string | null;
+};
+
+program
+  .command('get <hash>')
+  .description('download a file by its hash (see `communal search`), from every online source')
+  .option('--name <file>', 'save as (default: the name the owner uses)')
+  .option('--dest <dir>', 'folder to save into')
+  .action((hash: string, opts: { name?: string; dest?: string }) =>
+    viaDaemon(async (c) => {
+      const { download } = await c.post<{ download: Download }>('/v1/downloads', {
+        hash,
+        ...(opts.name ? { name: opts.name } : {}),
+        ...(opts.dest ? { dest: resolve(opts.dest) } : {}),
+      });
+      console.log(`${download.id}  queued ${download.name}  (follow with \`communal transfers\`)`);
+    }),
+  );
+
+program
+  .command('transfers')
+  .description('downloads: queued, in progress, waiting for a source, done, failed')
+  .action(() =>
+    viaDaemon(async (c) => {
+      const { downloads } = await c.get<{ downloads: Download[] }>('/v1/downloads');
+      if (downloads.length === 0) console.log('no downloads');
+      for (const d of downloads) {
+        const pct = d.size ? ` ${Math.floor((d.bytes_done / d.size) * 100)}%` : '';
+        const extra = d.state === 'done' ? `  → ${d.final_path}` : d.error ? `  (${d.error})` : '';
+        console.log(`${d.id}  ${d.state.padEnd(9)}${pct.padStart(5)}  ${d.name}${extra}`);
+      }
+    }),
+  );
+
+program
+  .command('cancel <download_id>')
+  .description('cancel a download and delete its partial file')
+  .action((id: string) =>
+    viaDaemon(async (c) => {
+      await c.delete(`/v1/downloads/${encodeURIComponent(id)}`);
+      console.log(`cancelled ${id}`);
+    }),
+  );
+
+program
+  .command('log')
+  .description('who downloaded what from this device (kept locally, never sent to a hub)')
+  .option('--user <user_id>', 'only this person')
+  .option('--path <prefix>', 'only files under this share path, e.g. Photos/')
+  .option('--limit <n>', 'entries', '50')
+  .action((opts: { user?: string; path?: string; limit: string }) =>
+    viaDaemon(async (c) => {
+      const p = new URLSearchParams({ limit: opts.limit });
+      if (opts.user) p.set('user', opts.user);
+      if (opts.path) p.set('path', opts.path);
+      const { log: rows } = await c.get<{
+        log: {
+          at: number;
+          requester_user: string;
+          path: string;
+          bytes: number;
+          status: string;
+          kind: string;
+        }[];
+      }>(`/v1/uploads/log?${p}`);
+      if (rows.length === 0) console.log('nothing uploaded yet');
+      for (const r of rows) {
+        const when = new Date(r.at * 1000).toISOString().slice(0, 16).replace('T', ' ');
+        console.log(
+          `${when}  ${r.requester_user}  ${r.status.padEnd(9)}  ${humanSize(r.bytes).padStart(9)}  ${r.path || '(refused)'}`,
+        );
+      }
+    }),
+  );
+
 // ── daemon & status ─────────────────────────────────────────────────────────
 
 program
@@ -619,14 +703,39 @@ program
     }
     const key = ensureDeviceKey();
     loadHubs(); // migrates a legacy hub.json before the core reads hubs.json
-    const rescanMinutes = Number(process.env.COMMUNAL_RESCAN_MINUTES ?? 15);
+    const env = process.env;
+    const rescanMinutes = Number(env.COMMUNAL_RESCAN_MINUTES ?? 15);
+    // host:port[,host:port…]; hosts must be IP addresses (ADR 0001).
+    const advertise = (env.COMMUNAL_ADVERTISE_ADDR ?? '')
+      .split(',')
+      .map((a) => a.trim())
+      .filter(Boolean)
+      .map((a) => {
+        const m = /^\[?([^\]]+)\]?:(\d+)$/.exec(a);
+        if (!m) throw new Error(`COMMUNAL_ADVERTISE_ADDR: expected host:port, got "${a}"`);
+        return { host: m[1]!, port: Number(m[2]) };
+      });
     const core = new CommunalCore({
       dataDir,
       device: key,
       hubClient: { client, insecureTls },
       indexer: { rescanMs: rescanMinutes * 60_000 },
+      peer: { port: Number(env.COMMUNAL_PEER_PORT ?? 0), advertise },
+      uploads: {
+        ...(env.COMMUNAL_MAX_UPLOADS ? { maxConcurrent: Number(env.COMMUNAL_MAX_UPLOADS) } : {}),
+        ...(env.COMMUNAL_UPLOAD_KBPS
+          ? { bytesPerSecond: Number(env.COMMUNAL_UPLOAD_KBPS) * 1024 }
+          : {}),
+        ...(env.COMMUNAL_LAN_ONLY ? { lanOnly: env.COMMUNAL_LAN_ONLY === 'true' } : {}),
+      },
+      ...(env.COMMUNAL_DOWNLOADS ? { downloadsDir: env.COMMUNAL_DOWNLOADS } : {}),
       log,
     });
+    // Upload log retention (HANDOFF §7), checked daily.
+    const retentionDays = Number(env.COMMUNAL_LOG_RETENTION_DAYS ?? 365);
+    const prune = () => core.store.pruneUploadLog(retentionDays);
+    const pruneTimer = setInterval(prune, 86_400_000);
+    pruneTimer.unref();
     const localApi = new LocalApi(core);
 
     core.hubs.on('ready', ({ hub, welcome }) =>

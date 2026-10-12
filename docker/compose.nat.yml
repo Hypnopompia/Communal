@@ -1,0 +1,72 @@
+# NAT test lab (HANDOFF §13 "Simulating bad networks"): two clients, each on its own private
+# network behind its own NAT router, and a hub on the "public" network. The clients cannot
+# reach each other's private addresses, so a transfer only works if hole punching does.
+#
+#   docker/nat/test.sh      (builds, runs a transfer through both NATs, checks it, tears down)
+#
+# Linux only in CI; works on Docker Desktop too (needs NET_ADMIN for the routers).
+x-node: &node
+  build: { context: .., dockerfile: docker/nat/node.Dockerfile }
+  image: communal-nat-node:dev
+  cap_add: [NET_ADMIN]
+  depends_on:
+    {
+      hub: { condition: service_healthy },
+      router-a: { condition: service_started },
+      router-b: { condition: service_started },
+    }
+
+services:
+  hub:
+    image: communal-hub:dev
+    environment: { COMMUNAL_JOIN_MODE: open, COMMUNAL_DEV_TLS: 'self-signed' }
+    networks: { public: { ipv4_address: 172.30.0.10 } }
+
+  router-a:
+    build: { context: .., dockerfile: docker/nat/router.Dockerfile }
+    image: communal-nat-router:dev
+    cap_add: [NET_ADMIN]
+    sysctls: { net.ipv4.ip_forward: 1 }
+    networks:
+      public: { ipv4_address: 172.30.0.20 }
+      lan-a: { ipv4_address: 10.10.1.2 }
+
+  router-b:
+    image: communal-nat-router:dev
+    depends_on: [router-a]
+    cap_add: [NET_ADMIN]
+    sysctls: { net.ipv4.ip_forward: 1 }
+    networks:
+      public: { ipv4_address: 172.30.0.30 }
+      lan-b: { ipv4_address: 10.10.2.2 }
+
+  node-a:
+    <<: *node
+    environment:
+      GATEWAY: 10.10.1.2
+      COMMUNAL_HUB: wss://172.30.0.10:8443/v1
+      COMMUNAL_DEV_TLS: 'self-signed'
+      COMMUNAL_AUTO_INIT: 'true'
+      COMMUNAL_DISPLAY_NAME: alice
+      COMMUNAL_PEER_PORT: '41641'
+    networks: { lan-a: { ipv4_address: 10.10.1.10 } }
+    volumes: [./fixtures/alice:/shares/alice:ro]
+
+  node-b:
+    <<: *node
+    environment:
+      GATEWAY: 10.10.2.2
+      COMMUNAL_HUB: wss://172.30.0.10:8443/v1
+      COMMUNAL_DEV_TLS: 'self-signed'
+      COMMUNAL_AUTO_INIT: 'true'
+      COMMUNAL_DISPLAY_NAME: bob
+      COMMUNAL_PEER_PORT: '41641'
+    networks: { lan-b: { ipv4_address: 10.10.2.10 } }
+
+networks:
+  public: { ipam: { config: [{ subnet: 172.30.0.0/24 }] } }
+  # Not `internal`: Docker drops off-subnet packets on internal bridges even when they're
+  # addressed to a router container. The clients replace their default route with the lab
+  # router (node.sh), and Docker's bridge isolation keeps lan-a and lan-b apart.
+  lan-a: { ipam: { config: [{ subnet: 10.10.1.0/24 }] } }
+  lan-b: { ipam: { config: [{ subnet: 10.10.2.0/24 }] } }

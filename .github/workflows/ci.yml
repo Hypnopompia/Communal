@@ -42,3 +42,11 @@ jobs:
           wait
       - if: always()
         run: docker compose -f docker/compose.dev.yml logs --no-color | tail -100
+
+  nat-lab:
+    # HANDOFF §12 M4: transfers across NATs in a test lab (two clients behind separate NAT
+    # routers; only hole punching connects them).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: docker/nat/test.sh

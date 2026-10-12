@@ -248,6 +248,9 @@ importers:
       '@communal/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@hyperswarm/secret-stream':
+        specifier: ^6.9.2
+        version: 6.9.2(bare-events@2.9.2)
       better-sqlite3:
         specifier: ^13.0.3
         version: 13.0.3
@@ -266,6 +269,9 @@ importers:
       pino:
         specifier: ^10.4.0
         version: 10.4.0
+      udx-native:
+        specifier: ^1.21.3
+        version: 1.21.3
       ws:
         specifier: ^8.22.0
         version: 8.22.0

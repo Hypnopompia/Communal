@@ -18,9 +18,11 @@ import {
   toB64,
   userId,
   verify,
+  signTransferToken,
   verifyCertChain,
   type CertChain,
   type KeyPair,
+  type SignedToken,
 } from '@communal/crypto';
 import {
   encodeHub,
@@ -53,6 +55,9 @@ export interface HubOptions {
   banPollMs?: number;
   log?: Logger;
 }
+
+/** Transfer tokens are valid for 5 minutes (HANDOFF §8). */
+const TOKEN_TTL_S = 300;
 
 const DEFAULTS = { silenceMs: 90_000, authTimeoutMs: 30_000, banPollMs: 2_000 };
 
@@ -92,6 +97,11 @@ export class HubServer {
   private readonly sessions = new Set<Session>();
   /** device_id → its live authenticated session. */
   private readonly online = new Map<string, Session>();
+  /** Brokered connections awaiting the uploader's answer (HANDOFF §8). */
+  private readonly brokered = new Map<
+    string,
+    { downloader: Session; from: string; to: string; token: SignedToken; expires: number }
+  >();
   /** device_id → timer that will publish "offline" once the grace period runs out. */
   private readonly goingOffline = new Map<string, NodeJS.Timeout>();
 
@@ -350,6 +360,10 @@ export class HubServer {
             [{ path: msg.body.path, audience: msg.body.audience }],
             false,
           );
+        case 'connect.request':
+          return this.onConnectRequest(s, msg.id, msg.body);
+        case 'connect.answer':
+          return this.onConnectAnswer(s, msg.id, msg.body);
         case 'acl.replace':
           return this.onAcl(s, msg.id, msg.body.device_id, msg.body.rules, true);
         default:
@@ -646,6 +660,81 @@ export class HubServer {
     this.db.upsertGroup(me, id, body.name, [...new Set(body.members)]);
     const group = this.db.groupsOf(me).find((g) => g.group_id === id)!;
     this.send(s, 'group.listing', { groups: [group] }, re);
+  }
+
+  // ── brokering (HANDOFF §8; no relay, ever) ─────────────────────────────────
+
+  private onConnectRequest(s: Session, re: string, body: ClientBody<'connect.request'>) {
+    const now = Date.now();
+    for (const [id, b] of this.brokered) if (b.expires < now) this.brokered.delete(id);
+    // Same answer whether the device doesn't exist or the requester just can't see the file.
+    if (body.target === s.device || !this.catalog.canFetch(s.user!, body.target, body.hash)) {
+      return this.fail(s, 'not_found', 'no such file on that device', re);
+    }
+    if (this.brokered.has(body.session_id))
+      return this.fail(s, 'conflict', 'session id in use', re);
+    const target = this.online.get(body.target);
+    if (!target) {
+      const unknown = { nat: 'unknown', upnp: false, ipv6: false, cgnat: false } as const;
+      return this.send(
+        s,
+        'connect.failed',
+        {
+          session_id: body.session_id,
+          cause: 'peer_offline',
+          easier_fix: 'none',
+          you: unknown,
+          them: unknown,
+        },
+        re,
+      );
+    }
+    const me = this.db.getDevice(s.device!)!;
+    const owner = this.db.getUser(s.user!)!;
+    const token = signTransferToken(this.opts.hubKey, {
+      session_id: body.session_id,
+      from: s.device!,
+      to: body.target,
+      hash: body.hash,
+      exp: Math.floor(now / 1000) + TOKEN_TTL_S,
+    });
+    this.brokered.set(body.session_id, {
+      downloader: s,
+      from: s.device!,
+      to: body.target,
+      token,
+      expires: now + TOKEN_TTL_S * 1000,
+    });
+    this.send(target, 'connect.offer', {
+      session_id: body.session_id,
+      from: s.device!,
+      from_user: s.user!,
+      from_root_pubkey: owner.root_pubkey,
+      from_chain: me.chain,
+      token,
+      stream_id: body.stream_id,
+      candidates: body.candidates,
+    });
+    s.log.info({ session: body.session_id, to: body.target }, 'brokering connection');
+    this.send(s, 'ok', {}, re);
+  }
+
+  private onConnectAnswer(s: Session, re: string, body: ClientBody<'connect.answer'>) {
+    const b = this.brokered.get(body.session_id);
+    // Only the device the offer went to may answer it.
+    if (!b || b.to !== s.device) return this.fail(s, 'not_found', 'no such session', re);
+    const me = this.db.getDevice(s.device!)!;
+    const owner = this.db.getUser(s.user!)!;
+    this.send(b.downloader, 'connect.answer', {
+      session_id: body.session_id,
+      stream_id: body.stream_id,
+      candidates: body.candidates,
+      to_user: s.user!,
+      to_root_pubkey: owner.root_pubkey,
+      to_chain: me.chain,
+      token: b.token,
+    });
+    this.send(s, 'ok', {}, re);
   }
 
   // ── access rules ──────────────────────────────────────────────────────────

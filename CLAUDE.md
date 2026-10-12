@@ -16,6 +16,7 @@ Communal is a private, Napster-style file-sharing app: a self-hosted **hub** kee
 - Inside a dev container: `docker compose -f docker/compose.dev.yml exec node-a communal <cmd>` (`share add /shares/alice --name Alice`, `search <words>`, `status`), or `communal-spike peer …` for the transport benchmark between containers.
 - Running an app from source: `pnpm --filter @communal/hub dev` (a dev build with self-signed TLS, data in `apps/hub/hub-data`), `pnpm --filter @communal/cli dev -- status`.
 - People and access (per hub, `--hub` needed when on several): `communal people search|request|accept|remove|verify`, `communal group set|list|delete`, `communal acl set <path> me|hub|users:<ids>|groups:<ids>`.
+- Transfers: `communal get <hash>`, `communal transfers`, `communal cancel <id>`, `communal log` (who downloaded what from this device).
 - Hub admin: `communal-hub users | approve <user_id> | ban <user_id> [--reason] | unban <user_id> | set join_mode open|approval`. These commands work directly on the SQLite database, so they run alongside a live hub.
 
 Workspace packages export a custom `@communal/source` condition that points at `src/`. Vitest, tsc and `tsx --conditions=@communal/source` resolve to TypeScript sources, so nothing needs building for tests or dev runs. Only the Docker images use `dist/`. New packages should copy that `exports` shape and the `tsconfig.json`/`tsconfig.build.json` pair (the build config excludes `*.test.ts`).
@@ -43,6 +44,10 @@ How the pieces connect:
   - `CommunalCore` (`core.ts`) owns `HubManager`, `IndexStore` (local SQLite: shares, files, change log, per-hub sync state), `Indexer` (scan, watch, rescan, hash) and `IndexSync` (per-hub snapshot/delta).
   - `LocalApi` (`api/server.ts`) wraps the core for the CLI and desktop. The CLI never touches core internals while the daemon runs.
   - Never iterate a better-sqlite3 statement across an `await`: other statements on the same connection throw. Page with keyset queries instead (`filesPage`).
+- **Transfers** (ADR 0010):
+  - Core `peer/transport.ts` does hole punching plus udx and Noise, with one UDP socket per device. `transfer/broker.ts` handles hub brokering and peer identity checks in both directions. `transfer/uploader.ts` does the `hello` checks, its own access re-check via `AccessOracle`, limits and the upload log. `transfer/downloader.ts` does multi-source, verification and `.part`/`.partmap` resume.
+  - Read peer frames with `PeerChannel.next()` / `subscribe()`, never a bare `on('frame')`, or frames that arrive early are lost.
+- **NAT lab:** `docker/nat/test.sh` runs a transfer between two clients behind separate NAT routers (`docker/compose.nat.yml`).
 - **Hub visibility** is decided in exactly one place, `Catalog.visible()` in `apps/hub/src/catalog.ts`. Never filter access in individual queries. Each entry carries its governing rule (`entries.rule_path`), which `HubDb` re-tags whenever rules change (ADR 0009).
 - **Access rules are per hub, and the client's copy is authoritative** (core `index.db` table `acl`). It's pushed whole with `acl.replace` on every sign-in. List grants only work while the two users are connected.
 - **Clients never trust a hub's claims about identity:** run `checkSummary` on every `UserSummary` (core `people.ts`).
