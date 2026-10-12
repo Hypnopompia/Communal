@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { deviceId, fingerprint, generateKeyPair, toB64, userId } from '@communal/crypto';
+import {
+  deviceId,
+  fingerprint,
+  generateKeyPair,
+  issueDeviceCert,
+  toB64,
+  userId,
+} from '@communal/crypto';
 import {
   RawClient,
   signChallenge,
@@ -343,5 +350,71 @@ describe('access control: bans', () => {
     expect((await alice.c.next('presence', 1_000)).body).toMatchObject({ online: false });
     expect(t.hub.isOnline(bob.deviceId)).toBe(false);
     alice.c.close();
+  });
+});
+
+describe('access control: account.create for an existing account (multi-hub, ADR 0007)', () => {
+  async function createWith(key: ReturnType<typeof generateKeyPair>, extra: object) {
+    const c = await RawClient.connect(t.url);
+    const sig = signChallenge(await c.next('challenge'), key);
+    const reply = await c.request('account.create', {
+      display_name: 'alice',
+      device_name: 'second laptop',
+      device_pubkey: toB64(key.publicKey),
+      platform: 'linux',
+      client,
+      sig,
+      ...extra,
+    });
+    c.close();
+    return reply;
+  }
+
+  it('registers the account under its root when a linked device joins a hub', async () => {
+    const root = generateKeyPair();
+    const laptop = generateKeyPair();
+    const uid = userId(root.publicKey);
+    const chain = [issueDeviceCert(root, uid, laptop.publicKey)];
+    const reply = await createWith(laptop, { root_pubkey: toB64(root.publicKey), chain });
+    expect(reply).toMatchObject({
+      t: 'account.created',
+      body: {
+        user_id: uid,
+        device_id: deviceId(laptop.publicKey),
+        fingerprint: fingerprint(root.publicKey),
+      },
+    });
+    expect(t.db.getUser(uid)?.root_pubkey).toBe(toB64(root.publicKey));
+    expect(t.db.getDevice(deviceId(laptop.publicKey))?.chain).toEqual(chain);
+  });
+
+  it('rejects a chain that does not lead from that root to this device', async () => {
+    const root = generateKeyPair();
+    const laptop = generateKeyPair();
+    const uid = userId(root.publicKey);
+    const someoneElse = generateKeyPair();
+    const forged = [issueDeviceCert(someoneElse, uid, laptop.publicKey)];
+    expect(
+      await createWith(laptop, { root_pubkey: toB64(root.publicKey), chain: forged }),
+    ).toMatchObject({
+      t: 'error',
+      body: { code: 'forbidden' },
+    });
+    expect(await createWith(laptop, { root_pubkey: toB64(root.publicKey) })).toMatchObject({
+      body: { code: 'bad_request' },
+    });
+    expect(t.db.listUsers()).toHaveLength(0);
+  });
+
+  it('refuses to create an account that already exists on this hub', async () => {
+    const alice = await signUp(t.url, 'alice');
+    alice.c.close();
+    const laptop = generateKeyPair();
+    const chain = [issueDeviceCert(alice.key, alice.userId, laptop.publicKey)];
+    expect(
+      await createWith(laptop, { root_pubkey: toB64(alice.key.publicKey), chain }),
+    ).toMatchObject({
+      body: { code: 'conflict' },
+    });
   });
 });

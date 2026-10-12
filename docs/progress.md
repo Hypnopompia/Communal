@@ -17,10 +17,11 @@
 - **Hub CLI:** `communal-hub serve` (the default), `users`, `approve <user>`, `ban <user> [--reason]`, `unban <user>`, `set join_mode open|approval`, `get`.
 - **Bans** (owner request, beyond HANDOFF): sign-in is refused, live sessions end within about 2 s, and the device goes offline immediately. Search, browse etc. must exclude banned users from M2/M3 on.
 - **Core** (`packages/core`): `HubClient` pins the hub key on first contact, creates the account on first connect, pings, detects silence, reconnects with jittered exponential backoff (1 s → 60 s), matches replies to requests, retries while approval is pending, and stops on fatal errors.
+- **Multi-hub client** (owner decision, ADR 0007): `HubManager` runs one `HubClient` per hub with the same identity, tags events by hub, and fans requests out with `requestAll`. `account.create` accepts `root_pubkey` + `chain`, so a linked device keeps the account's `user_id` on a new hub.
 - **Headless CLI:**
-  - `communal init --hub <url> --name <name>` creates an account.
-  - `communal daemon` stays signed in.
-  - `communal status` shows the device and hub.
+  - `communal init --hub <url> --name <name>` and `communal hub add|list|remove` join and manage hubs, stored in `hubs.json`. An old `hub.json` is migrated.
+  - `communal daemon` connects to every configured hub.
+  - `communal status` shows the device and all its hubs.
   - `COMMUNAL_AUTO_INIT` creates the account automatically, in dev builds only.
 - **Dev stack:** both images build with `COMMUNAL_BUILD=dev`. The hub serves `wss://` with a self-signed certificate. Clients wait for the hub healthcheck, then create accounts and sign in.
 - **Decisions:** ADR 0006.
@@ -33,7 +34,8 @@
   - `auth`: unknown device, wrong key, revoked device, pending user, double auth, session replacement
   - presence reaches only the owner's devices and accepted connections
   - timeouts
-- `test/integration/m1-hub-accounts.test.ts` (5 tests, real TLS hub + real `HubClient`s):
+- `test/integration/multi-hub.test.ts` (3 tests): one identity on two hubs, per-hub pinning, fan-out keeps working when one hub is down, presence tagged by hub, restart from saved state, removing a hub.
+- `test/integration/m1-hub-accounts.test.ts` (6 tests, real TLS hub + real `HubClient`s):
   - 3 accounts created; the hub key is pinned
   - presence: no flicker on a quick reconnect, offline only after the silence window, online on return, nothing sent to an unconnected user
   - hub restart: the backoff delays are checked against the jitter bounds, then all clients reconnect and presence comes back

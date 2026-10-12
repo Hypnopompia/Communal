@@ -18,6 +18,8 @@ import {
   toB64,
   userId,
   verify,
+  verifyCertChain,
+  type CertChain,
   type KeyPair,
 } from '@communal/crypto';
 import {
@@ -323,17 +325,38 @@ export class HubServer {
     if (this.db.deviceExistsWithPubkey(body.device_pubkey))
       return this.fail(s, 'conflict', 'device already registered', re);
 
-    // The first device's key is the account root (HANDOFF §2).
-    const uid = userId(pubkey);
+    // The first device's key is the account root (HANDOFF §2). A device joining this hub on
+    // behalf of an existing account proves its chain to that account's root (ADR 0007).
+    let root = pubkey;
+    let chain: CertChain = [];
+    if (body.root_pubkey !== undefined || body.chain !== undefined) {
+      if (body.root_pubkey === undefined || body.chain === undefined) {
+        return this.fail(s, 'bad_request', 'root_pubkey and chain go together', re);
+      }
+      root = fromB64(body.root_pubkey);
+      chain = body.chain;
+      if (!verifyCertChain(root, pubkey, chain).ok) {
+        return this.fail(s, 'forbidden', 'cert chain does not verify', re);
+      }
+    }
+    const uid = userId(root);
     const did = deviceId(pubkey);
+    if (this.db.getUser(uid)) {
+      return this.fail(
+        s,
+        'conflict',
+        'account already exists on this hub; link this device instead',
+        re,
+      );
+    }
     const status = this.db.joinMode === 'open' ? 'active' : 'pending';
     this.db.createAccount(
-      { id: uid, display_name: body.display_name, root_pubkey: body.device_pubkey, status },
+      { id: uid, display_name: body.display_name, root_pubkey: toB64(root), status },
       {
         id: did,
         user_id: uid,
         pubkey: body.device_pubkey,
-        chain: [],
+        chain,
         name: body.device_name,
         platform: body.platform,
       },
@@ -345,7 +368,7 @@ export class HubServer {
       {
         user_id: uid,
         device_id: did,
-        fingerprint: fingerprint(pubkey),
+        fingerprint: fingerprint(root),
         status: status === 'active' ? 'active' : 'pending_approval',
       },
       re,

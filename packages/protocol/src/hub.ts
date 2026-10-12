@@ -85,6 +85,13 @@ export const clientBodies = {
     platform: Platform,
     client: ClientInfo,
     sig: Signature,
+    /**
+     * Joining another hub from a device that isn't the account root: the root key plus this
+     * device's cert chain, so the account keeps the same user_id on every hub (ADR 0007).
+     * Omitted when the device itself is the root (a brand-new account).
+     */
+    root_pubkey: PublicKey.optional(),
+    chain: CertChain.optional(),
   }),
   'link.code.create': Empty,
   'link.claim': z.object({

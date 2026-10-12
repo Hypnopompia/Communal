@@ -42,6 +42,10 @@ How the pieces connect:
   - After the handshake, the peer must match the hub-named `device_id`, and its cert chain must verify to the account root.
   - udx accepts IP literals only, so candidates must be IPs.
   - Never add `hyperdht`/`hyperswarm` as dependencies: they bring a DHT and relaying.
+- **Multiple hubs per client** (ADR 0007, changes HANDOFF): core's `HubManager` runs one `HubClient` per hub with a single identity, so `user_id` and device keys are the same on every hub.
+  - Hub-facing state is per hub: pinned key, index revs, access rules, groups and watches.
+  - Searches fan out with `requestAll` and merge by hash.
+  - Transfer tokens are accepted from any joined hub, checked against that hub's rules.
 - **Identity**: an Ed25519 device key. The first device's key is the account root. Each later device carries a certificate signed by an existing device, so peers verify the cert chain back to the root and reject revoked devices.
 
 ## Testing patterns
