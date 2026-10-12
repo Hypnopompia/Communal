@@ -42,10 +42,15 @@ export interface HubOptions {
   silenceMs?: number;
   /** Close sessions that haven't authenticated within this time. */
   authTimeoutMs?: number;
+  /**
+   * How often to look for bans made by the admin CLI (a separate process) and disconnect the
+   * banned users' live sessions.
+   */
+  banPollMs?: number;
   log?: Logger;
 }
 
-const DEFAULTS = { silenceMs: 90_000, authTimeoutMs: 30_000 };
+const DEFAULTS = { silenceMs: 90_000, authTimeoutMs: 30_000, banPollMs: 2_000 };
 
 /** Message types accepted before `auth` succeeds. */
 const PRE_AUTH = new Set<ClientMessage['t']>([
@@ -76,6 +81,7 @@ export class HubServer {
   private wss?: WebSocketServer;
   private probes: UdpSocket[] = [];
   private sweeper?: NodeJS.Timeout;
+  private banPoller?: NodeJS.Timeout;
   private readonly sessions = new Set<Session>();
   /** device_id → its live authenticated session. */
   private readonly online = new Map<string, Session>();
@@ -111,6 +117,7 @@ export class HubServer {
 
     const tick = Math.max(50, Math.floor(this.opts.silenceMs / 6));
     this.sweeper = setInterval(() => this.sweep(), tick);
+    this.banPoller = setInterval(() => this.enforceBans(), this.opts.banPollMs);
 
     await new Promise<void>((resolve, reject) => {
       this.http!.once('error', reject);
@@ -131,6 +138,7 @@ export class HubServer {
 
   async close(): Promise<void> {
     clearInterval(this.sweeper);
+    clearInterval(this.banPoller);
     for (const t of this.goingOffline.values()) clearTimeout(t);
     this.goingOffline.clear();
     for (const s of this.sessions) s.ws.terminate();
@@ -207,6 +215,36 @@ export class HubServer {
         s.ws.close(4001, 'auth timeout');
       }
     }
+  }
+
+  /** Disconnects every live session of users the admin has banned since we last looked. */
+  enforceBans() {
+    const users = new Set<string>();
+    for (const s of this.online.values()) users.add(s.user!);
+    for (const [, owner] of this.devicesInGrace()) users.add(owner);
+    for (const uid of this.db.bannedAmong([...users])) this.kickUser(uid);
+  }
+
+  /**
+   * Ends all of a user's sessions now and publishes their devices offline immediately: a ban
+   * skips the usual grace period, since the devices aren't coming back.
+   */
+  kickUser(uid: string) {
+    for (const [device, s] of this.online) {
+      if (s.user !== uid) continue;
+      this.online.delete(device);
+      s.device = undefined; // keep onClose from starting a grace period
+      s.ws.close(4003, 'account banned');
+      this.publishPresence(uid, device, false);
+    }
+    for (const device of this.db.devicesOf(uid)) {
+      const pending = this.goingOffline.get(device);
+      if (!pending) continue;
+      clearTimeout(pending);
+      this.goingOffline.delete(device);
+      this.publishPresence(uid, device, false);
+    }
+    this.log.info({ user_id: uid }, 'banned user disconnected');
   }
 
   private onClose(s: Session) {
@@ -327,6 +365,10 @@ export class HubServer {
     }
     const user = this.db.getUser(dev.user_id);
     if (!user) return this.fail(s, 'forbidden', 'sign-in rejected', re);
+    // Checked after the signature, so only the key holder learns the account is banned.
+    if (user.banned_at !== null) {
+      return this.fail(s, 'banned', 'this account has been banned by the hub admin', re);
+    }
     if (user.status !== 'active')
       return this.fail(
         s,

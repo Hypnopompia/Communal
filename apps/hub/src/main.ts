@@ -68,8 +68,10 @@ program
     } else {
       for (const u of users) {
         const when = new Date(u.created_at * 1000).toISOString().slice(0, 16).replace('T', ' ');
+        const status = u.banned_at !== null ? 'banned' : u.status;
+        const reason = u.ban_reason ? `  (${u.ban_reason})` : '';
         console.log(
-          `${u.id}  ${u.status.padEnd(7)}  ${String(u.devices).padStart(2)} dev  ${when}  ${u.display_name}`,
+          `${u.id}  ${status.padEnd(7)}  ${String(u.devices).padStart(2)} dev  ${when}  ${u.display_name}${reason}`,
         );
       }
     }
@@ -90,6 +92,41 @@ program
     } else {
       db.setUserStatus(id, 'active');
       console.log(`approved ${id} (${user.display_name})`);
+    }
+    db.close();
+  });
+
+program
+  .command('ban <user_id>')
+  .description('ban an account: signs out its devices and blocks sign-in')
+  .option('--reason <text>', 'note shown in `users` (not sent to the user)')
+  .action((id: string, opts: { reason?: string }) => {
+    const db = openDb();
+    const user = db.getUser(id);
+    if (!user) {
+      console.error(`no such user: ${id}`);
+      process.exitCode = 1;
+    } else {
+      db.ban(id, opts.reason ?? null);
+      console.log(`banned ${id} (${user.display_name}); live sessions end within a few seconds`);
+    }
+    db.close();
+  });
+
+program
+  .command('unban <user_id>')
+  .description('lift a ban (the user restarts their app to sign back in)')
+  .action((id: string) => {
+    const db = openDb();
+    const user = db.getUser(id);
+    if (!user) {
+      console.error(`no such user: ${id}`);
+      process.exitCode = 1;
+    } else if (user.banned_at === null) {
+      console.log(`${id} is not banned`);
+    } else {
+      db.unban(id);
+      console.log(`unbanned ${id} (${user.display_name})`);
     }
     db.close();
   });

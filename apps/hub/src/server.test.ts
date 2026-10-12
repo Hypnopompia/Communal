@@ -293,3 +293,55 @@ describe('access control: presence', () => {
     for (const c of [fresh.c, bob.c, carol.c, daveBack.c]) c.close();
   });
 });
+
+describe('access control: bans', () => {
+  it('refuses sign-in for a banned account, but only after the key is proven', async () => {
+    const alice = await signUp(t.url, 'alice');
+    alice.c.close();
+    t.db.ban(alice.userId, 'spam');
+
+    // A stranger guessing the device id learns nothing about the ban.
+    expect((await signIn(t.url, generateKeyPair(), alice.deviceId)).reply.body).toMatchObject({
+      code: 'forbidden',
+    });
+    expect((await signIn(t.url, alice.key, alice.deviceId)).reply.body).toMatchObject({
+      code: 'banned',
+    });
+
+    t.db.unban(alice.userId);
+    expect((await signIn(t.url, alice.key, alice.deviceId)).reply.t).toBe('welcome');
+  });
+
+  it('disconnects live sessions and publishes offline at once, without the grace period', async () => {
+    await t.close();
+    t = await startTestHub({ silenceMs: 10_000, banPollMs: 100 });
+    const alice = await signUp(t.url, 'alice');
+    const bob = await signUp(t.url, 'bob');
+    t.db.putConnection(alice.userId, bob.userId, 'accepted');
+
+    const started = Date.now();
+    t.db.ban(bob.userId);
+    expect((await bob.c.closed).code).toBe(4003);
+    expect((await alice.c.next('presence')).body).toEqual({
+      device_id: bob.deviceId,
+      user_id: bob.userId,
+      online: false,
+    });
+    expect(Date.now() - started).toBeLessThan(1_000);
+    alice.c.close();
+  });
+
+  it('cuts short the grace period of a banned device that already disconnected', async () => {
+    await t.close();
+    t = await startTestHub({ silenceMs: 10_000, banPollMs: 100 });
+    const alice = await signUp(t.url, 'alice');
+    const bob = await signUp(t.url, 'bob');
+    t.db.putConnection(alice.userId, bob.userId, 'accepted');
+    bob.c.close();
+    await sleep(100);
+    t.db.ban(bob.userId);
+    expect((await alice.c.next('presence', 1_000)).body).toMatchObject({ online: false });
+    expect(t.hub.isOnline(bob.deviceId)).toBe(false);
+    alice.c.close();
+  });
+});

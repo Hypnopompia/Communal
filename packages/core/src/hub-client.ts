@@ -59,7 +59,7 @@ export class HubError extends Error {
 /** Fatal conditions stop the client; reconnecting can't fix them. */
 export class HubFatalError extends Error {
   constructor(
-    readonly reason: 'hub_key_mismatch' | 'not_registered' | 'rejected',
+    readonly reason: 'hub_key_mismatch' | 'not_registered' | 'rejected' | 'banned',
     message: string,
   ) {
     super(message);
@@ -369,6 +369,8 @@ export class HubClient extends EventEmitter<HubClientEvents> {
       if (err instanceof HubError && err.code === 'pending_approval') {
         this.emit('pending_approval');
         this.ws?.close(1000, 'pending approval');
+      } else if (err instanceof HubError && err.code === 'banned') {
+        this.fatal(new HubFatalError('banned', err.message));
       } else if (err instanceof HubError && err.code === 'forbidden') {
         this.fatal(new HubFatalError('rejected', `hub rejected sign-in: ${err.message}`));
       } else {

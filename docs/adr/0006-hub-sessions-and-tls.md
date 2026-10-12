@@ -53,3 +53,11 @@ HANDOFF says `COMMUNAL_AUTO_INIT` and `COMMUNAL_DEV_TLS` are "ignored in product
 
 - `COMMUNAL_JOIN_MODE` sets the initial value only on first start. After that, `communal-hub set join_mode open|approval` controls it.
 - Approval is checked at `auth`, so `communal-hub approve <user>` takes effect on the client's next retry, with no hub restart.
+
+## Bans (added at the owner's request; not in HANDOFF)
+
+- `users.banned_at` and `users.ban_reason` are separate from `status`. A pending account can be banned, and unbanning restores the account to its previous status.
+- `communal-hub ban <user> [--reason]` and `unban <user>`. The reason is an admin note and is never sent to the user.
+- **At sign-in:** a banned account gets `error{code:"banned"}`. This check runs _after_ the signature check, so only the key holder learns the account is banned. Strangers still get `forbidden`. The client treats `banned` as fatal and stops retrying. After an unban, the user restarts the app.
+- **Live sessions:** the admin CLI is a separate process, so the hub checks for bans every 2 s (`banPollMs`). It covers users with live sessions and devices still in their offline grace period. Banned sessions are closed with code 4003, and their devices go offline immediately, skipping the grace period.
+- **Still to do:** M2/M3 must also exclude banned users from search, browse, sources, `user.search` and connection requests.

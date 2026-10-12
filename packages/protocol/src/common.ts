@@ -136,6 +136,7 @@ export const ErrorCode = z.enum([
   'conflict',
   'rate_limited',
   'pending_approval',
+  'banned',
   'expired',
   'not_implemented',
   'internal',

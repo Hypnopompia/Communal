@@ -14,7 +14,8 @@
   - session replacement when a device signs in again
   - TLS: PEM files, dev self-signed, or off behind a proxy
   - the UDP NAT-probe responders
-- **Hub CLI:** `communal-hub serve` (the default), `users`, `approve <user>`, `set join_mode open|approval`, `get`.
+- **Hub CLI:** `communal-hub serve` (the default), `users`, `approve <user>`, `ban <user> [--reason]`, `unban <user>`, `set join_mode open|approval`, `get`.
+- **Bans** (owner request, beyond HANDOFF): sign-in is refused, live sessions end within about 2 s, and the device goes offline immediately. Search, browse etc. must exclude banned users from M2/M3 on.
 - **Core** (`packages/core`): `HubClient` pins the hub key on first contact, creates the account on first connect, pings, detects silence, reconnects with jittered exponential backoff (1 s → 60 s), matches replies to requests, retries while approval is pending, and stops on fatal errors.
 - **Headless CLI:**
   - `communal init --hub <url> --name <name>` creates an account.
@@ -54,6 +55,7 @@ docker compose -f docker/compose.dev.yml exec hub communal-hub set join_mode app
 
 - Presence visibility is based only on connections. M3 adds "shares something with you".
 - `network.profile` is accepted by the protocol, but the hub returns `not_implemented` (M5). Every other non-M1 type does the same until its milestone lands.
+- Web admin UI and remaining multi-hub details are in `docs/questions.md`.
 - No rate limiting on the hub yet. Revisit before any public deployment (M9).
 
 ## M0 — Foundations (2026-10-12)

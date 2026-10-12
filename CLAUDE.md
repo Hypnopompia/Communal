@@ -15,7 +15,7 @@ Communal is a private, Napster-style file-sharing app: a self-hosted **hub** kee
 - `pnpm dev:stack`: builds and starts the hub plus `node-a` (alice) and `node-b` (bob) via `docker/compose.dev.yml`. `pnpm dev:stack:reset` wipes the volumes. Docker Desktop's CLI lives in `~/.docker/bin` and may not be on PATH.
 - Inside a dev container: `docker compose -f docker/compose.dev.yml exec node-a communal <cmd>`, or `communal-spike peer …` for the transport benchmark between containers.
 - Running an app from source: `pnpm --filter @communal/hub dev` (a dev build with self-signed TLS, data in `apps/hub/hub-data`), `pnpm --filter @communal/cli dev -- status`.
-- Hub admin: `communal-hub users | approve <user_id> | set join_mode open|approval`. These commands work directly on the SQLite database, so they run alongside a live hub.
+- Hub admin: `communal-hub users | approve <user_id> | ban <user_id> [--reason] | unban <user_id> | set join_mode open|approval`. These commands work directly on the SQLite database, so they run alongside a live hub.
 
 Workspace packages export a custom `@communal/source` condition that points at `src/`. Vitest, tsc and `tsx --conditions=@communal/source` resolve to TypeScript sources, so nothing needs building for tests or dev runs. Only the Docker images use `dist/`. New packages should copy that `exports` shape and the `tsconfig.json`/`tsconfig.build.json` pair (the build config excludes `*.test.ts`).
 
@@ -60,6 +60,7 @@ How the pieces connect:
 - **Access control is enforced twice.** The hub filters search, browse, sources, watch and `connect.request`. The uploader checks again on `hello`, `thumb.get` and `get`.
   - The effective rule is the file's own rule, else the nearest ancestor's rule, else `"me"`.
   - The user's own devices always see everything.
+  - Banned users (`users.banned_at`) must be excluded from search, browse, sources, `user.search` and presence.
   - Never reveal a file's audience to anyone but its owner, or reveal inaccessible files, not even as counts.
   - Every hub handler needs an access-control unit test.
 - Local filesystem paths never leave the device. The hub only sees `ShareName/relative/path`. Downloads are offered only for entries that have a hash.

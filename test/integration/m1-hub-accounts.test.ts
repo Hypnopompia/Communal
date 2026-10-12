@@ -254,4 +254,27 @@ describe('M1: hub + accounts', () => {
     db.setUserStatus(dave.state.userId!, 'active');
     await dave.client.waitReady(3_000);
   });
+
+  it('stops a banned client for good instead of retrying', async () => {
+    const { dir, db } = setup();
+    const hub = await startTestHub({
+      dir,
+      db,
+      tls: await devSelfSigned(dir),
+      silenceMs: SILENCE_MS,
+      banPollMs: 100,
+    });
+    cleanups.push(() => hub.close());
+    const mallory = makeNode('mallory', hub.url);
+    mallory.client.start();
+    await mallory.client.waitReady();
+
+    const fatal = new Promise<Error>((resolve) => mallory.client.once('fatal', resolve));
+    db.ban(mallory.state.userId!, 'spam');
+    expect(await fatal).toMatchObject({ reason: 'banned' });
+    const attempts = mallory.reconnects.length;
+    await sleep(BACKOFF.maxMs * 2);
+    expect(mallory.reconnects.length).toBe(attempts);
+    expect(mallory.client.ready).toBe(false);
+  });
 });

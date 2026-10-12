@@ -10,6 +10,9 @@ export interface UserRow {
   root_pubkey: string;
   status: UserStatus;
   created_at: number;
+  /** Set when the hub admin bans the account; orthogonal to `status`. */
+  banned_at: number | null;
+  ban_reason: string | null;
 }
 
 export interface DeviceRow {
@@ -74,6 +77,10 @@ const MIGRATIONS: string[] = [
     value TEXT NOT NULL
   );
   `,
+  `
+  ALTER TABLE users ADD COLUMN banned_at INTEGER;
+  ALTER TABLE users ADD COLUMN ban_reason TEXT;
+  `,
 ];
 
 const now = () => Math.floor(Date.now() / 1000);
@@ -126,7 +133,7 @@ export class HubDb {
   // ── users & devices ───────────────────────────────────────────────────────
 
   createAccount(
-    user: Omit<UserRow, 'created_at'>,
+    user: Omit<UserRow, 'created_at' | 'banned_at' | 'ban_reason'>,
     device: Omit<DeviceRow, 'created_at' | 'last_seen' | 'revoked_at'>,
   ) {
     const t = now();
@@ -168,6 +175,33 @@ export class HubDb {
 
   setUserStatus(id: string, status: UserStatus): boolean {
     return this.raw.prepare('UPDATE users SET status = ? WHERE id = ?').run(status, id).changes > 0;
+  }
+
+  ban(id: string, reason: string | null = null): boolean {
+    return (
+      this.raw
+        .prepare('UPDATE users SET banned_at = ?, ban_reason = ? WHERE id = ?')
+        .run(now(), reason, id).changes > 0
+    );
+  }
+
+  unban(id: string): boolean {
+    return (
+      this.raw.prepare('UPDATE users SET banned_at = NULL, ban_reason = NULL WHERE id = ?').run(id)
+        .changes > 0
+    );
+  }
+
+  /** Which of `ids` are banned. */
+  bannedAmong(ids: string[]): string[] {
+    if (ids.length === 0) return [];
+    return (
+      this.raw
+        .prepare(
+          `SELECT id FROM users WHERE banned_at IS NOT NULL AND id IN (${ids.map(() => '?').join(',')})`,
+        )
+        .all(...ids) as { id: string }[]
+    ).map((r) => r.id);
   }
 
   getDevice(id: string): DeviceRow | undefined {
