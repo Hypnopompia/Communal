@@ -12,6 +12,7 @@
     "dev": "tsx --conditions=@communal/source src/main.ts"
   },
   "dependencies": {
+    "@communal/core": "workspace:*",
     "@communal/crypto": "workspace:*",
     "@communal/protocol": "workspace:*",
     "commander": "^15.0.0",

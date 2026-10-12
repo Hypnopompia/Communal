@@ -137,5 +137,6 @@ export const ErrorCode = z.enum([
   'rate_limited',
   'pending_approval',
   'expired',
+  'not_implemented',
   'internal',
 ]);

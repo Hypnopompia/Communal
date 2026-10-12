@@ -1,112 +1,122 @@
 #!/usr/bin/env node
 /**
- * M0 hub skeleton: proves the image, ports and protocol package wire up. It sends the session
- * `challenge`, answers `ping`, and runs the two-port UDP NAT-probe responder (HANDOFF §8).
- * Accounts, auth and everything else arrive in M1.
+ * `communal-hub` — runs the hub (`serve`, the default) and offers admin commands that work on
+ * the same SQLite database (HANDOFF §10: users, approve, set join_mode).
  */
-import { createServer } from 'node:http';
-import { createSocket } from 'node:dgram';
-import { randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { Command } from 'commander';
 import { pino } from 'pino';
-import { WebSocketServer } from 'ws';
-import { generateKeyPair, keyPairFromSecret, toB64, type KeyPair } from '@communal/crypto';
-import { encodeHub, MAX_FRAME_BYTES, parseClientMessage } from '@communal/protocol';
+import { HubDb } from './db.js';
+import { isDevBuild, loadOrCreateHubKey, resolveTls } from './config.js';
+import { HubServer } from './server.js';
 
-const log = pino({ name: 'hub' });
+const dataDir = process.env.COMMUNAL_HUB_DATA ?? './hub-data';
+const openDb = () => new HubDb(join(dataDir, 'hub.db'));
+const log = pino({ name: 'hub', level: process.env.LOG_LEVEL ?? 'info' });
 
-const env = {
-  dataDir: process.env.COMMUNAL_HUB_DATA ?? './hub-data',
-  port: Number(process.env.COMMUNAL_HUB_PORT ?? 8443),
-  probePorts: [
-    Number(process.env.COMMUNAL_PROBE_PORT_A ?? 3478),
-    Number(process.env.COMMUNAL_PROBE_PORT_B ?? 3479),
-  ] as [number, number],
-  hubId: process.env.COMMUNAL_HUB_ID ?? 'dev-hub',
-};
+const program = new Command().name('communal-hub').description('Communal hub server and admin');
 
-function loadHubKey(dir: string): KeyPair {
-  mkdirSync(dir, { recursive: true });
-  const file = join(dir, 'hub.key');
-  try {
-    return keyPairFromSecret(new Uint8Array(readFileSync(file)));
-  } catch {
-    const kp = generateKeyPair();
-    writeFileSync(file, kp.secretKey, { mode: 0o600 });
-    log.info('generated new hub key');
-    return kp;
-  }
-}
+program
+  .command('serve', { isDefault: true })
+  .description('run the hub')
+  .action(async () => {
+    const { key, created } = loadOrCreateHubKey(dataDir);
+    if (created) log.info('generated new hub key');
+    const db = openDb();
+    // Env seeds join_mode only on first start; afterwards `communal-hub set join_mode` owns it.
+    const envMode = process.env.COMMUNAL_JOIN_MODE;
+    if (
+      db.getSetting('join_mode') === undefined &&
+      (envMode === 'open' || envMode === 'approval')
+    ) {
+      db.setSetting('join_mode', envMode);
+    }
+    const hub = new HubServer({
+      db,
+      hubKey: key,
+      hubId: process.env.COMMUNAL_HUB_ID ?? 'communal-hub',
+      tls: await resolveTls(dataDir),
+      probePorts: [
+        Number(process.env.COMMUNAL_PROBE_PORT_A ?? 3478),
+        Number(process.env.COMMUNAL_PROBE_PORT_B ?? 3479),
+      ],
+      log,
+    });
+    if (isDevBuild()) log.warn('dev build: dev-only conveniences are enabled');
+    await hub.listen(Number(process.env.COMMUNAL_HUB_PORT ?? 8443));
+    const shutdown = async () => {
+      log.info('shutting down');
+      await hub.close();
+      db.close();
+      process.exit(0);
+    };
+    process.once('SIGTERM', shutdown);
+    process.once('SIGINT', shutdown);
+  });
 
-const hubKey = loadHubKey(env.dataDir);
+program
+  .command('users')
+  .description('list accounts')
+  .option('--json', 'machine-readable output')
+  .action((opts: { json?: boolean }) => {
+    const db = openDb();
+    const users = db.listUsers();
+    if (opts.json) {
+      console.log(JSON.stringify(users, null, 2));
+    } else if (users.length === 0) {
+      console.log('no users');
+    } else {
+      for (const u of users) {
+        const when = new Date(u.created_at * 1000).toISOString().slice(0, 16).replace('T', ' ');
+        console.log(
+          `${u.id}  ${u.status.padEnd(7)}  ${String(u.devices).padStart(2)} dev  ${when}  ${u.display_name}`,
+        );
+      }
+    }
+    db.close();
+  });
 
-const http = createServer((req, res) => {
-  if (req.url === '/healthz') {
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, hub_id: env.hubId, hub_pubkey: toB64(hubKey.publicKey) }));
-    return;
-  }
-  res.writeHead(404).end();
-});
+program
+  .command('approve <user_id>')
+  .description('approve a pending account')
+  .action((id: string) => {
+    const db = openDb();
+    const user = db.getUser(id);
+    if (!user) {
+      console.error(`no such user: ${id}`);
+      process.exitCode = 1;
+    } else if (user.status === 'active') {
+      console.log(`${id} is already active`);
+    } else {
+      db.setUserStatus(id, 'active');
+      console.log(`approved ${id} (${user.display_name})`);
+    }
+    db.close();
+  });
 
-const wss = new WebSocketServer({ server: http, path: '/v1', maxPayload: MAX_FRAME_BYTES });
-
-wss.on('connection', (ws, req) => {
-  const session = randomBytes(8).toString('hex');
-  const slog = log.child({ session_id: session });
-  slog.info({ remote: req.socket.remoteAddress }, 'client connected');
-  ws.send(
-    encodeHub('challenge', {
-      nonce: toB64(randomBytes(32)),
-      hub_id: env.hubId,
-      hub_pubkey: toB64(hubKey.publicKey),
-    }),
-  );
-  ws.on('message', (data) => {
-    const res = parseClientMessage(data.toString());
-    if (!res.ok) {
-      ws.send(encodeHub('error', { code: res.code, message: res.message }, { re: res.re }));
+program
+  .command('set <key> <value>')
+  .description('change a hub setting (join_mode open|approval)')
+  .action((key: string, value: string) => {
+    if (key !== 'join_mode' || (value !== 'open' && value !== 'approval')) {
+      console.error('supported: set join_mode open|approval');
+      process.exitCode = 2;
       return;
     }
-    if (res.msg.t === 'ping') {
-      ws.send(encodeHub('pong', {}, { re: res.msg.id }));
-      return;
-    }
-    ws.send(
-      encodeHub('error', { code: 'internal', message: 'not implemented yet' }, { re: res.msg.id }),
-    );
+    const db = openDb();
+    db.setSetting(key, value);
+    console.log(`${key} = ${value}`);
+    db.close();
   });
-  ws.on('close', () => slog.info('client disconnected'));
-});
 
-// NAT probe: reply to each datagram with the address/port we observed it from. A client sends
-// from one local socket to both ports; differing observed ports mean a symmetric NAT.
-for (const port of env.probePorts) {
-  const sock = createSocket('udp4');
-  sock.on('message', (msg, rinfo) => {
-    if (msg.length > 64) return; // never amplify
-    sock.send(
-      JSON.stringify({ addr: rinfo.address, port: rinfo.port, probe: port }),
-      rinfo.port,
-      rinfo.address,
-    );
+program
+  .command('get [key]')
+  .description('show hub settings')
+  .action((key?: string) => {
+    const db = openDb();
+    if (key) console.log(db.getSetting(key) ?? '(unset)');
+    else console.log(`join_mode = ${db.joinMode}`);
+    db.close();
   });
-  sock.bind(port, () => log.info({ port }, 'nat probe listening'));
-}
 
-http.listen(env.port, () =>
-  log.info(
-    { port: env.port, hub_id: env.hubId, tls: false },
-    'hub listening (plain ws until TLS lands in M1)',
-  ),
-);
-
-const shutdown = () => {
-  log.info('shutting down');
-  wss.close();
-  http.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 2000).unref();
-};
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
+await program.parseAsync();

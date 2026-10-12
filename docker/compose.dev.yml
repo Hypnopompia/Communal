@@ -2,14 +2,14 @@
 #   pnpm dev:stack          (build + up)
 #   pnpm dev:stack:reset    (wipe volumes)
 x-node: &node
-  build: { context: .., dockerfile: docker/headless.Dockerfile }
+  build: { context: .., dockerfile: docker/headless.Dockerfile, args: { COMMUNAL_BUILD: dev } }
   image: communal-headless:dev
-  depends_on: [hub]
+  depends_on: { hub: { condition: service_healthy } }
   restart: unless-stopped
 
 services:
   hub:
-    build: { context: .., dockerfile: docker/hub.Dockerfile }
+    build: { context: .., dockerfile: docker/hub.Dockerfile, args: { COMMUNAL_BUILD: dev } }
     image: communal-hub:dev
     ports: ['8443:8443', '3478:3478/udp', '3479:3479/udp']
     volumes: [hub-data:/data]
@@ -20,6 +20,7 @@ services:
     <<: *node
     environment:
       COMMUNAL_HUB: wss://hub:8443/v1
+      COMMUNAL_DEV_TLS: 'self-signed' # dev only: accept the hub's self-signed cert (key is still pinned)
       COMMUNAL_DISPLAY_NAME: alice
       COMMUNAL_AUTO_INIT: 'true' # dev only: create an account on first start
       COMMUNAL_PEER_PORT: '41641'
@@ -31,6 +32,7 @@ services:
     <<: *node
     environment:
       COMMUNAL_HUB: wss://hub:8443/v1
+      COMMUNAL_DEV_TLS: 'self-signed'
       COMMUNAL_DISPLAY_NAME: bob
       COMMUNAL_AUTO_INIT: 'true'
       COMMUNAL_PEER_PORT: '41642'

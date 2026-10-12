@@ -30,7 +30,7 @@ jobs:
       - name: Start dev stack
         run: docker compose -f docker/compose.dev.yml up -d --wait hub && docker compose -f docker/compose.dev.yml up -d
       - name: Hub health
-        run: curl -fsS http://localhost:8443/healthz
+        run: curl -fsSk https://localhost:8443/healthz
       - name: Transport spike between containers (1 GiB)
         run: |
           F=docker/compose.dev.yml

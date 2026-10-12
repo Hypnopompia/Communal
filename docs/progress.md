@@ -1,5 +1,61 @@
 # Progress
 
+## M1 — Hub + accounts (2026-10-12)
+
+**Status: done.**
+
+### What exists
+
+- **Hub** (`apps/hub`): sessions run on `HubServer` with SQLite storage through better-sqlite3 (`HubDb`, versioned migrations). It handles:
+  - `challenge`, then `auth` or `account.create`, with proof of key possession
+  - join_mode (open or approval)
+  - presence with a 90 s offline grace period and a snapshot on sign-in
+  - a 90 s silence timeout and a 30 s timeout for unauthenticated sessions
+  - session replacement when a device signs in again
+  - TLS: PEM files, dev self-signed, or off behind a proxy
+  - the UDP NAT-probe responders
+- **Hub CLI:** `communal-hub serve` (the default), `users`, `approve <user>`, `set join_mode open|approval`, `get`.
+- **Core** (`packages/core`): `HubClient` pins the hub key on first contact, creates the account on first connect, pings, detects silence, reconnects with jittered exponential backoff (1 s → 60 s), matches replies to requests, retries while approval is pending, and stops on fatal errors.
+- **Headless CLI:**
+  - `communal init --hub <url> --name <name>` creates an account.
+  - `communal daemon` stays signed in.
+  - `communal status` shows the device and hub.
+  - `COMMUNAL_AUTO_INIT` creates the account automatically, in dev builds only.
+- **Dev stack:** both images build with `COMMUNAL_BUILD=dev`. The hub serves `wss://` with a self-signed certificate. Clients wait for the hub healthcheck, then create accounts and sign in.
+- **Decisions:** ADR 0006.
+
+### Tests
+
+- `apps/hub/src/server.test.ts` (18 tests): access-control cases for every M1 handler:
+  - pre-auth types refused
+  - `account.create`: wrong key, challenge replay, duplicate device, approval mode
+  - `auth`: unknown device, wrong key, revoked device, pending user, double auth, session replacement
+  - presence reaches only the owner's devices and accepted connections
+  - timeouts
+- `test/integration/m1-hub-accounts.test.ts` (5 tests, real TLS hub + real `HubClient`s):
+  - 3 accounts created; the hub key is pinned
+  - presence: no flicker on a quick reconnect, offline only after the silence window, online on return, nothing sent to an unconnected user
+  - hub restart: the backoff delays are checked against the jitter bounds, then all clients reconnect and presence comes back
+  - a changed hub key is refused
+  - approval mode: the client keeps retrying until the admin approves it
+- The whole suite ran 5 times in a row with no flaky failures (119 tests).
+
+### Demo
+
+```bash
+pnpm dev:stack:reset && pnpm dev:stack
+docker compose -f docker/compose.dev.yml exec hub communal-hub users      # alice, bob: active
+docker compose -f docker/compose.dev.yml exec node-a communal status       # registered, hub key pinned
+docker compose -f docker/compose.dev.yml restart                          # same accounts, clients sign back in
+docker compose -f docker/compose.dev.yml exec hub communal-hub set join_mode approval
+```
+
+### Carried forward
+
+- Presence visibility is based only on connections. M3 adds "shares something with you".
+- `network.profile` is accepted by the protocol, but the hub returns `not_implemented` (M5). Every other non-M1 type does the same until its milestone lands.
+- No rate limiting on the hub yet. Revisit before any public deployment (M9).
+
 ## M0 — Foundations (2026-10-12)
 
 **Status: done, except the two-host LAN transport run, which needs a second machine.**
@@ -39,8 +95,8 @@ docker compose -f docker/compose.dev.yml exec node-b communal-spike peer --me bo
 
 ### Known gaps, carried forward
 
-- **Hub TLS:** `COMMUNAL_DEV_TLS=self-signed` is not implemented yet, so the hub serves plain `ws://` on 8443. This lands in M1 along with hub-key pinning.
+- ~~Hub TLS~~: done in M1.
 - **Image sizes:** 370 MB (hub) and 406 MB (headless) uncompressed, against the ~300 MB target. Most of that is the `node:24-bookworm-slim` base. Revisit when ffmpeg/sharp are added (M6). A distroless or Alpine base depends on prebuilds for udx-native and sharp.
 - **Images built and tested only for linux/arm64** (Apple Silicon). The CI docker job builds amd64. Multi-arch publishing comes with M9 packaging.
 - **The headless image doesn't include ffmpeg yet.** That comes with the thumbnail pipeline (M6).
-- **`packages/core` and `apps/desktop` are empty placeholders.**
+- **`apps/desktop` is an empty placeholder.** `packages/core` gained its first code in M1.

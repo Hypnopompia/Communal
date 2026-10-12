@@ -1,0 +1,16 @@
+{
+  "name": "@communal/integration-tests",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@communal/core": "workspace:*",
+    "@communal/crypto": "workspace:*",
+    "@communal/hub": "workspace:*",
+    "@communal/protocol": "workspace:*",
+    "pino": "^10.4.0"
+  }
+}

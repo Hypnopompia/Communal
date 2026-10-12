@@ -70,3 +70,11 @@ export function fingerprint(rootPublicKey: Uint8Array): string {
 export function formatFingerprint(fp: string): string {
   return (fp.match(/.{1,4}/g) ?? []).join(' ');
 }
+
+/**
+ * What a device signs (domain `communal/auth/v1`) to prove key possession to a hub: the
+ * challenge nonce bound to the hub's id, so a response can't be replayed to another hub.
+ */
+export function authPayload(nonce: Uint8Array, hubId: string): Uint8Array {
+  return concatBytes(lp(nonce), lp(utf8(hubId)));
+}
