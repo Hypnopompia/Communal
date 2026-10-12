@@ -9,13 +9,14 @@
 
 ### Hub
 
-| Type                                                | Why                                                                                     |
-| --------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `ok` (h→c)                                          | Generic reply for commands that return no data (`acl.set`, `group.delete`, `watch`, …). |
-| `user.results`                                      | Reply to `user.search`. The catalog marks it c→h→c but doesn't name the reply.          |
-| `connection.listing`, `group.listing`               | Replies to `connection.list` and `group.list`.                                          |
-| `device.list` / `device.listing` / `device.revoked` | The Settings → Devices screen (§11) and revocation distribution (§4) need them.         |
-| `link.denied`                                       | Tells the new device its claim was denied.                                              |
+| Type                                                | Why                                                                                                                           |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `ok` (h→c)                                          | Generic reply for commands that return no data (`acl.set`, `group.delete`, `watch`, …).                                       |
+| `user.results`                                      | Reply to `user.search`. The catalog marks it c→h→c but doesn't name the reply.                                                |
+| `connection.listing`, `group.listing`               | Replies to `connection.list` and `group.list`.                                                                                |
+| `device.list` / `device.listing` / `device.revoked` | The Settings → Devices screen (§11) and revocation distribution (§4) need them.                                               |
+| `link.denied`                                       | Tells the new device its claim was denied.                                                                                    |
+| `acl.replace` (c→h, M3)                             | Full per-hub rule set for the device, sent on sign-in; keeps the hub in step with the client's authoritative copy (ADR 0009). |
 
 ### Peer
 

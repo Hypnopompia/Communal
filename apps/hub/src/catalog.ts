@@ -3,13 +3,19 @@ import { rowToEntry, type EntryRow, type HubDb } from './db.js';
 
 /**
  * Search, browse and sources over the hub's index. Every query goes through `visible()`, the
- * one place that decides which entries a requester may see (HANDOFF §6):
+ * one place that decides which entries a requester may see (HANDOFF §6, rules per hub per
+ * ADR 0007). An entry is visible to viewer V when:
  *
- * - M2: a user sees entries from their own non-revoked devices only.
- * - M3 extends it with access rules (per hub, ADR 0007) — keep it the single choke point.
+ * - it's on one of V's own (non-revoked) devices — own devices see everything; or
+ * - its governing rule (`entries.rule_path`: its own rule, else the nearest ancestor folder's,
+ *   else none = "only me") allows V:
+ *   - `hub`: everyone signed in to this hub;
+ *   - a list: V is listed by user id, or is a member of a listed group *owned by the file's
+ *     owner* — and in both cases V and the owner are connected right now, so removing a
+ *     connection revokes access immediately.
  *
- * Entries from banned or revoked owners are never visible. Inaccessible files never show up,
- * not even as counts.
+ * Entries on revoked devices or owned by banned users are never visible to others. Files you
+ * can't access never show up, not even as counts.
  */
 export class Catalog {
   constructor(
@@ -19,9 +25,25 @@ export class Catalog {
 
   /** SQL condition over `e` (entries) for what @viewer may see. */
   private visible(): string {
-    return `e.device_id IN (
-      SELECT d.id FROM devices d JOIN users u ON u.id = d.user_id
-      WHERE d.revoked_at IS NULL AND u.banned_at IS NULL AND d.user_id = @viewer
+    const connected = `SELECT user_b FROM connections WHERE user_a = @viewer AND state = 'accepted'
+      UNION SELECT user_a FROM connections WHERE user_b = @viewer AND state = 'accepted'`;
+    // Rules owned by live devices of unbanned users.
+    const live = `d.revoked_at IS NULL AND d.user_id NOT IN (SELECT id FROM users WHERE banned_at IS NOT NULL)`;
+    return `(
+      e.device_id IN (SELECT id FROM devices WHERE user_id = @viewer AND revoked_at IS NULL)
+      OR (e.rule_path IS NOT NULL AND (e.device_id, e.rule_path) IN (
+        SELECT r.device_id, r.path FROM access_rules r JOIN devices d ON d.id = r.device_id
+        WHERE r.kind = 'hub' AND ${live}
+        UNION
+        SELECT ru.device_id, ru.path FROM rule_users ru JOIN devices d ON d.id = ru.device_id
+        WHERE ru.user_id = @viewer AND ${live} AND d.user_id IN (${connected})
+        UNION
+        SELECT rg.device_id, rg.path FROM rule_groups rg
+          JOIN devices d ON d.id = rg.device_id
+          JOIN groups g ON g.id = rg.group_id AND g.owner_id = d.user_id
+          JOIN group_members gm ON gm.group_id = g.id AND gm.user_id = @viewer
+        WHERE ${live} AND d.user_id IN (${connected})
+      ))
     )`;
   }
 
@@ -52,13 +74,16 @@ export class Catalog {
         // bm25() can't sit inside an aggregate: rank each row in a materialized CTE (so the
         // planner can't flatten it back into the GROUP BY), then group by hash.
         `WITH ranked AS MATERIALIZED (
-           SELECT e.hash AS hash, ${rank} AS r, e.mtime AS m FROM ${from} WHERE ${where.join(' AND ')}
+           SELECT e.hash AS hash, ${rank} AS r, e.mtime AS m, e.name AS name FROM ${from} WHERE ${where.join(' AND ')}
          )
-         SELECT hash, min(r) AS r, max(m) AS m FROM ranked
+         -- SQLite: with a single min(), bare columns (name) come from the best-ranked row, so the
+         -- hit is named after the copy that actually matched the query.
+         SELECT hash, min(r) AS r, name, (SELECT max(m) FROM ranked x WHERE x.hash = ranked.hash) AS m FROM ranked
          GROUP BY hash ORDER BY r, m DESC, hash LIMIT @limit OFFSET @offset`,
       )
-      .all(params) as { hash: string }[];
+      .all(params) as { hash: string; name: string }[];
     const more = groups.length > q.limit;
+    const bestName = new Map(groups.map((g) => [g.hash, g.name]));
     const hashes = groups.slice(0, q.limit).map((g) => g.hash);
     const rows = this.rowsForHashes(viewer, hashes);
     const hits = hashes.map((hash) => {
@@ -67,7 +92,7 @@ export class Catalog {
       const e = rowToEntry(first);
       return {
         hash,
-        name: first.name,
+        name: bestName.get(hash) ?? first.name,
         size: e.size,
         mime: e.mime,
         kind: e.kind,
@@ -131,10 +156,17 @@ export class Catalog {
     };
   }
 
-  /** M2: only your own devices. M3: devices with at least one entry visible to the viewer. */
+  /** A device is browsable when the viewer can see at least one entry on it. */
   private canBrowse(viewer: string, deviceId: string): boolean {
-    const d = this.db.getDevice(deviceId);
-    return !!d && d.revoked_at === null && d.user_id === viewer;
+    return (
+      this.db.raw
+        .prepare(
+          `SELECT 1 FROM entries e WHERE e.device_id = @device AND ${this.visible()} LIMIT 1`,
+        )
+        .get({ viewer, device: deviceId }) !== undefined ||
+      // Your own (non-revoked) devices are browsable even while empty.
+      ((d) => !!d && d.revoked_at === null && d.user_id === viewer)(this.db.getDevice(deviceId))
+    );
   }
 
   private rowsForHashes(

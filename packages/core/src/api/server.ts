@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { Kind } from '@communal/protocol';
 import { CoreError, type CommunalCore } from '../core.js';
 import { HubError } from '../hub-client.js';
+import { PeopleError } from '../people.js';
 
 /**
  * The core's local API (HANDOFF §3): HTTP+JSON for the CLI and the desktop renderer.
@@ -26,6 +27,27 @@ const AddShare = z.object({
   hubs: z.array(z.string()).optional(),
 });
 const SetHubs = z.object({ hubs: z.array(z.string()) });
+const AudienceBody = z.union([
+  z.literal('me'),
+  z.literal('hub'),
+  z
+    .object({ users: z.array(z.string()).optional(), groups: z.array(z.string()).optional() })
+    .strict(),
+]);
+const SetRule = z.object({
+  hub: z.string(),
+  path: z.string().min(1).max(4096),
+  audience: AudienceBody.nullable(),
+});
+const PersonAction = z.object({ hub: z.string(), user_id: z.string() });
+const Verify = PersonAction.extend({ verified: z.boolean() });
+const UpsertGroup = z.object({
+  hub: z.string(),
+  group_id: z.string().optional(),
+  name: z.string().trim().min(1).max(64),
+  members: z.array(z.string()).max(1000),
+});
+const HubQuery = z.object({ hub: z.string() });
 
 type Handler = (req: IncomingMessage, url: URL, body: unknown) => Promise<unknown>;
 
@@ -83,6 +105,54 @@ export class LocalApi {
     });
     route('PUT', '/v1/shares/:name/hubs', async (req, url, body) => {
       this.core.setShareHubs(param(req, url, 1), SetHubs.parse(body).hubs);
+      return { ok: true };
+    });
+
+    route('GET', '/v1/acl', async (_req, url) => {
+      const hub = url.searchParams.get('hub') ?? undefined;
+      return { rules: this.core.rules(hub) };
+    });
+    route('PUT', '/v1/acl', async (_req, _url, body) => {
+      const b = SetRule.parse(body);
+      await this.core.setRule(b.hub, b.path, b.audience);
+      return { ok: true };
+    });
+
+    const people = this.core.people;
+    const q = (url: URL) => Object.fromEntries(url.searchParams);
+    route('GET', '/v1/people', async (_req, url) => ({
+      connections: await people.connections(HubQuery.parse(q(url)).hub),
+    }));
+    route('GET', '/v1/people/search', async (_req, url) => {
+      const p = HubQuery.extend({ q: z.string().trim().min(1).max(64) }).parse(q(url));
+      return { users: await people.search(p.hub, p.q) };
+    });
+    for (const action of ['request', 'accept', 'remove'] as const) {
+      route('POST', `/v1/people/${action}`, async (_req, _url, body) => {
+        const b = PersonAction.parse(body);
+        await people[action](b.hub, b.user_id);
+        return { ok: true };
+      });
+    }
+    route('GET', '/v1/people/safety-code', async (_req, url) => {
+      const p = HubQuery.extend({ user: z.string() }).parse(q(url));
+      return people.safetyCode(p.hub, p.user);
+    });
+    route('POST', '/v1/people/verify', async (_req, _url, body) => {
+      const b = Verify.parse(body);
+      await people.verify(b.hub, b.user_id, b.verified);
+      return { ok: true };
+    });
+
+    route('GET', '/v1/groups', async (_req, url) => ({
+      groups: await people.groups(HubQuery.parse(q(url)).hub),
+    }));
+    route('POST', '/v1/groups', async (_req, _url, body) => {
+      const { hub, ...group } = UpsertGroup.parse(body);
+      return { group: await people.upsertGroup(hub, group) };
+    });
+    route('DELETE', '/v1/groups/:id', async (req, url) => {
+      await people.deleteGroup(HubQuery.parse(q(url)).hub, param(req, url, 1));
       return { ok: true };
     });
 
@@ -166,7 +236,18 @@ export class LocalApi {
         ];
         return send(status, { error: err.code, message: err.message });
       }
-      if (err instanceof HubError) return send(502, { error: err.code, message: err.message });
+      if (err instanceof HubError) {
+        const status =
+          { not_found: 404, bad_request: 400, forbidden: 403, conflict: 409 }[err.code as string] ??
+          502;
+        return send(status, { error: err.code, message: err.message });
+      }
+      if (err instanceof PeopleError) {
+        const status = { not_found: 404, unavailable: 503, hub_mismatch: 502, rejected: 502 }[
+          err.code
+        ];
+        return send(status, { error: err.code, message: err.message });
+      }
       this.core.log.error({ err }, 'local API handler failed');
       send(500, { error: 'internal' });
     }

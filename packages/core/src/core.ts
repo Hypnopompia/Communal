@@ -6,7 +6,8 @@ import { deviceId, type KeyPair } from '@communal/crypto';
 import type { ClientBody, HubBody } from '@communal/protocol';
 import { HubManager, type HubEntry, type SharedClientOptions } from './hub-manager.js';
 import { Indexer, type IndexerOptions } from './index/indexer.js';
-import { IndexStore, type ShareRow } from './index/store.js';
+import { IndexStore, type Audience, type ShareRow } from './index/store.js';
+import { People } from './people.js';
 import { IndexSync } from './index/sync.js';
 import { searchAll, type MergedSearch } from './search.js';
 import type { HubClientOptions } from './hub-client.js';
@@ -41,6 +42,7 @@ export class CommunalCore {
   readonly store: IndexStore;
   readonly indexer: Indexer;
   readonly sync: IndexSync;
+  readonly people: People;
   readonly log: Logger;
   private readonly hubsFile: string;
 
@@ -59,6 +61,9 @@ export class CommunalCore {
     this.indexer = new Indexer(this.store, { ...o.indexer, log: this.log });
     this.sync = new IndexSync(this.store, this.hubs, this.log);
     this.indexer.on('changed', () => this.sync.pushAll());
+    this.people = new People(this.hubs, this.store);
+    // Each hub gets this device's full rule set for that hub on every sign-in (ADR 0009).
+    this.hubs.on('ready', ({ hub }) => void this.pushRules(hub));
   }
 
   get deviceId(): string {
@@ -130,6 +135,7 @@ export class CommunalCore {
     if (!entry) throw new CoreError('not_found', `no such hub: ${idOrUrl}`);
     await this.hubs.remove(entry.id);
     this.store.forgetHub(entry.id);
+    this.store.dropRules({ hub: entry.id });
     for (const s of this.store.shares()) {
       if (s.hubs.includes(entry.id))
         this.store.setShareHubs(
@@ -175,6 +181,8 @@ export class CommunalCore {
     if (!share) throw new CoreError('not_found', `no such share: ${name}`);
     await this.indexer.removeShare(name);
     this.store.removeShare(name);
+    this.store.dropRules({ share: name });
+    for (const h of share.hubs) void this.pushRules(h);
     this.sync.pushAll();
   }
 
@@ -188,6 +196,52 @@ export class CommunalCore {
     this.store.setShareHubs(name, hubs);
     for (const h of new Set([...share.hubs, ...hubs])) {
       if (share.hubs.includes(h) !== hubs.includes(h)) this.sync.resync(h);
+    }
+  }
+
+  // ── access rules (per hub; HANDOFF §6, ADR 0007/0009) ─────────────────────
+
+  /** Rules on `hub`, or on every hub keyed by hub id. */
+  rules(hub?: string): Record<string, { path: string; audience: Audience }[]> {
+    const ids = hub ? [hub] : this.hubs.list().map((h) => h.id);
+    return Object.fromEntries(ids.map((h) => [h, this.store.rules(h)]));
+  }
+
+  /**
+   * Sets who can see a file or folder **on one hub** (null clears it, so the path inherits
+   * again). Folder paths end with `/`: `Photos/`, `Photos/2024/`; a file is `Photos/a.jpg`.
+   */
+  async setRule(hub: string, path: string, audience: Audience | null) {
+    if (!this.hubs.find(hub)) throw new CoreError('not_found', `no such hub: ${hub}`);
+    const share = path.split('/')[0]!;
+    if (!this.store.share(share))
+      throw new CoreError('bad_request', `"${share}" is not one of your shares`);
+    if (
+      path
+        .split('/')
+        .some((seg, i, all) => (seg === '' && i !== all.length - 1) || seg === '.' || seg === '..')
+    ) {
+      throw new CoreError('bad_request', 'invalid path');
+    }
+    const rulePath = path.includes('/') ? path : path + '/';
+    this.store.setRule(hub, rulePath, audience);
+    await this.pushRules(hub);
+  }
+
+  /** Sends this device's rules for `hub` to it (no-op while offline; repeated on sign-in). */
+  private async pushRules(hub: string) {
+    const client = this.hubs.get(hub);
+    if (!client?.ready) return;
+    try {
+      await client.request('acl.replace', {
+        device_id: this.deviceId,
+        rules: this.store.rules(hub),
+      });
+    } catch (err) {
+      this.log.warn(
+        { hub, err: (err as Error).message },
+        'could not send access rules; will retry on reconnect',
+      );
     }
   }
 

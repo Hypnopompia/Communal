@@ -89,6 +89,7 @@ export const clientFixtures: { [T in ClientType]: ClientBody<T> } = {
   'group.delete': { group_id: gid },
   'group.list': {},
   'acl.set': { device_id: did, path: 'Photos/2024/', audience: { users: [uid2], groups: [gid] } },
+  'acl.replace': { device_id: did, rules: [{ path: 'Photos/', audience: 'hub' }] },
   'index.snapshot': { rev: 3, page: 0, last: true, entries: [entry] },
   'index.delta': { base_rev: 3, rev: 4, upsert: [{ ...entry, hash }], remove: ['Movies/old.mkv'] },
   search: { q: 'alien', kind: 'video', min_size: 1_000_000, limit: 50 },

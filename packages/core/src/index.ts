@@ -9,3 +9,5 @@ export { IndexStore, type ShareRow, type FileRow } from './index/store.js';
 export { IndexSync, PAGE as INDEX_PAGE } from './index/sync.js';
 export { detect, kindFor, type Kind } from './index/detect.js';
 export { hashFile, CHUNK_SIZE } from './index/hasher.js';
+export * from './people.js';
+export type { Audience } from './index/store.js';

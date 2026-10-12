@@ -24,6 +24,7 @@ import {
 } from '@communal/crypto';
 import {
   encodeHub,
+  newGroupId,
   MAX_FRAME_BYTES,
   parseClientMessage,
   type ClientBody,
@@ -311,6 +312,46 @@ export class HubServer {
           if (!listing) return this.fail(s, 'not_found', 'no such device', msg.id);
           return this.send(s, 'browse.listing', listing, msg.id);
         }
+        case 'user.search':
+          return this.send(
+            s,
+            'user.results',
+            {
+              users: this.db
+                .searchUsers(msg.body.q, s.user!, msg.body.limit)
+                .map((u) => this.summary(u)),
+            },
+            msg.id,
+          );
+        case 'connection.request':
+          return this.onConnectionRequest(s, msg.id, msg.body.user_id);
+        case 'connection.accept':
+          return this.onConnectionAccept(s, msg.id, msg.body.user_id);
+        case 'connection.remove':
+          return this.onConnectionRemove(s, msg.id, msg.body.user_id);
+        case 'connection.list':
+          return this.send(s, 'connection.listing', this.connectionListing(s.user!), msg.id);
+        case 'group.upsert':
+          return this.onGroupUpsert(s, msg.id, msg.body);
+        case 'group.delete': {
+          if (this.db.groupOwner(msg.body.group_id) !== s.user) {
+            return this.fail(s, 'not_found', 'no such group', msg.id);
+          }
+          this.db.deleteGroup(msg.body.group_id);
+          return this.send(s, 'ok', {}, msg.id);
+        }
+        case 'group.list':
+          return this.send(s, 'group.listing', { groups: this.db.groupsOf(s.user!) }, msg.id);
+        case 'acl.set':
+          return this.onAcl(
+            s,
+            msg.id,
+            msg.body.device_id,
+            [{ path: msg.body.path, audience: msg.body.audience }],
+            false,
+          );
+        case 'acl.replace':
+          return this.onAcl(s, msg.id, msg.body.device_id, msg.body.rules, true);
         default:
           return this.fail(s, 'not_implemented', `${msg.t} is not implemented yet`, msg.id);
       }
@@ -500,6 +541,166 @@ export class HubServer {
     this.send(s, 'index.ack', { rev: body.rev }, re);
   }
 
+  // ── people: user search, connections, groups (HANDOFF §2, §5) ─────────────
+
+  private summary(u: {
+    id: string;
+    display_name: string;
+    root_pubkey: string;
+  }): HubBody<'user.results'>['users'][number] {
+    return {
+      user_id: u.id,
+      display_name: u.display_name,
+      fingerprint: fingerprint(fromB64(u.root_pubkey)),
+      root_pubkey: u.root_pubkey,
+    };
+  }
+
+  /** An active, unbanned user other than `self`, or undefined (callers say "not found"). */
+  private reachableUser(self: string, id: string) {
+    const u = this.db.getUser(id);
+    return u && u.id !== self && u.status === 'active' && u.banned_at === null ? u : undefined;
+  }
+
+  private sendToUser<T extends HubType>(userId: string, t: T, body: HubBody<T>) {
+    for (const s of this.online.values()) if (s.user === userId) this.send(s, t, body);
+  }
+
+  private connectionListing(userId: string): HubBody<'connection.listing'> {
+    const connections = [];
+    for (const c of this.db.connectionsOf(userId)) {
+      const u = this.db.getUser(c.other);
+      if (!u || u.banned_at !== null) continue;
+      const state =
+        c.state === 'accepted'
+          ? 'accepted'
+          : c.requested_by === userId
+            ? 'pending_out'
+            : 'pending_in';
+      connections.push({ user: this.summary(u), state, since: c.created_at } as const);
+    }
+    return { connections };
+  }
+
+  private onConnectionRequest(s: Session, re: string, target: string) {
+    const me = s.user!;
+    const other = this.reachableUser(me, target);
+    if (!other) return this.fail(s, 'not_found', 'no such user', re);
+    const existing = this.db.connection(me, target);
+    if (existing?.state === 'accepted') return this.send(s, 'ok', {}, re);
+    // They already asked us: asking back means yes.
+    if (existing && existing.requested_by === target) return this.onConnectionAccept(s, re, target);
+    if (!existing) this.db.putConnection(me, target, 'pending', me);
+    this.sendToUser(target, 'connection.request', { user: this.summary(this.db.getUser(me)!) });
+    this.send(s, 'ok', {}, re);
+  }
+
+  private onConnectionAccept(s: Session, re: string, requester: string) {
+    const me = s.user!;
+    const c = this.db.connection(me, requester);
+    if (
+      !c ||
+      c.state !== 'pending' ||
+      c.requested_by !== requester ||
+      !this.reachableUser(me, requester)
+    ) {
+      return this.fail(s, 'not_found', 'no pending request from that user', re);
+    }
+    this.db.putConnection(me, requester, 'accepted');
+    this.sendToUser(requester, 'connection.accept', { user: this.summary(this.db.getUser(me)!) });
+    this.send(s, 'ok', {}, re);
+    // Newly connected: each now sees the other's devices.
+    this.announceDevices(me, [requester], true);
+    this.announceDevices(requester, [me], true);
+  }
+
+  private onConnectionRemove(s: Session, re: string, other: string) {
+    const me = s.user!;
+    const c = this.db.connection(me, other);
+    if (!c) return this.fail(s, 'not_found', 'not connected to that user', re);
+    this.db.raw.transaction(() => {
+      this.db.removeConnection(me, other);
+      // Groups are built from connections (HANDOFF §2); access via rules is gated on the
+      // connection in Catalog.visible(), so it ends right here too.
+      this.db.dropFromGroups(me, other);
+      this.db.dropFromGroups(other, me);
+    })();
+    this.sendToUser(other, 'connection.remove', { user_id: me });
+    this.send(s, 'ok', {}, re);
+    if (c.state === 'accepted') {
+      if (!this.db.sharesWithHub(me)) this.announceDevices(me, [other], false);
+      if (!this.db.sharesWithHub(other)) this.announceDevices(other, [me], false);
+    }
+  }
+
+  private onGroupUpsert(s: Session, re: string, body: ClientBody<'group.upsert'>) {
+    const me = s.user!;
+    if (body.group_id && this.db.groupOwner(body.group_id) !== me) {
+      return this.fail(s, 'not_found', 'no such group', re);
+    }
+    const connected = new Set(this.db.connectedUsers(me));
+    const strangers = body.members.filter((m) => !connected.has(m));
+    if (strangers.length)
+      return this.fail(s, 'bad_request', 'group members must be your connections', re);
+    const id = body.group_id ?? newGroupId();
+    this.db.upsertGroup(me, id, body.name, [...new Set(body.members)]);
+    const group = this.db.groupsOf(me).find((g) => g.group_id === id)!;
+    this.send(s, 'group.listing', { groups: [group] }, re);
+  }
+
+  // ── access rules ──────────────────────────────────────────────────────────
+
+  private onAcl(
+    s: Session,
+    re: string,
+    deviceId: string,
+    rules: { path: string; audience: ClientBody<'acl.set'>['audience'] }[],
+    replace: boolean,
+  ) {
+    // Rules are set by the device that holds the files (ADR 0009).
+    if (deviceId !== s.device)
+      return this.fail(s, 'forbidden', 'rules can only be set for this device', re);
+    for (const r of rules) {
+      const a = r.audience;
+      if (
+        a &&
+        typeof a === 'object' &&
+        (a.groups ?? []).some((g) => this.db.groupOwner(g) !== s.user)
+      ) {
+        return this.fail(s, 'bad_request', 'unknown group', re);
+      }
+    }
+    const before = this.db.sharesWithHub(s.user!);
+    if (replace) {
+      this.db.replaceRules(
+        deviceId,
+        rules.flatMap((r) => (r.audience ? [{ path: r.path, audience: r.audience }] : [])),
+      );
+    } else {
+      this.db.setRule(deviceId, rules[0]!.path, rules[0]!.audience);
+    }
+    this.send(s, 'ok', {}, re);
+    // Sharing with the whole hub makes this user's devices' presence visible to everyone.
+    const after = this.db.sharesWithHub(s.user!);
+    if (before !== after) {
+      const others = [...new Set([...this.online.values()].map((x) => x.user!))].filter(
+        (u) => u !== s.user && !this.db.connectedUsers(s.user!).includes(u),
+      );
+      this.announceDevices(s.user!, others, after);
+    }
+  }
+
+  /** Tells `viewers` about each online device of `owner` (online, or now hidden = offline). */
+  private announceDevices(owner: string, viewers: string[], online: boolean) {
+    const devices = [...this.online.entries()].filter(([, x]) => x.user === owner).map(([d]) => d);
+    for (const [d] of this.devicesInGrace())
+      if (this.db.getDevice(d)?.user_id === owner) devices.push(d);
+    for (const v of viewers) {
+      for (const d of devices)
+        this.sendToUser(v, 'presence', { device_id: d, user_id: owner, online });
+    }
+  }
+
   private *devicesInGrace(): Iterable<[string, string]> {
     for (const device of this.goingOffline.keys()) {
       const owner = this.db.getDevice(device)?.user_id;
@@ -513,15 +714,20 @@ export class HubServer {
    * Whether `viewer` may see presence of `owner`'s devices: their own devices, and devices of
    * accepted connections. M3 widens this to owners sharing something with the viewer.
    */
+  /**
+   * Presence follows visibility: your own devices, your connections, and anyone on the hub
+   * if the owner shares something with the whole hub (their devices show up as sources).
+   */
   private canSee(viewer: string, owner: string): boolean {
     if (viewer === owner) return true;
-    return this.db.connectedUsers(owner).includes(viewer);
+    return this.db.connectedUsers(owner).includes(viewer) || this.db.sharesWithHub(owner);
   }
 
   private publishPresence(owner: string, device: string, online: boolean) {
+    const everyone = this.db.sharesWithHub(owner);
     const viewers = new Set([owner, ...this.db.connectedUsers(owner)]);
     for (const [other, s] of this.online) {
-      if (other !== device && viewers.has(s.user!)) {
+      if (other !== device && (everyone || viewers.has(s.user!))) {
         this.send(s, 'presence', { device_id: device, user_id: owner, online });
       }
     }

@@ -228,6 +228,17 @@ describe('access control: search, browse, sources (M2: owner only)', () => {
   });
 });
 
+describe('search hit naming', () => {
+  it('names a hit after the copy that matched, not an arbitrary one with the same content', async () => {
+    const a = await signUp(t.url, 'alice');
+    await snapshot(a.c, 1, [entry('A/aaa first.png', h(5)), entry('A/Holiday photo.png', h(5))]);
+    const r = body<{ hits: { name: string }[] }>(
+      await a.c.request('search', { q: 'holiday', limit: 5 }),
+    );
+    expect(r.hits.map((x) => x.name)).toEqual(['Holiday photo.png']);
+  });
+});
+
 describe('FTS query building', () => {
   it('turns words into prefix terms and neutralises FTS syntax', () => {
     expect(ftsQuery('alien 1979')).toBe('"alien"* "1979"*');

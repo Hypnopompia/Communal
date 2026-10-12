@@ -1,5 +1,55 @@
 # Progress
 
+## M3 — Social graph + access control (2026-10-12)
+
+**Status: done.** Details and decisions are in ADR 0009. Rules are per hub (ADR 0007, owner decision).
+
+### What exists
+
+- **Hub:**
+  - `user.search`
+  - connections: request, accept, remove and list, with notifications to the other side (crossing requests count as accept)
+  - owner-only groups built from connections
+  - `acl.set` and the new `acl.replace`, with inheritance: the file's own rule, then the nearest folder's, then "only me"
+  - `Catalog.visible()` decides every search, browse and sources result: own devices, `hub`, or listed users and groups _while connected_
+  - presence follows visibility
+- **Core:** per-hub rules stored locally (the authoritative copy) and pushed to each hub on sign-in and on every change. `People` covers search, connections, groups, safety codes and verification, and rejects user records a hub has tampered with.
+- **CLI:** `acl set|clear|list`, `people search|list|request|accept|remove|verify`, `group list|set|delete`. Per-hub commands require `--hub` when the device is on several hubs.
+
+### Tests
+
+- `apps/hub/src/access.test.ts`: **the done-when matrix.**
+  - Every audience type (default, `me`, `hub`, inherited `hub`, file override, users, groups) × own device / connected-and-granted / connected-not-granted / listed-but-unconnected / stranger.
+  - Each combination is checked through search, sources _and_ browse, which must all agree.
+  - Also: removing a connection revokes immediately (and a reconnect doesn't restore group membership), rule changes and new files apply at once, banned owners are hidden, rules can't be set for another device, and foreign groups are rejected.
+- **Connection, group, user-search and presence handler tests:** crossing requests, unreachable users (self, unknown, pending, banned), notifications, literal LIKE wildcards, group privacy.
+- `test/integration/m3-access.test.ts` (real clients):
+  - the same folder public on hub A and private on hub B
+  - a connection on B grants nothing on A
+  - rules re-sent after a hub loses them
+  - identical safety codes on both sides
+  - a hub that swaps someone's key is refused
+- The full suite (175 tests) passes repeatedly.
+
+### Demo (dev stack)
+
+```bash
+A() { docker compose -f docker/compose.dev.yml exec node-a communal "$@"; }
+B() { docker compose -f docker/compose.dev.yml exec node-b communal "$@"; }
+A share add /shares/alice --name Alice
+A people search bob                 # → bob's user id
+A people request <bob_id>; B people accept <alice_id>
+A people verify <bob_id>            # same code on both sides
+A acl set Alice/ users:<bob_id>     # or: hub, groups:<id>
+B search holiday                     # alice's files appear
+```
+
+### Carried forward
+
+- **Rules for another of your own devices** (managing a NAS from a laptop) wait for device-to-device sync in M8.
+- **The uploader's own re-check** of rules, connections and groups lands with transfers in M4. The core already holds the authoritative rules.
+- **The desktop UI must make the per-hub scope of every rule obvious** (M9).
+
 ## M2 — Indexing + search/browse (2026-10-12)
 
 **Status: done.** Details and decisions are in ADR 0008.
@@ -38,7 +88,7 @@ docker compose -f docker/compose.dev.yml exec node-a communal status       # ind
 
 ### Carried forward
 
-- **Visibility is owner-only.** Search across users arrives with access rules in M3. Rules are per hub (ADR 0007).
+- ~~Visibility is owner-only~~: access rules landed in M3.
 - **Metadata (`meta`) and thumbnails are empty** until M6.
 - **No limit on entries per device** at the hub yet. Add one before public deployment (with rate limiting, M9).
 - **Only hashed files appear in search** (browse shows all). A large first index is searchable progressively as hashing proceeds.

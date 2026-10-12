@@ -129,6 +129,11 @@ export const clientBodies = {
   'group.delete': z.object({ group_id: GroupId }),
   'group.list': Empty,
   'acl.set': z.object({ device_id: DeviceId, path: SharePath, audience: Audience.nullable() }),
+  /** Replaces every rule for the device on this hub (sent on sign-in; ADR 0009). */
+  'acl.replace': z.object({
+    device_id: DeviceId,
+    rules: z.array(z.object({ path: SharePath, audience: Audience })).max(10_000),
+  }),
 
   'index.snapshot': z.object({
     rev: z.number().int().nonnegative(),

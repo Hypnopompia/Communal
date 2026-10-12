@@ -269,7 +269,9 @@ share
   .action((path: string, opts: { name: string; hub?: string[] }) =>
     viaDaemon(async (c) => {
       await c.post('/v1/shares', { name: opts.name, path: resolve(path), hubs: opts.hub });
-      console.log(`sharing ${opts.name} (only you can see it until access rules land in M3)`);
+      console.log(
+        `sharing ${opts.name}: only you can see it until you set access (communal acl set ${opts.name}/ …)`,
+      );
     }),
   );
 
@@ -359,6 +361,245 @@ program
         );
       }
       console.log(`device ${r.online ? 'online' : 'offline'}`);
+    }),
+  );
+
+// ── people, groups, access rules (all per hub) ─────────────────────────────
+
+/** The hub a per-hub command applies to: --hub, or the only hub. Never guesses among several. */
+async function pickHub(c: LocalApiClient, hub?: string): Promise<string> {
+  const { hubs } = await c.get<{ hubs: { id: string; url: string }[] }>('/v1/hubs');
+  if (hub) {
+    const h = hubs.find((x) => x.id === hub || x.url === hub);
+    if (!h) throw new Error(`no such hub: ${hub}`);
+    return h.id;
+  }
+  if (hubs.length === 1) return hubs[0]!.id;
+  if (hubs.length === 0) throw new Error('not on any hub yet');
+  throw new Error(
+    `you're on ${hubs.length} hubs; choose one with --hub (${hubs.map((h) => h.id).join(', ')})`,
+  );
+}
+
+/** `me` | `hub` | `users:u_a,u_b` | `groups:g_x` | `users:…+groups:…` */
+function parseAudience(s: string): 'me' | 'hub' | { users?: string[]; groups?: string[] } {
+  if (s === 'me' || s === 'hub') return s;
+  const out: { users?: string[]; groups?: string[] } = {};
+  for (const part of s.split('+')) {
+    const m = /^(users|groups):(.+)$/.exec(part);
+    if (!m)
+      throw new Error(
+        `bad audience "${s}": use me, hub, users:<ids>, groups:<ids>, or users:…+groups:…`,
+      );
+    out[m[1] as 'users' | 'groups'] = m[2]!
+      .split(',')
+      .map((x) => x.trim())
+      .filter(Boolean);
+  }
+  return out;
+}
+
+function describeAudience(a: 'me' | 'hub' | { users?: string[]; groups?: string[] }): string {
+  if (a === 'me') return 'only me';
+  if (a === 'hub') return 'everyone on this hub';
+  return [
+    a.users?.length ? `users ${a.users.join(', ')}` : '',
+    a.groups?.length ? `groups ${a.groups.join(', ')}` : '',
+  ]
+    .filter(Boolean)
+    .join(' + ');
+}
+
+const acl = program
+  .command('acl')
+  .description('who can see your shared files, set separately on each hub');
+
+acl
+  .command('set <path> <audience>')
+  .description('set access for a file or folder on one hub (folders end with /, e.g. Photos/2024/)')
+  .option('--hub <id>', 'the hub this rule applies to (required if you are on several)')
+  .addHelpText(
+    'after',
+    '\nAudience: me | hub | users:<user_id,…> | groups:<group_id,…> | users:…+groups:…',
+  )
+  .action((path: string, audience: string, opts: { hub?: string }) =>
+    viaDaemon(async (c) => {
+      const hub = await pickHub(c, opts.hub);
+      const a = parseAudience(audience);
+      await c.put('/v1/acl', { hub, path, audience: a });
+      console.log(`${path} on ${hub}: ${describeAudience(a)}`);
+    }),
+  );
+
+acl
+  .command('clear <path>')
+  .description('remove the rule on a path so it inherits from its folder again')
+  .option('--hub <id>', 'the hub to clear it on')
+  .action((path: string, opts: { hub?: string }) =>
+    viaDaemon(async (c) => {
+      const hub = await pickHub(c, opts.hub);
+      await c.put('/v1/acl', { hub, path, audience: null });
+      console.log(`${path} on ${hub}: rule removed`);
+    }),
+  );
+
+acl
+  .command('list')
+  .description('list your access rules on every hub (anything without a rule is "only me")')
+  .option('--hub <id>', 'only this hub')
+  .action((opts: { hub?: string }) =>
+    viaDaemon(async (c) => {
+      const p = opts.hub ? `?hub=${encodeURIComponent(await pickHub(c, opts.hub))}` : '';
+      const { rules } = await c.get<{ rules: Record<string, { path: string; audience: never }[]> }>(
+        `/v1/acl${p}`,
+      );
+      for (const [hub, list] of Object.entries(rules)) {
+        console.log(`${hub}:${list.length ? '' : ' (no rules: everything is only you)'}`);
+        for (const r of list) console.log(`  ${r.path}  ${describeAudience(r.audience)}`);
+      }
+    }),
+  );
+
+type Person = {
+  user_id: string;
+  display_name: string;
+  fingerprint: string;
+  verified: boolean;
+  state?: string;
+};
+const fmtPerson = (p: Person) =>
+  `${p.user_id}  ${p.display_name}${p.verified ? '  ✔ verified' : ''}${p.state ? `  [${p.state}]` : ''}`;
+
+const people = program.command('people').description('connections on a hub');
+const hubOpt = ['--hub <id>', 'the hub (required if you are on several)'] as const;
+
+people
+  .command('search <name>')
+  .description('find people on a hub by display name')
+  .option(...hubOpt)
+  .action((name: string, opts: { hub?: string }) =>
+    viaDaemon(async (c) => {
+      const hub = await pickHub(c, opts.hub);
+      const { users } = await c.get<{ users: Person[] }>(
+        `/v1/people/search?${new URLSearchParams({ hub, q: name })}`,
+      );
+      for (const u of users) console.log(fmtPerson(u));
+      if (users.length === 0) console.log('nobody found');
+    }),
+  );
+
+people
+  .command('list')
+  .description('your connections and pending requests')
+  .option(...hubOpt)
+  .action((opts: { hub?: string }) =>
+    viaDaemon(async (c) => {
+      const hub = await pickHub(c, opts.hub);
+      const { connections } = await c.get<{ connections: Person[] }>(
+        `/v1/people?hub=${encodeURIComponent(hub)}`,
+      );
+      for (const p of connections) console.log(fmtPerson(p));
+      if (connections.length === 0)
+        console.log('no connections yet; try `communal people search <name>`');
+    }),
+  );
+
+for (const [action, verb] of [
+  ['request', 'sent a connection request to'],
+  ['accept', 'connected with'],
+  ['remove', 'removed'],
+] as const) {
+  people
+    .command(`${action} <user_id>`)
+    .description(
+      {
+        request: 'ask to connect',
+        accept: 'accept a connection request',
+        remove: 'remove a connection or request',
+      }[action],
+    )
+    .option(...hubOpt)
+    .action((user: string, opts: { hub?: string }) =>
+      viaDaemon(async (c) => {
+        const hub = await pickHub(c, opts.hub);
+        await c.post(`/v1/people/${action}`, { hub, user_id: user });
+        console.log(`${verb} ${user}`);
+      }),
+    );
+}
+
+people
+  .command('verify <user_id>')
+  .description(
+    'show the safety code to compare with them in person or on a call; --confirm marks them verified',
+  )
+  .option(...hubOpt)
+  .option('--confirm', 'the codes matched')
+  .option('--unverify', 'remove the verified mark')
+  .action((user: string, opts: { hub?: string; confirm?: boolean; unverify?: boolean }) =>
+    viaDaemon(async (c) => {
+      const hub = await pickHub(c, opts.hub);
+      if (opts.confirm || opts.unverify) {
+        await c.post('/v1/people/verify', { hub, user_id: user, verified: !!opts.confirm });
+        console.log(opts.confirm ? `${user} verified` : `${user} no longer marked verified`);
+        return;
+      }
+      const r = await c.get<{ person: Person; code: string }>(
+        `/v1/people/safety-code?${new URLSearchParams({ hub, user })}`,
+      );
+      console.log(`Safety code with ${r.person.display_name}:  ${r.code}`);
+      console.log('Compare it with them out of band. If it matches, run again with --confirm.');
+    }),
+  );
+
+const group = program
+  .command('group')
+  .description('your private groups on a hub (only you see them)');
+
+group
+  .command('list')
+  .option(...hubOpt)
+  .action((opts: { hub?: string }) =>
+    viaDaemon(async (c) => {
+      const hub = await pickHub(c, opts.hub);
+      const { groups } = await c.get<{
+        groups: { group_id: string; name: string; members: string[] }[];
+      }>(`/v1/groups?hub=${encodeURIComponent(hub)}`);
+      for (const g of groups)
+        console.log(`${g.group_id}  ${g.name}  (${g.members.length}): ${g.members.join(', ')}`);
+      if (groups.length === 0) console.log('no groups');
+    }),
+  );
+
+group
+  .command('set <name> [members...]')
+  .description('create a group (or replace an existing one with --id) from your connections')
+  .option('--id <group_id>', 'update this group')
+  .option(...hubOpt)
+  .action((name: string, members: string[], opts: { id?: string; hub?: string }) =>
+    viaDaemon(async (c) => {
+      const hub = await pickHub(c, opts.hub);
+      const { group } = await c.post<{ group: { group_id: string; members: string[] } }>(
+        '/v1/groups',
+        {
+          hub,
+          name,
+          members,
+          ...(opts.id ? { group_id: opts.id } : {}),
+        },
+      );
+      console.log(`${group.group_id}  ${name}  (${group.members.length} member(s))`);
+    }),
+  );
+
+group
+  .command('delete <group_id>')
+  .option(...hubOpt)
+  .action((id: string, opts: { hub?: string }) =>
+    viaDaemon(async (c) => {
+      const hub = await pickHub(c, opts.hub);
+      await c.delete(`/v1/groups/${encodeURIComponent(id)}?hub=${encodeURIComponent(hub)}`);
+      console.log(`deleted ${id}`);
     }),
   );
 

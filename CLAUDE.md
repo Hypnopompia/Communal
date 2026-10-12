@@ -15,6 +15,7 @@ Communal is a private, Napster-style file-sharing app: a self-hosted **hub** kee
 - `pnpm dev:stack`: builds and starts the hub plus `node-a` (alice) and `node-b` (bob) via `docker/compose.dev.yml`. `pnpm dev:stack:reset` wipes the volumes. Docker Desktop's CLI lives in `~/.docker/bin` and may not be on PATH.
 - Inside a dev container: `docker compose -f docker/compose.dev.yml exec node-a communal <cmd>` (`share add /shares/alice --name Alice`, `search <words>`, `status`), or `communal-spike peer …` for the transport benchmark between containers.
 - Running an app from source: `pnpm --filter @communal/hub dev` (a dev build with self-signed TLS, data in `apps/hub/hub-data`), `pnpm --filter @communal/cli dev -- status`.
+- People and access (per hub, `--hub` needed when on several): `communal people search|request|accept|remove|verify`, `communal group set|list|delete`, `communal acl set <path> me|hub|users:<ids>|groups:<ids>`.
 - Hub admin: `communal-hub users | approve <user_id> | ban <user_id> [--reason] | unban <user_id> | set join_mode open|approval`. These commands work directly on the SQLite database, so they run alongside a live hub.
 
 Workspace packages export a custom `@communal/source` condition that points at `src/`. Vitest, tsc and `tsx --conditions=@communal/source` resolve to TypeScript sources, so nothing needs building for tests or dev runs. Only the Docker images use `dist/`. New packages should copy that `exports` shape and the `tsconfig.json`/`tsconfig.build.json` pair (the build config excludes `*.test.ts`).
@@ -42,7 +43,9 @@ How the pieces connect:
   - `CommunalCore` (`core.ts`) owns `HubManager`, `IndexStore` (local SQLite: shares, files, change log, per-hub sync state), `Indexer` (scan, watch, rescan, hash) and `IndexSync` (per-hub snapshot/delta).
   - `LocalApi` (`api/server.ts`) wraps the core for the CLI and desktop. The CLI never touches core internals while the daemon runs.
   - Never iterate a better-sqlite3 statement across an `await`: other statements on the same connection throw. Page with keyset queries instead (`filesPage`).
-- **Hub visibility** is decided in exactly one place, `Catalog.visible()` in `apps/hub/src/catalog.ts`. M3 access rules go there, not into individual queries.
+- **Hub visibility** is decided in exactly one place, `Catalog.visible()` in `apps/hub/src/catalog.ts`. Never filter access in individual queries. Each entry carries its governing rule (`entries.rule_path`), which `HubDb` re-tags whenever rules change (ADR 0009).
+- **Access rules are per hub, and the client's copy is authoritative** (core `index.db` table `acl`). It's pushed whole with `acl.replace` on every sign-in. List grants only work while the two users are connected.
+- **Clients never trust a hub's claims about identity:** run `checkSummary` on every `UserSummary` (core `people.ts`).
 - **Hub protocol**: `wss://<hub>/v1`, JSON envelope `{v, id, re, t, body}` (§5). **Peer protocol**: length-prefixed msgpack frames over **udx-native + Noise XX (`@hyperswarm/secret-stream`)**, using device keys as the Noise static keys (ADR 0001).
   - After the handshake, the peer must match the hub-named `device_id`, and its cert chain must verify to the account root.
   - udx accepts IP literals only, so candidates must be IPs.

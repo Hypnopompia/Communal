@@ -1,6 +1,8 @@
 import Database from 'better-sqlite3';
 import type { Kind } from './detect.js';
 
+export type Audience = 'me' | 'hub' | { users?: string[]; groups?: string[] };
+
 /**
  * The client's local index (one SQLite file per core): shares, the files in them, their
  * hashes, and a change log that per-hub index sync replays (docs/adr/0008-indexing.md).
@@ -67,6 +69,23 @@ const MIGRATIONS = [
     hub       TEXT PRIMARY KEY,
     rev       INTEGER NOT NULL,
     acked_seq INTEGER NOT NULL
+  );
+  `,
+  `
+  -- Access rules, per hub (ADR 0007/0009). This device's copy is authoritative: it is pushed
+  -- to each hub with acl.replace on sign-in, and the uploader enforces it (M4).
+  CREATE TABLE acl (
+    hub      TEXT NOT NULL,
+    path     TEXT NOT NULL,
+    audience TEXT NOT NULL,
+    PRIMARY KEY (hub, path)
+  );
+
+  -- People this user has verified by comparing safety codes out of band.
+  CREATE TABLE verified (
+    user_id     TEXT PRIMARY KEY,
+    fingerprint TEXT NOT NULL,
+    verified_at INTEGER NOT NULL
   );
   `,
 ];
@@ -247,6 +266,57 @@ export class IndexStore {
         `SELECT ${cols} FROM files WHERE share IN (${inList}) AND (share, rel) > (?, ?) ORDER BY share, rel LIMIT ?`,
       )
       .all(...shares, after.share, after.rel, limit) as FileRow[];
+  }
+
+  // ── access rules (per hub) ────────────────────────────────────────────────
+
+  rules(hub: string): { path: string; audience: Audience }[] {
+    return (
+      this.raw.prepare('SELECT path, audience FROM acl WHERE hub = ? ORDER BY path').all(hub) as {
+        path: string;
+        audience: string;
+      }[]
+    ).map((r) => ({ path: r.path, audience: JSON.parse(r.audience) as Audience }));
+  }
+
+  setRule(hub: string, path: string, audience: Audience | null) {
+    if (audience === null)
+      this.raw.prepare('DELETE FROM acl WHERE hub = ? AND path = ?').run(hub, path);
+    else
+      this.raw
+        .prepare(
+          'INSERT INTO acl (hub, path, audience) VALUES (?, ?, ?) ON CONFLICT (hub, path) DO UPDATE SET audience = excluded.audience',
+        )
+        .run(hub, path, JSON.stringify(audience));
+  }
+
+  /** Drops rules under a share (on every hub) or for a hub. */
+  dropRules(where: { share?: string; hub?: string }) {
+    if (where.share !== undefined) {
+      const prefix = where.share + '/';
+      this.raw.prepare('DELETE FROM acl WHERE substr(path, 1, length(?)) = ?').run(prefix, prefix);
+    }
+    if (where.hub !== undefined) this.raw.prepare('DELETE FROM acl WHERE hub = ?').run(where.hub);
+  }
+
+  // ── verification ──────────────────────────────────────────────────────────
+
+  verifiedFingerprint(userId: string): string | undefined {
+    return this.raw
+      .prepare('SELECT fingerprint FROM verified WHERE user_id = ?')
+      .pluck()
+      .get(userId) as string | undefined;
+  }
+
+  setVerified(userId: string, fingerprint: string | null) {
+    if (fingerprint === null)
+      this.raw.prepare('DELETE FROM verified WHERE user_id = ?').run(userId);
+    else
+      this.raw
+        .prepare(
+          'INSERT OR REPLACE INTO verified (user_id, fingerprint, verified_at) VALUES (?, ?, ?)',
+        )
+        .run(userId, fingerprint, now());
   }
 
   // ── change log & per-hub sync state ───────────────────────────────────────
