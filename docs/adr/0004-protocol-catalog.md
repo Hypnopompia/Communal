@@ -34,6 +34,13 @@
 - **`welcome`** includes the client's own `user_id` and `device_id`.
 - **`account.restore`** carries `root_pubkey`, `issued_at` and `root_sig`. `root_sig` is a device-cert signature by the root key, so the hub can rebuild the cert record.
 - **`device.revoke`** carries the full signed `Revocation`. The spec's `{device_id, sig}` didn't say what is signed or by whom.
+  - Since M8, `device.revoke` and `device.revoked` carry a **revocation proof** `{revocation, chain}`, where `chain` is the signer's cert chain. Any hub can then check a proof whose signer never joined it (ADR 0014).
+- **M8 (ADR 0014):**
+  - `link.approve` and `link.done` carry an optional `sealed` box: the account's hub list, encrypted to the new device's key.
+  - `link.claim` is answered `ok`, and `link.done` / `link.denied` follow as events.
+  - `account.restore` is answered with `account.created`.
+  - `device.listing` entries carry `root`.
+  - `connect.offer` carries `from_revocations` and `connect.answer` carries `to_revocations`: the peer account's proofs, at most 256.
 - **`acl.set`** `audience` can be `null`, which clears a rule so the path inherits again.
 - **`connect.offer`** carries `from_user`, `from_root_pubkey` and `from_chain`, so the uploader can verify the downloader's cert chain (§7 `hello` checks) without another hub round trip.
 - **`connect.request` / `connect.offer` / `connect.answer`** carry udx `stream_id`s and both sides' candidates (M4). The forwarded `connect.answer` adds the owner's identity (`to_user`, `to_root_pubkey`, `to_chain`) and the transfer token the downloader presents in `hello` (ADR 0010).

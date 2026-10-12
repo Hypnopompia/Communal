@@ -2,19 +2,7 @@
 
 ## Next up
 
-**M8 — Devices and recovery.** HANDOFF §4, §11 (first launch) and §12. Starting points:
-
-- **What already exists:**
-  - `link.*`, `account.restore`, `device.revoke` and `device.list` are in the protocol. The hub answers `not_implemented`.
-  - Certs, chain verification, revocations and both recovery-key formats are in `@communal/crypto`.
-  - `account.create` with `root_pubkey` + `chain` already keeps one `user_id` across hubs (ADR 0007).
-  - Peers verify cert chains both ways (ADR 0010), but don't check revocations yet.
-- **To do:**
-  - Link codes with approval on an existing device.
-  - Revocation distributed to every hub and checked by peers.
-  - Recovery key export and restore.
-  - Rules for another of your own devices (carried over from M3).
-- **Done when:** a second desktop and a headless node are linked and both see all own files; a revoked device is refused by peers; restoring from a recovery key works with every device wiped.
+**M9 — Desktop app + packaging.** HANDOFF §11, §12. Everything the screens need is in the local API; see the notes below.
 
 **Still open from M0:** the 1 GiB transfer between two physical machines on a LAN. It needs the owner's second machine.
 
@@ -26,6 +14,116 @@
 - The access UI must show which hub each rule applies to.
 - Turn on the router port mapper (`RouterPortMapper`) the way the CLI daemon does. Settings → Network shows `GET /v1/network` and re-runs `POST /v1/network/check`. Transfers show `diagnosis.message`, `tips` and `fix` (ADR 0011).
 - The Subscribe button must ask about mirroring deletions, with "no" as the default. The API requires the answer.
+- First launch (ADR 0014):
+  - **New** is `POST /v1/hubs`.
+  - **Existing account** is `POST /v1/account/link`. It waits up to 10 minutes for approval, so show the new device's id while it waits.
+  - **Restore** is `POST /v1/account/restore`.
+- Settings → Devices:
+  - `GET /v1/devices`, plus `POST /v1/link/codes` and polling `GET /v1/link/requests` for approvals. Show the requesting `device_id` so the person can compare it with the new device.
+  - Revoking is `POST /v1/devices/:id/revoke`. The first device has no revoke button.
+- Settings → Account: export the recovery key with `POST /v1/recovery`. It only works on a device where `GET /v1/account` says `holds_root_key`; elsewhere, say which device to use.
+  - Store `root.key` with `safeStorage`, and pass it as `CoreOptions.root`.
+
+## M8 — Devices and recovery (2026-10-12)
+
+**Status: done.** Details and decisions are in ADR 0014. Protocol changes are listed in ADR 0004.
+
+### What exists
+
+- **Hub:**
+  - **Link codes:** `link.code.create` → `link.claim` → `link.request` → `link.approve` / `link.deny` → `link.done` / `link.denied`.
+    - Codes are `XXXX-XXXX` in Crockford base32, single use, 10 minutes, and held in memory by the session that made them.
+    - The approver must sign the claimed key for its own account, with a chain that isn't revoked.
+    - A pending claim survives the auth timeout. 5 wrong codes close the session.
+  - **`account.restore`** registers a device with a cert signed by the root key.
+  - **`account.create` with a chain** now adds the device to an account that already exists on that hub (ADR 0007 said `conflict`).
+  - **`device.list`** (with a `root` flag) and **`device.revoke`** with a revocation proof. The proof carries the signer's chain, and any device of the account may submit it.
+    - Revoking marks the device and every device certified through it.
+    - It closes their sessions (4004), publishes them offline, drops their entries, rules and watches (without tombstones), and tells the account's other devices.
+    - Proofs are kept in a `revocations` table, including for devices the hub has never seen, and are re-sent after every `welcome`.
+    - The first device can't be revoked.
+  - `connect.offer` / `connect.answer` carry the peer account's revocation proofs.
+- **Crypto:** a sealed box to an Ed25519 device key (`sealTo` / `openSealed`), and an optional `hubs` list in the recovery file.
+- **Core:**
+  - `account.json` holds the account identity (root key, user id, this device's chain). Pre-M8 installs are migrated as root devices.
+  - `account.ts` holds `joinHub`, `linkDevice` and `restoreAccount`. The CLI uses them directly while the daemon is stopped.
+  - `HubClient` registers a device in one of three ways (`enroll`: create, link or restore). It checks the chain in `link.done` itself before trusting it.
+  - The approving device seals its hub list (URLs + pinned keys) to the new device, which joins them all. The hub can't read the list.
+  - Revocations are verified, kept in `index.db`, and gossiped: pushed to every hub on each sign-in, and passed on when learned from a hub.
+  - **Peers refuse revoked chains** using every proof they have seen, so a hub that forgets a revocation can't bring a device back.
+  - Recovery export (file or words) works only on a device holding the root key. A restored device keeps the root key (`root.key`, 0600).
+- **API:** `GET /v1/account`, `POST /v1/account/link`, `POST /v1/account/restore`, `POST /v1/recovery`, `POST /v1/link/codes`, `GET /v1/link/requests`, `POST /v1/link/requests/:id/approve|deny`, `GET /v1/devices`, `POST /v1/devices/:id/revoke`.
+- **CLI:**
+  - `communal link <code> --hub <url>` (spaces and any case are accepted in the code)
+  - `communal restore <file> | --words [--hub …]`
+  - `communal recovery export --out <file> | --words`
+  - `communal devices [list] | add [--yes] | requests | approve <id> | deny <id> | revoke <id> [--yes]`
+  - Passphrases and words are read without echo, or from `COMMUNAL_RECOVERY_PASSPHRASE` / `COMMUNAL_RECOVERY_WORDS`.
+
+### Done criteria
+
+- [x] **Link a second desktop and a headless node; both see all own files** (`test/integration/m8-devices.test.ts`, two hubs):
+  - The desktop links through a running core. The headless node links the way `communal link` does with the daemon stopped, then its core starts from the same data dir.
+  - Both end up on both hubs, with alice's hub keys pinned from the sealed bundle.
+  - Both browse and search alice's "only me" files on each hub.
+- [x] **A revoked device is refused by peers:**
+  - Revoking from the headless node reaches both hubs. Alice's device learns of it, and the hubs refuse the laptop.
+  - Then hub 1's database is made to forget the revocation and the laptop gets back in. Alice's device still refuses its cert chain (`peer cert chain refused`), and a session it could open before now fails.
+  - The next device to sign in pushes the proof back to the hub.
+- [x] **Restore from a recovery key with every device wiped:**
+  - Export (file and words) from the first device, then wipe both devices' data dirs.
+  - A fresh device restores onto both hubs with the pinned keys from the file. It has the same user id, and bob is still a connection.
+  - It lists the old devices, revokes the lost node, and can export the same words again.
+  - A wrong key restores nothing.
+
+### Also tested
+
+- `apps/hub/src/devices.test.ts` (16), each with access-control cases:
+  - **Linking:**
+    - only the session that made a code can approve or deny it, and only for the claimed key with its own signature
+    - codes are single use, expire, and accept O/I/L for 0/1
+    - 5 wrong codes close the session
+    - a claim needs proof of possession
+    - denial, and the approver disconnecting, both reach the new device
+    - a pending claim outlives the auth timeout
+    - chains through linked devices work
+  - **Restore:** a bad root signature and an unknown account are refused.
+  - **Revoke:**
+    - sessions are closed, sign-in is refused, files disappear from search, and other devices are told (also after a later sign-in)
+    - the chain cascades
+    - other accounts' proofs, a stranger's signature, the root device, and a proof from an already-revoked signer are all refused
+    - a proof for a device the hub has never seen keeps that device out
+- `server.test.ts`: `account.create` with a chain into an existing account, and with a stranger's chain.
+- `crypto.test.ts`: the sealed box, and recovery files carrying hubs.
+- The full `pnpm check` passes (279 tests, including the 100k-file run). On the first full run, the M7 live-rename indexer test (`index.test.ts`) failed once under the 100k test's load. It passed 5 times alone and on the re-run. It's the known same-batch rename timing, not M8.
+
+### Demo
+
+From source, against `pnpm --filter @communal/hub dev`, with three CLI data dirs:
+
+```bash
+communal init --hub wss://127.0.0.1:8443/v1 --name alice   # A, then `communal daemon`
+communal devices add --yes                                 # A: prints a code, waits
+communal link QM3P 3B7P --hub wss://127.0.0.1:8443/v1      # B, daemon stopped: "Linked to account u_…"
+communal devices revoke d_zlwx… --yes                      # A: B shows REVOKED; B's daemon logs "sign-in rejected"
+communal recovery export --out alice.recovery              # A
+communal restore alice.recovery                            # C: restored onto the hub from the file's list
+communal devices revoke d_qzfw… --yes                      # C: "the account's first device can't be revoked"
+```
+
+The dev stack was run too:
+
+- alice's pre-M8 volume was migrated to a root account
+- a fresh `nas` container linked with `communal link … && communal daemon`, saw alice's "only me" `diary.txt` (bob didn't), and was refused by the hub once revoked from node-a
+
+### Carried forward
+
+- **Rules for another of your own devices** (managing a NAS's rules from a laptop) still needs a signed device-to-device command channel. Otherwise the hub could rewrite the uploader's rules (ADR 0014).
+- **The first device can't be revoked**, and there's no account key rotation. A stolen first device or a leaked recovery key means a lost account (`docs/questions.md`).
+- **Hubs joined later aren't pushed to existing devices.** `hub add` on each device joins with its chain, and no new link is needed.
+- **Peer revocation order:** a proof signed by a device that's revoked later is refused by a peer that learned of the later revocation first. Hubs still have the earlier proof, so they enforce it.
+- Already-open peer sessions with a device aren't closed when it's revoked. New sessions are refused.
+- Desktop first-launch and Devices screens: M9.
 
 ## M7 — Subscriptions (2026-10-12)
 
@@ -113,6 +211,7 @@ The same steps, with other file names, were run against the dev stack. A first t
 - **A tombstone's visibility follows the current rules.** Making a folder public reveals the _paths_ of files deleted from it earlier, to watchers who were away. It never reveals content (ADR 0013).
 - **Deletions older than 180 days** are forgotten by the hub. A subscriber away longer gets all current files back, but keeps copies of files deleted before the window.
 - **A live rename only keeps its hash when its unlink and add land in the same watcher batch** (2 s). Otherwise the subscriber trashes and re-downloads, which is correct, just slower.
+- **macOS can drop folder watcher events under heavy disk load** (FSEvents). While the M2 test wrote 100k files, a rename's `add` never arrived, even after 60 s, so only the periodic rescan (15 min) would notice it. The indexer test now feeds the rename's events in by hand with `Indexer.touch()`, so it no longer depends on OS event delivery.
 - **Full re-announcements** after a visibility change send the whole visible folder. That's fine for thousands of files. Very large subscribed folders on hubs where rules change often may want a cheaper diff later.
 - **Desktop UI** (Subscriptions screen, HANDOFF §11): M9.
 
@@ -286,7 +385,7 @@ docker/nat/test.sh            # the NAT lab
 ### Carried forward
 
 - **Diagnosing failed connections** (`connect.failed` causes, `easier_fix`), NAT classification, UPnP/NAT-PMP, CGNAT: M5. Today a failed punch shows up as "could not connect to any source".
-- **Revocation lists** in peer cert-chain checks: M8.
+- ~~**Revocation lists** in peer cert-chain checks~~: done in M8.
 - **Streaming** (in-order ranges for previews), thumbnails and `peek`: M6.
 - **Throughput on macOS loopback** is CPU-bound in UDP syscalls (ADR 0001). Fine for LAN speeds; batched sends would help.
 
@@ -336,7 +435,7 @@ B search holiday                     # alice's files appear
 
 ### Carried forward
 
-- **Rules for another of your own devices** (managing a NAS from a laptop) wait for device-to-device sync in M8.
+- **Rules for another of your own devices** (managing a NAS from a laptop): still open after M8 (ADR 0014).
 - **The uploader's own re-check** of rules, connections and groups lands with transfers in M4. The core already holds the authoritative rules.
 - **The desktop UI must make the per-hub scope of every rule obvious** (M9).
 

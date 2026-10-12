@@ -31,6 +31,11 @@ export interface RecoveryFile {
   cipher: 'xchacha20poly1305';
   nonce: string;
   ct: string;
+  /**
+   * Hubs to restore onto, with their pinned keys (ADR 0014). Plaintext and unauthenticated:
+   * a tampered list can only send the restore to the wrong hub.
+   */
+  hubs?: { url: string; hub_pubkey: string }[];
 }
 
 function aad(user_id: string, kdf: RecoveryFile['kdf']): Uint8Array {
@@ -51,6 +56,7 @@ export async function exportRecoveryFile(
   user_id: string,
   passphrase: string,
   params: KdfParams = DEFAULT_KDF,
+  hubs?: RecoveryFile['hubs'],
 ): Promise<RecoveryFile> {
   if (rootSecret.length !== 32) throw new RangeError('root secret must be 32 bytes');
   const salt = randomBytes(16);
@@ -66,6 +72,7 @@ export async function exportRecoveryFile(
     cipher: 'xchacha20poly1305',
     nonce: toB64(nonce),
     ct: toB64(ct),
+    ...(hubs?.length ? { hubs } : {}),
   };
 }
 

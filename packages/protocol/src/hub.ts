@@ -16,7 +16,8 @@ import {
   NetworkProfile,
   Platform,
   PublicKey,
-  Revocation,
+  RevocationProof,
+  Sealed,
   SessionId,
   SharePath,
   Signature,
@@ -103,7 +104,12 @@ export const clientBodies = {
     platform: Platform,
     sig: Signature,
   }),
-  'link.approve': z.object({ request_id: z.string().max(64), cert: DeviceCert }),
+  /** `sealed`: the account's hub list for the new device, which the hub can't read (ADR 0014). */
+  'link.approve': z.object({
+    request_id: z.string().max(64),
+    cert: DeviceCert,
+    sealed: Sealed.optional(),
+  }),
   'link.deny': z.object({ request_id: z.string().max(64) }),
   'account.restore': z.object({
     root_pubkey: PublicKey,
@@ -115,7 +121,8 @@ export const clientBodies = {
     root_sig: Signature,
     sig: Signature,
   }),
-  'device.revoke': z.object({ revocation: Revocation }),
+  /** Any device of the account may submit any valid proof, so proofs can be gossiped. */
+  'device.revoke': RevocationProof,
   'device.list': Empty,
   'network.profile': NetworkProfile,
 
@@ -222,7 +229,12 @@ export const hubBodies = {
     platform: Platform,
     device_pubkey: PublicKey,
   }),
-  'link.done': z.object({ user_id: UserId, device_id: DeviceId, chain: CertChain }),
+  'link.done': z.object({
+    user_id: UserId,
+    device_id: DeviceId,
+    chain: CertChain,
+    sealed: Sealed.optional(),
+  }),
   'link.denied': Empty,
   'device.listing': z.object({
     devices: z.array(
@@ -233,10 +245,12 @@ export const hubBodies = {
         online: z.boolean(),
         last_seen: UnixSeconds.nullable(),
         revoked_at: UnixSeconds.nullable(),
+        /** The account's first device: it holds the root key and can't be revoked. */
+        root: z.boolean(),
       }),
     ),
   }),
-  'device.revoked': z.object({ revocation: Revocation }),
+  'device.revoked': RevocationProof,
 
   'user.results': z.object({ users: z.array(UserSummary) }),
   'connection.request': z.object({ user: UserSummary }),
@@ -287,6 +301,8 @@ export const hubBodies = {
     from_user: UserId,
     from_root_pubkey: PublicKey,
     from_chain: CertChain,
+    /** The downloader's account's revocations, checked and kept by the owner (ADR 0014). */
+    from_revocations: z.array(RevocationProof).max(256),
     token: TransferToken,
     stream_id: StreamId,
     candidates: z.array(Candidate).max(16),
@@ -299,6 +315,7 @@ export const hubBodies = {
     to_user: UserId,
     to_root_pubkey: PublicKey,
     to_chain: CertChain,
+    to_revocations: z.array(RevocationProof).max(256),
     /** The same hub-signed token the uploader got; the downloader presents it in `hello`. */
     token: TransferToken,
   }),

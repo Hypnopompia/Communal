@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import type { CertChain } from '@communal/crypto';
+import type { CertChain, RevocationProof } from '@communal/crypto';
 import { governingRule, type HubBody } from '@communal/protocol';
 
 export { governingRule };
@@ -40,6 +40,8 @@ export function rowToEntry(r: EntryRow): Entry {
     hash: r.hash,
   };
 }
+
+export type { RevocationProof };
 
 export type JoinMode = 'open' | 'approval';
 export type UserStatus = 'active' | 'pending';
@@ -248,6 +250,17 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX watches_device ON watches (device_id);
   `,
+  `
+  -- M8 (ADR 0014): every revocation proof accepted for an account, including ones for devices
+  -- this hub has never seen, so they can't register here later.
+  CREATE TABLE revocations (
+    user_id     TEXT NOT NULL REFERENCES users (id),
+    device_id   TEXT NOT NULL,
+    proof_json  TEXT NOT NULL,
+    received_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, device_id)
+  );
+  `,
 ];
 
 const now = () => Math.floor(Date.now() / 1000);
@@ -341,7 +354,7 @@ export class HubDb {
     })();
   }
 
-  /** Registers another device for an existing account (linking lands in M8; tests use it now). */
+  /** Registers another device for an existing account (link, restore, or a chain; ADR 0014). */
   addDevice(device: Omit<DeviceRow, 'created_at' | 'last_seen' | 'revoked_at'>) {
     this.raw
       .prepare(
@@ -423,6 +436,72 @@ export class HubDb {
         id: string;
       }[]
     ).map((r) => r.id);
+  }
+
+  /** Every device of the account, revoked ones included (oldest first). */
+  listDevices(userId: string): DeviceRow[] {
+    return (
+      this.raw
+        .prepare('SELECT id FROM devices WHERE user_id = ? ORDER BY created_at, rowid')
+        .all(userId) as { id: string }[]
+    ).map((r) => this.getDevice(r.id)!);
+  }
+
+  // ── revocations (ADR 0014) ────────────────────────────────────────────────
+
+  revocationsOf(userId: string): RevocationProof[] {
+    return (
+      this.raw
+        .prepare('SELECT proof_json FROM revocations WHERE user_id = ? ORDER BY received_at')
+        .all(userId) as { proof_json: string }[]
+    ).map((r) => JSON.parse(r.proof_json) as RevocationProof);
+  }
+
+  /** device_ids revoked in this account. */
+  revokedSet(userId: string): Set<string> {
+    return new Set(
+      (
+        this.raw.prepare('SELECT device_id FROM revocations WHERE user_id = ?').all(userId) as {
+          device_id: string;
+        }[]
+      ).map((r) => r.device_id),
+    );
+  }
+
+  /** Stores a proof the caller has verified. False when that device was already revoked. */
+  addRevocation(proof: RevocationProof): boolean {
+    return (
+      this.raw
+        .prepare(
+          `INSERT OR IGNORE INTO revocations (user_id, device_id, proof_json, received_at)
+           VALUES (?, ?, ?, ?)`,
+        )
+        .run(proof.revocation.user_id, proof.revocation.device_id, JSON.stringify(proof), now())
+        .changes > 0
+    );
+  }
+
+  /**
+   * Marks a device revoked and forgets what it shared: entries (without tombstones, since a
+   * device leaving must never look like deletions), rules, its index rev and watches either way.
+   */
+  revokeDevice(id: string, at: number = now()) {
+    this.raw.transaction(() => {
+      this.raw
+        .prepare('UPDATE devices SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL')
+        .run(at, id);
+      for (const sql of [
+        'DELETE FROM entries WHERE device_id = ?',
+        'DELETE FROM entries_staging WHERE device_id = ?',
+        'DELETE FROM tombstones WHERE device_id = ?',
+        'DELETE FROM access_rules WHERE device_id = ?',
+        'DELETE FROM index_revs WHERE device_id = ?',
+        'DELETE FROM watches WHERE device_id = ?',
+        'DELETE FROM watches WHERE watcher_device = ?',
+      ])
+        this.raw.prepare(sql).run(id);
+    })();
+    this.ruleCache.delete(id);
   }
 
   touchDevice(id: string, at: number = now()) {

@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import type { RevocationProof } from '@communal/crypto';
 import type { Kind } from './detect.js';
 import type { TransferDiagnosis } from '../transfer/diagnosis.js';
 
@@ -249,6 +250,15 @@ const MIGRATIONS = [
   );
   CREATE INDEX sub_files_hash ON sub_files (hash);
   CREATE INDEX sub_files_transfer ON sub_files (transfer_id) WHERE transfer_id IS NOT NULL;
+  `,
+  `
+  -- M8: revocation proofs we've verified, for our own account and for peers' (ADR 0014).
+  CREATE TABLE revocations (
+    user_id    TEXT NOT NULL,
+    device_id  TEXT NOT NULL,
+    proof_json TEXT NOT NULL,
+    PRIMARY KEY (user_id, device_id)
+  );
   `,
 ];
 
@@ -825,6 +835,28 @@ export class IndexStore {
   }
 
   // ── verification ──────────────────────────────────────────────────────────
+
+  // ── revocations (ADR 0014) ────────────────────────────────────────────────
+
+  revocations(userId: string): RevocationProof[] {
+    return (
+      this.raw
+        .prepare('SELECT proof_json FROM revocations WHERE user_id = ? ORDER BY rowid')
+        .pluck()
+        .all(userId) as string[]
+    ).map((j) => JSON.parse(j) as RevocationProof);
+  }
+
+  /** Stores a proof the caller has verified; false when that device was already revoked. */
+  addRevocation(p: RevocationProof): boolean {
+    return (
+      this.raw
+        .prepare(
+          'INSERT OR IGNORE INTO revocations (user_id, device_id, proof_json) VALUES (?, ?, ?)',
+        )
+        .run(p.revocation.user_id, p.revocation.device_id, JSON.stringify(p)).changes > 0
+    );
+  }
 
   verifiedFingerprint(userId: string): string | undefined {
     return this.raw

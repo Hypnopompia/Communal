@@ -23,6 +23,7 @@ const revocation = {
   signer_pubkey: pk,
   sig,
 };
+const proof = { revocation, chain: [cert] };
 const entry = {
   path: 'Movies/Alien (1979).mkv',
   size: 4_831_838_208,
@@ -60,7 +61,7 @@ export const clientFixtures: { [T in ClientType]: ClientBody<T> } = {
     platform: 'linux',
     sig,
   },
-  'link.approve': { request_id: 'lr_1', cert },
+  'link.approve': { request_id: 'lr_1', cert, sealed: 'C'.repeat(120) },
   'link.deny': { request_id: 'lr_1' },
   'account.restore': {
     root_pubkey: pk,
@@ -71,7 +72,7 @@ export const clientFixtures: { [T in ClientType]: ClientBody<T> } = {
     root_sig: sig,
     sig,
   },
-  'device.revoke': { revocation },
+  'device.revoke': proof,
   'device.list': {},
   'network.profile': {
     nat: 'endpoint_independent',
@@ -121,7 +122,7 @@ export const hubFixtures: { [T in HubType]: HubBody<T> } = {
   'account.created': { user_id: uid, device_id: did, fingerprint: fp, status: 'active' },
   'link.code': { code: 'K7Q2-9XZD', expires_in: 600 },
   'link.request': { request_id: 'lr_1', device_name: 'nas', platform: 'linux', device_pubkey: pk },
-  'link.done': { user_id: uid, device_id: did2, chain: [cert] },
+  'link.done': { user_id: uid, device_id: did2, chain: [cert], sealed: 'C'.repeat(120) },
   'link.denied': {},
   'device.listing': {
     devices: [
@@ -132,10 +133,11 @@ export const hubFixtures: { [T in HubType]: HubBody<T> } = {
         online: true,
         last_seen: null,
         revoked_at: null,
+        root: true,
       },
     ],
   },
-  'device.revoked': { revocation },
+  'device.revoked': proof,
   'user.results': { users: [user] },
   'connection.request': { user },
   'connection.accept': { user },
@@ -169,6 +171,7 @@ export const hubFixtures: { [T in HubType]: HubBody<T> } = {
     from_user: uid,
     from_root_pubkey: pk,
     from_chain: [],
+    from_revocations: [proof],
     token,
     stream_id: 7,
     candidates,
@@ -180,6 +183,7 @@ export const hubFixtures: { [T in HubType]: HubBody<T> } = {
     to_user: uid2,
     to_root_pubkey: pk,
     to_chain: [],
+    to_revocations: [],
     token,
   },
   'connect.failed': {

@@ -20,7 +20,9 @@ import {
   verify,
   signTransferToken,
   verifyCertChain,
+  verifyRevocation,
   type CertChain,
+  type DeviceCert,
   type KeyPair,
   type SignedToken,
 } from '@communal/crypto';
@@ -36,7 +38,7 @@ import {
 } from '@communal/protocol';
 import { Catalog } from './catalog.js';
 import { diagnose, natView, type Observation } from './diagnosis.js';
-import type { HubDb } from './db.js';
+import type { HubDb, RevocationProof, UserRow } from './db.js';
 
 export interface HubOptions {
   db: HubDb;
@@ -59,6 +61,8 @@ export interface HubOptions {
    * observations before diagnosing with what we have (ADR 0011).
    */
   diagnosisWaitMs?: number;
+  /** How long a link code (and the approval it leads to) stays valid (HANDOFF §2: 10 min). */
+  linkTtlMs?: number;
   log?: Logger;
 }
 
@@ -70,7 +74,16 @@ const DEFAULTS = {
   authTimeoutMs: 30_000,
   banPollMs: 2_000,
   diagnosisWaitMs: 3_000,
+  linkTtlMs: 600_000,
 };
+
+/** Link codes one session may hold at once, and wrong codes a session may try (ADR 0014). */
+const MAX_LINK_CODES = 5;
+const MAX_BAD_CLAIMS = 5;
+/** Crockford's base32 alphabet: no I, L, O or U, so codes survive being read aloud. */
+const CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+
+type Platform = HubBody<'link.request'>['platform'];
 
 /** Message types accepted before `auth` succeeds. */
 const PRE_AUTH = new Set<ClientMessage['t']>([
@@ -96,7 +109,26 @@ interface Session {
   profile?: ClientBody<'network.profile'>;
   /** Folders this device watches, keyed by `device_id + path` (resent after every sign-in). */
   watches: Map<string, LiveWatch>;
+  /** A pending `link.claim` from this (unauthenticated) session: its request id. */
+  claim?: string;
+  badClaims: number;
   log: Logger;
+}
+
+/** A link code, valid while the session that created it is alive (ADR 0014). */
+interface LinkCode {
+  owner: Session;
+  expires: number;
+}
+
+/** A claimed code waiting for the existing device to approve or deny. */
+interface LinkRequest {
+  owner: Session;
+  claimer: Session;
+  pubkey: string;
+  name: string;
+  platform: Platform;
+  expires: number;
 }
 
 /** A live subscription: `sent` is the owner's index rev the watcher was last brought up to. */
@@ -143,6 +175,8 @@ export class HubServer {
   private readonly brokered = new Map<string, Brokered>();
   /** device_id → timer that will publish "offline" once the grace period runs out. */
   private readonly goingOffline = new Map<string, NodeJS.Timeout>();
+  private readonly linkCodes = new Map<string, LinkCode>();
+  private readonly linkRequests = new Map<string, LinkRequest>();
 
   constructor(opts: HubOptions) {
     this.opts = { ...DEFAULTS, ...opts };
@@ -255,6 +289,7 @@ export class HubServer {
       observedAddr: `${remote.replace(/^::ffff:/, '')}:${req.socket.remotePort ?? 0}`,
       lastSeen: Date.now(),
       watches: new Map(),
+      badClaims: 0,
       log: this.log.child({ session_id: id }),
     };
     this.sessions.add(s);
@@ -276,11 +311,12 @@ export class HubServer {
 
   private sweep() {
     const now = Date.now();
+    this.expireLinks();
     for (const s of this.sessions) {
       if (now - s.lastSeen > this.opts.silenceMs) {
         s.log.info('silent too long; dropping');
         s.ws.terminate();
-      } else if (!s.device && now - s.lastSeen > this.opts.authTimeoutMs) {
+      } else if (!s.device && !s.claim && now - s.lastSeen > this.opts.authTimeoutMs) {
         s.ws.close(4001, 'auth timeout');
       }
     }
@@ -316,8 +352,29 @@ export class HubServer {
     this.log.info({ user_id: uid }, 'banned user disconnected');
   }
 
+  /** Ends a device's session now and publishes it offline without a grace period. */
+  private dropDevice(owner: string, device: string, code: number, reason: string) {
+    const s = this.online.get(device);
+    if (s) {
+      this.online.delete(device);
+      s.device = undefined; // keep onClose from starting a grace period
+      s.ws.close(code, reason);
+      this.publishPresence(owner, device, false);
+    }
+    const pending = this.goingOffline.get(device);
+    if (pending) {
+      clearTimeout(pending);
+      this.goingOffline.delete(device);
+      this.publishPresence(owner, device, false);
+    }
+    for (const x of this.online.values()) {
+      for (const [k, w] of x.watches) if (w.device === device) x.watches.delete(k);
+    }
+  }
+
   private onClose(s: Session) {
     this.sessions.delete(s);
+    this.dropLinks(s);
     if (!s.device || this.online.get(s.device) !== s) return;
     this.online.delete(s.device);
     // Presence goes offline only once the device has been silent for the full window, so a
@@ -424,6 +481,20 @@ export class HubServer {
           return this.onAcl(s, msg.id, msg.body.device_id, msg.body.rules, true);
         case 'watch':
           return this.onWatch(s, msg.id, msg.body);
+        case 'link.code.create':
+          return this.onLinkCodeCreate(s, msg.id);
+        case 'link.claim':
+          return this.onLinkClaim(s, msg.id, msg.body);
+        case 'link.approve':
+          return this.onLinkApprove(s, msg.id, msg.body);
+        case 'link.deny':
+          return this.onLinkDeny(s, msg.id, msg.body.request_id);
+        case 'account.restore':
+          return this.onRestore(s, msg.id, msg.body);
+        case 'device.list':
+          return this.send(s, 'device.listing', this.deviceListing(s.user!), msg.id);
+        case 'device.revoke':
+          return this.onRevoke(s, msg.id, msg.body);
         case 'unwatch': {
           const path = folderPath(msg.body.path);
           s.watches.delete(watchKey(msg.body.device_id, path));
@@ -478,13 +549,19 @@ export class HubServer {
     }
     const uid = userId(root);
     const did = deviceId(pubkey);
-    if (this.db.getUser(uid)) {
-      return this.fail(
-        s,
-        'conflict',
-        'account already exists on this hub; link this device instead',
-        re,
-      );
+    const existing = this.db.getUser(uid);
+    if (existing) {
+      // The account is already here: a chain to its root (empty for the root device itself)
+      // is the same proof a link produces, so the device just joins it (ADR 0014).
+      if (!verifyCertChain(root, pubkey, chain, this.db.revokedSet(uid)).ok)
+        return this.fail(s, 'forbidden', 'cert chain does not verify', re);
+      this.registerDevice(s, re, existing, {
+        pubkey: body.device_pubkey,
+        chain,
+        name: body.device_name,
+        platform: body.platform,
+      });
+      return;
     }
     const status = this.db.joinMode === 'open' ? 'active' : 'pending';
     this.db.createAccount(
@@ -507,6 +584,29 @@ export class HubServer {
         device_id: did,
         fingerprint: fingerprint(root),
         status: status === 'active' ? 'active' : 'pending_approval',
+      },
+      re,
+    );
+  }
+
+  /** Adds a verified device to an existing account and answers like `account.create`. */
+  private registerDevice(
+    s: Session,
+    re: string,
+    user: UserRow,
+    d: { pubkey: string; chain: CertChain; name: string; platform: Platform },
+  ) {
+    const did = deviceId(fromB64(d.pubkey));
+    this.db.addDevice({ id: did, user_id: user.id, ...d });
+    s.log.info({ user_id: user.id, device_id: did }, 'device added to account');
+    this.send(
+      s,
+      'account.created',
+      {
+        user_id: user.id,
+        device_id: did,
+        fingerprint: fingerprint(fromB64(user.root_pubkey)),
+        status: user.status === 'active' ? 'active' : 'pending_approval',
       },
       re,
     );
@@ -570,6 +670,8 @@ export class HubServer {
       re,
     );
     s.log.info({ client: body.client, resumed: wasOnline }, 'signed in');
+    // Devices that were away catch up on the account's revocations (ADR 0014).
+    for (const proof of this.db.revocationsOf(user.id)) this.send(s, 'device.revoked', proof);
 
     // Snapshot of who's online among the devices this user may see, then tell others.
     for (const [other, os] of this.online) {
@@ -865,6 +967,7 @@ export class HubServer {
       from_user: s.user!,
       from_root_pubkey: owner.root_pubkey,
       from_chain: me.chain,
+      from_revocations: this.db.revocationsOf(s.user!).slice(-256),
       token,
       stream_id: body.stream_id,
       candidates: body.candidates,
@@ -887,6 +990,7 @@ export class HubServer {
       to_user: s.user!,
       to_root_pubkey: owner.root_pubkey,
       to_chain: me.chain,
+      to_revocations: this.db.revocationsOf(s.user!).slice(-256),
       token: b.token,
     });
     this.send(s, 'ok', {}, re);
@@ -934,6 +1038,213 @@ export class HubServer {
       { session_id: body.session_id, ...result, you: natView(b.down), them: natView(up) },
       re,
     );
+  }
+
+  // ── devices: linking, restore, revocation (HANDOFF §2, §4; ADR 0014) ──────
+
+  private onLinkCodeCreate(s: Session, re: string) {
+    this.expireLinks();
+    let mine = 0;
+    for (const c of this.linkCodes.values()) if (c.owner === s) mine++;
+    if (mine >= MAX_LINK_CODES) return this.fail(s, 'rate_limited', 'too many link codes', re);
+    let code: string;
+    do code = newLinkCode();
+    while (this.linkCodes.has(code));
+    this.linkCodes.set(code, { owner: s, expires: Date.now() + this.opts.linkTtlMs });
+    s.log.info('link code created');
+    this.send(
+      s,
+      'link.code',
+      { code, expires_in: Math.max(1, Math.round(this.opts.linkTtlMs / 1000)) },
+      re,
+    );
+  }
+
+  private onLinkClaim(s: Session, re: string, body: ClientBody<'link.claim'>) {
+    if (s.device) return this.fail(s, 'conflict', 'already signed in', re);
+    if (s.claim) return this.fail(s, 'conflict', 'a link request is already pending', re);
+    if (!this.checkPossession(s, fromB64(body.device_pubkey), body.sig))
+      return this.fail(s, 'forbidden', 'bad signature', re);
+    this.expireLinks();
+    const code = normalizeLinkCode(body.code);
+    const entry = this.linkCodes.get(code);
+    if (!entry) {
+      if (++s.badClaims >= MAX_BAD_CLAIMS) {
+        s.log.info('too many wrong link codes; closing');
+        this.fail(s, 'rate_limited', 'too many wrong link codes', re);
+        return s.ws.close(4029, 'too many wrong link codes');
+      }
+      return this.fail(s, 'not_found', 'unknown or expired link code', re);
+    }
+    if (this.db.deviceExistsWithPubkey(body.device_pubkey))
+      return this.fail(s, 'conflict', 'device already registered', re);
+    this.linkCodes.delete(code); // single use
+    const id = 'lr_' + randomBytes(8).toString('hex');
+    this.linkRequests.set(id, {
+      owner: entry.owner,
+      claimer: s,
+      pubkey: body.device_pubkey,
+      name: body.device_name,
+      platform: body.platform,
+      expires: entry.expires,
+    });
+    s.claim = id;
+    this.send(s, 'ok', {}, re);
+    this.send(entry.owner, 'link.request', {
+      request_id: id,
+      device_name: body.device_name,
+      platform: body.platform,
+      device_pubkey: body.device_pubkey,
+    });
+    entry.owner.log.info({ request_id: id }, 'link code claimed; waiting for approval');
+  }
+
+  private onLinkApprove(s: Session, re: string, body: ClientBody<'link.approve'>) {
+    const r = this.linkRequests.get(body.request_id);
+    if (!r || r.owner !== s) return this.fail(s, 'not_found', 'no such link request', re);
+    if (r.claimer.ws.readyState !== r.claimer.ws.OPEN) {
+      this.linkRequests.delete(body.request_id);
+      return this.fail(s, 'not_found', 'the new device went away', re);
+    }
+    const me = this.db.getDevice(s.device!)!;
+    const user = this.db.getUser(s.user!)!;
+    const cert = body.cert;
+    const chain: CertChain = [...me.chain, cert];
+    // The approving device signs for its own account, for exactly the key that claimed the code.
+    if (
+      cert.device_pubkey !== r.pubkey ||
+      cert.signer_pubkey !== me.pubkey ||
+      !verifyCertChain(
+        fromB64(user.root_pubkey),
+        fromB64(r.pubkey),
+        chain,
+        this.db.revokedSet(user.id),
+      ).ok
+    ) {
+      return this.fail(s, 'bad_request', 'cert does not match the link request', re);
+    }
+    if (this.db.deviceExistsWithPubkey(r.pubkey))
+      return this.fail(s, 'conflict', 'device already registered', re);
+    this.linkRequests.delete(body.request_id);
+    r.claimer.claim = undefined;
+    const did = deviceId(fromB64(r.pubkey));
+    this.db.addDevice({
+      id: did,
+      user_id: user.id,
+      pubkey: r.pubkey,
+      chain,
+      name: r.name,
+      platform: r.platform,
+    });
+    this.send(r.claimer, 'link.done', {
+      user_id: user.id,
+      device_id: did,
+      chain,
+      ...(body.sealed ? { sealed: body.sealed } : {}),
+    });
+    this.send(s, 'ok', {}, re);
+    s.log.info({ new_device: did }, 'device linked');
+  }
+
+  private onLinkDeny(s: Session, re: string, id: string) {
+    const r = this.linkRequests.get(id);
+    if (!r || r.owner !== s) return this.fail(s, 'not_found', 'no such link request', re);
+    this.denyLink(id, r);
+    this.send(s, 'ok', {}, re);
+  }
+
+  private denyLink(id: string, r: LinkRequest) {
+    this.linkRequests.delete(id);
+    r.claimer.claim = undefined;
+    this.send(r.claimer, 'link.denied', {});
+  }
+
+  /** Codes and requests die with the session that made them. */
+  private dropLinks(s: Session) {
+    for (const [code, c] of this.linkCodes) if (c.owner === s) this.linkCodes.delete(code);
+    for (const [id, r] of this.linkRequests) {
+      if (r.owner === s) this.denyLink(id, r);
+      else if (r.claimer === s) this.linkRequests.delete(id);
+    }
+  }
+
+  private expireLinks() {
+    const now = Date.now();
+    for (const [code, c] of this.linkCodes) if (c.expires < now) this.linkCodes.delete(code);
+    for (const [id, r] of this.linkRequests) if (r.expires < now) this.denyLink(id, r);
+  }
+
+  /** A fresh device joins the account with a cert signed by the recovered root key (§4). */
+  private onRestore(s: Session, re: string, body: ClientBody<'account.restore'>) {
+    if (s.device) return this.fail(s, 'conflict', 'already signed in', re);
+    if (s.claim) return this.fail(s, 'conflict', 'a link request is already pending', re);
+    const pubkey = fromB64(body.device_pubkey);
+    if (!this.checkPossession(s, pubkey, body.sig))
+      return this.fail(s, 'forbidden', 'bad signature', re);
+    if (this.db.deviceExistsWithPubkey(body.device_pubkey))
+      return this.fail(s, 'conflict', 'device already registered', re);
+    const root = fromB64(body.root_pubkey);
+    const user = this.db.getUser(userId(root));
+    if (!user || user.root_pubkey !== body.root_pubkey)
+      return this.fail(s, 'not_found', 'no account with that recovery key on this hub', re);
+    const cert: DeviceCert = {
+      user_id: user.id,
+      device_pubkey: body.device_pubkey,
+      issued_at: body.issued_at,
+      signer_pubkey: body.root_pubkey,
+      sig: body.root_sig,
+    };
+    if (!verifyCertChain(root, pubkey, [cert], this.db.revokedSet(user.id)).ok)
+      return this.fail(s, 'forbidden', 'recovery signature does not verify', re);
+    this.registerDevice(s, re, user, {
+      pubkey: body.device_pubkey,
+      chain: [cert],
+      name: body.device_name,
+      platform: body.platform,
+    });
+  }
+
+  private deviceListing(uid: string): HubBody<'device.listing'> {
+    const user = this.db.getUser(uid)!;
+    return {
+      devices: this.db.listDevices(uid).map((d) => ({
+        device_id: d.id,
+        name: d.name,
+        platform: d.platform as Platform,
+        online: d.revoked_at === null && this.isOnline(d.id),
+        last_seen: d.last_seen,
+        revoked_at: d.revoked_at,
+        root: d.pubkey === user.root_pubkey,
+      })),
+    };
+  }
+
+  private onRevoke(s: Session, re: string, proof: RevocationProof) {
+    const rev = proof.revocation;
+    const user = this.db.getUser(s.user!)!;
+    if (rev.user_id !== user.id)
+      return this.fail(s, 'forbidden', 'revocations are for your own devices', re);
+    const root = fromB64(user.root_pubkey);
+    if (rev.device_id === deviceId(root))
+      return this.fail(s, 'bad_request', "the account's first device can't be revoked", re);
+    const revoked = this.db.revokedSet(user.id);
+    if (revoked.has(rev.device_id)) return this.send(s, 'ok', {}, re);
+    if (!verifyRevocation(rev, root, proof.chain, revoked))
+      return this.fail(s, 'forbidden', 'invalid revocation', re);
+    this.db.addRevocation(proof);
+    revoked.add(rev.device_id);
+    this.send(s, 'ok', {}, re);
+    s.log.info({ revoked: rev.device_id }, 'device revoked');
+    // The device goes, and so does every device whose chain runs through it (ADR 0002).
+    for (const d of this.db.listDevices(user.id)) {
+      if (d.revoked_at !== null) continue;
+      if (verifyCertChain(root, fromB64(d.pubkey), d.chain, revoked).ok) continue;
+      this.db.revokeDevice(d.id);
+      this.dropDevice(user.id, d.id, 4004, 'device revoked');
+    }
+    // The account's other devices keep the proof and pass it on to their other hubs.
+    for (const x of this.online.values())
+      if (x.user === user.id && x !== s) this.send(x, 'device.revoked', proof);
   }
 
   // ── access rules ──────────────────────────────────────────────────────────
@@ -1024,6 +1335,17 @@ export class HubServer {
       }
     }
   }
+}
+
+function newLinkCode(): string {
+  // 256 is a multiple of 32, so taking each byte mod 32 has no bias.
+  const c = [...randomBytes(8)].map((b) => CODE_ALPHABET[b % 32]).join('');
+  return `${c.slice(0, 4)}-${c.slice(4)}`;
+}
+
+/** Codes read aloud or typed by hand: O means 0, I and L mean 1. */
+function normalizeLinkCode(code: string): string {
+  return code.toUpperCase().replace(/O/g, '0').replace(/[IL]/g, '1');
 }
 
 /** Watched paths are folders: `Photos` and `Photos/` are the same subscription. */

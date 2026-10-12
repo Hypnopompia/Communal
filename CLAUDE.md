@@ -29,6 +29,7 @@ These came from the owner during development. Don't revert them to the spec's wo
 - Previews: `communal browse` (icon, metadata, ▣ = has thumbnail), `communal thumbs <hub> <device> <folder>` (batch into the cache), `communal peek <hub> <device> <hash>`.
 - Transfers: `communal get <hash>`, `communal transfers` (shows the diagnosis and tips when a source can't be reached), `communal cancel <id>`, `communal log` (who downloaded what from this device).
 - Subscriptions: `communal subscribe <device> <path> [--mirror-deletes|--no-mirror-deletes] [--dest]`, `communal subscriptions [list|set|remove]`.
+- Devices (M8): `communal devices [list|add|requests|approve|deny|revoke]`, `communal link <code> --hub <url>` (fresh device), `communal restore <file>|--words [--hub]`, `communal recovery export --out <file>|--words`. `link`, `restore` and `recovery export` also work with the daemon stopped. Passphrases come from the terminal or `COMMUNAL_RECOVERY_PASSPHRASE`.
 - Network: `communal netcheck` (NAT type per hub, UPnP/NAT-PMP mapping, IPv6, CGNAT). The daemon maps its UDP port on the router unless `COMMUNAL_UPNP=false`.
 - Hub admin: `communal-hub users | approve <user_id> | ban <user_id> [--reason] | unban <user_id> | set join_mode open|approval`. These commands work directly on the SQLite database, so they run alongside a live hub.
 
@@ -93,6 +94,12 @@ How the pieces connect:
   - Searches fan out with `requestAll` and merge by hash.
   - Transfer tokens are accepted from any joined hub, checked against that hub's rules.
 - **Identity**: an Ed25519 device key. The first device's key is the account root. Each later device carries a certificate signed by an existing device, so peers verify the cert chain back to the root and reject revoked devices.
+- **Devices** (ADR 0014):
+  - Core keeps the account in `<data>/account.json` (root key, user id, this device's chain). `account.ts` has `joinHub` / `linkDevice` / `restoreAccount`, and `HubClient`'s `enroll` is `create | link | restore`.
+  - Revocations travel as proofs (`{revocation, chain}`). They are kept in both `index.db` and the hub's `revocations` table, and gossiped to every hub on sign-in.
+  - Peers check chains against every proof they have ever seen (`Revocations.revokedFor`), so a hub forgetting one changes nothing.
+  - The first device can't be revoked.
+  - Only a device holding the root secret can export recovery: the first device, or a restored one (`root.key`).
 
 ## Testing patterns
 
@@ -105,6 +112,7 @@ How the pieces connect:
   - `catalog.test.ts`: index, search, browse, sources
   - `access.test.ts`: the audience × viewer matrix, connections, groups, rules
   - `broker.test.ts`: `connect.*`
+  - `devices.test.ts`: `link.*`, `account.restore`, `device.list`, `device.revoke`
   - `watch.test.ts`: `watch` / `unwatch` / `watch.event`
 - Integration tests in `test/integration/` are named per milestone (`m1-…`, `m4-transfers…`). `CommunalCore` takes `peer: { loopback: true }` and short `downloads`/`indexer` timers for tests, plus `testHooks` for fault injection (e.g. corrupt chunks).
 - Social state for later milestones (connections etc.) can be seeded directly with `HubDb` methods such as `putConnection`.

@@ -11,6 +11,7 @@ import {
 import { newSessionId, type HubBody } from '@communal/protocol';
 import type { HubManager } from '../hub-manager.js';
 import type { NetworkCheck } from '../peer/netcheck.js';
+import type { Revocations } from '../account.js';
 import {
   ConnectError,
   type PeerChannel,
@@ -47,7 +48,9 @@ export interface InboundPeer {
  * Client side of HANDOFF §8 brokering. Downloads ask a hub to broker (`open`); offers from
  * hubs become authenticated inbound channels for the uploader (`onInbound`). In both
  * directions the peer must prove the device key the hub named, and present a cert chain from
- * that device to the account root the hub named (and the root must match the user id).
+ * that device to the account root the hub named (and the root must match the user id), with
+ * no device in it revoked: by the proofs the hub sent along, or by any we've seen before
+ * (ADR 0014), so a hub that later leaves a revocation out can't bring the device back.
  */
 export class PeerBroker {
   private readonly answers = new Map<string, (a: HubBody<'connect.answer'>) => void>();
@@ -59,6 +62,7 @@ export class PeerBroker {
     private readonly transport: PeerTransport,
     private readonly device: KeyPair,
     private readonly network: NetworkCheck,
+    private readonly revocations: Revocations,
     log?: Logger,
   ) {
     this.log = log ?? pino({ name: 'broker' });
@@ -123,7 +127,13 @@ export class PeerBroker {
           initiator: true,
           verifyPeer: (pk) =>
             deviceId(pk) === target &&
-            chainOk(answer.to_root_pubkey, answer.to_user, pk, answer.to_chain),
+            this.chainOk(
+              answer.to_root_pubkey,
+              answer.to_user,
+              pk,
+              answer.to_chain,
+              answer.to_revocations,
+            ),
         });
         return { channel, token: answer.token };
       } catch (err) {
@@ -205,7 +215,13 @@ export class PeerBroker {
         initiator: false,
         verifyPeer: (pk) =>
           deviceId(pk) === offer.from &&
-          chainOk(offer.from_root_pubkey, offer.from_user, pk, offer.from_chain),
+          this.chainOk(
+            offer.from_root_pubkey,
+            offer.from_user,
+            pk,
+            offer.from_chain,
+            offer.from_revocations,
+          ),
       });
       this.inbound?.({ hub, offer, channel });
     } catch (err) {
@@ -213,6 +229,25 @@ export class PeerBroker {
       this.transport.forget(offer.session_id);
       // Our half of the picture, so the hub can tell the downloader what went wrong.
       if (unreachable(err)) await this.report(hub, offer.session_id, err.stats);
+    }
+  }
+
+  private chainOk(
+    rootB64: string,
+    user: string,
+    devicePk: Uint8Array,
+    chain: Offer['from_chain'],
+    proofs: Offer['from_revocations'],
+  ): boolean {
+    try {
+      const root = fromB64(rootB64);
+      if (userId(root) !== user) return false;
+      const revoked = this.revocations.revokedFor(rootB64, proofs);
+      const ok = verifyCertChain(root, devicePk, chain, revoked).ok;
+      if (!ok) this.log.warn({ peer: deviceId(devicePk) }, 'peer cert chain refused');
+      return ok;
+    } catch {
+      return false;
     }
   }
 
@@ -239,18 +274,3 @@ export class PeerBroker {
 }
 
 const NO_PUNCH: PunchStats = { attempts: 0, udp_sent: false, udp_received: false };
-
-function chainOk(
-  rootB64: string,
-  user: string,
-  devicePk: Uint8Array,
-  chain: Offer['from_chain'],
-): boolean {
-  try {
-    const root = fromB64(rootB64);
-    // M8 adds the account's revocation list here.
-    return userId(root) === user && verifyCertChain(root, devicePk, chain).ok;
-  } catch {
-    return false;
-  }
-}

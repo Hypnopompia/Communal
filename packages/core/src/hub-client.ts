@@ -3,10 +3,14 @@ import { pino, type Logger } from 'pino';
 import WebSocket from 'ws';
 import {
   authPayload,
+  fingerprint,
   fromB64,
   sign,
   toB64,
+  userId,
+  verifyCertChain,
   deviceId as toDeviceId,
+  type DeviceCert,
   type KeyPair,
 } from '@communal/crypto';
 import {
@@ -28,13 +32,41 @@ export interface HubClientState {
   fingerprint?: string;
 }
 
+type Platform = ClientBody<'link.claim'>['platform'];
+
+/**
+ * How a device that isn't registered on the hub yet gets registered on first connect
+ * (ADR 0014): a new account (or joining one with `root_pubkey` + `chain`), a link code that an
+ * existing device approves, or a cert signed by the recovered root key.
+ */
+export type Enrollment =
+  | ({ kind: 'create' } & Omit<ClientBody<'account.create'>, 'device_pubkey' | 'sig' | 'client'>)
+  | { kind: 'link'; code: string; device_name: string; platform: Platform }
+  | {
+      kind: 'restore';
+      root_pubkey: string;
+      cert: DeviceCert;
+      device_name: string;
+      platform: Platform;
+    };
+
+/** What registration produced. `chain` and `sealed` come with a link. */
+export interface Enrolled {
+  user_id: string;
+  device_id: string;
+  fingerprint: string;
+  status: 'active' | 'pending_approval';
+  chain?: DeviceCert[];
+  sealed?: string;
+}
+
 export interface HubClientOptions {
   url: string;
   device: KeyPair;
   state: HubClientState;
   saveState: (s: HubClientState) => void | Promise<void>;
-  /** Creates an account on first connect when the device isn't registered yet. */
-  createAccount?: Omit<ClientBody<'account.create'>, 'device_pubkey' | 'sig' | 'client'>;
+  /** Registers the device on first connect when it isn't registered yet. */
+  enroll?: Enrollment;
   client?: { name: string; version: string };
   /** Dev only: accept the hub's self-signed certificate. Hub-key pinning still applies. */
   insecureTls?: boolean;
@@ -59,7 +91,7 @@ export class HubError extends Error {
 /** Fatal conditions stop the client; reconnecting can't fix them. */
 export class HubFatalError extends Error {
   constructor(
-    readonly reason: 'hub_key_mismatch' | 'not_registered' | 'rejected' | 'banned',
+    readonly reason: 'hub_key_mismatch' | 'not_registered' | 'rejected' | 'banned' | 'link_denied',
     message: string,
   ) {
     super(message);
@@ -72,6 +104,8 @@ export interface HubClientEvents {
   /** Every unsolicited hub message (presence included). */
   event: [HubMessage];
   account_created: [HubBody<'account.created'>];
+  /** Registered on this hub (created, linked or restored). */
+  enrolled: [Enrolled];
   pending_approval: [];
   disconnected: [{ code: number; reason: string }];
   reconnecting: [{ attempt: number; delayMs: number }];
@@ -91,7 +125,7 @@ type Phase = 'idle' | 'connecting' | 'signing_in' | 'ready' | 'stopped';
  * keepalive pings, silence detection, and reconnect with jittered exponential backoff.
  */
 export class HubClient extends EventEmitter<HubClientEvents> {
-  private readonly o: Required<Omit<HubClientOptions, 'createAccount' | 'log'>> & HubClientOptions;
+  private readonly o: Required<Omit<HubClientOptions, 'enroll' | 'log'>> & HubClientOptions;
   private readonly log: Logger;
   private ws?: WebSocket;
   private phase: Phase = 'idle';
@@ -100,6 +134,12 @@ export class HubClient extends EventEmitter<HubClientEvents> {
   private pingTimer?: NodeJS.Timeout;
   private lastHeard = 0;
   private readonly pending = new Map<string, Pending>();
+  /** One-shot waits for unsolicited messages (e.g. `link.done` while linking). */
+  private eventWaiters: {
+    types: string[];
+    resolve: (m: HubMessage) => void;
+    reject: (e: Error) => void;
+  }[] = [];
   private welcome?: HubBody<'welcome'>;
 
   constructor(opts: HubClientOptions) {
@@ -214,6 +254,8 @@ export class HubClient extends EventEmitter<HubClientEvents> {
       p.reject(new HubError('internal', 'connection closed'));
     }
     this.pending.clear();
+    for (const w of this.eventWaiters.splice(0))
+      w.reject(new HubError('internal', 'connection closed'));
     const wasReady = this.phase === 'ready';
     this.welcome = undefined;
     if (wasReady) this.log.info({ code, reason }, 'disconnected from hub');
@@ -285,6 +327,11 @@ export class HubClient extends EventEmitter<HubClientEvents> {
       return;
     }
     const msg = res.msg;
+    const w = this.eventWaiters.findIndex((x) => x.types.includes(msg.t));
+    if (!msg.re && w >= 0) {
+      this.eventWaiters.splice(w, 1)[0]!.resolve(msg);
+      return;
+    }
     if (msg.re) {
       const p = this.pending.get(msg.re);
       if (p) {
@@ -333,24 +380,27 @@ export class HubClient extends EventEmitter<HubClientEvents> {
     );
     try {
       if (!st.registered) {
-        if (!this.o.createAccount) {
+        if (!this.o.enroll) {
           return this.fatal(
             new HubFatalError('not_registered', 'this device has no account on the hub'),
           );
         }
-        const created = (await this.rawRequest('account.create', {
-          ...this.o.createAccount,
-          device_pubkey: toB64(this.o.device.publicKey),
-          client: this.o.client,
-          sig,
-        })) as Extract<HubMessage, { t: 'account.created' }>;
+        const enrolled = await this.enroll(this.o.enroll, sig);
+        if (!enrolled) return;
         await this.save({
           registered: true,
-          userId: created.body.user_id,
-          deviceId: created.body.device_id,
-          fingerprint: created.body.fingerprint,
+          userId: enrolled.user_id,
+          deviceId: enrolled.device_id,
+          fingerprint: enrolled.fingerprint,
         });
-        this.emit('account_created', created.body);
+        this.emit('enrolled', enrolled);
+        if (this.o.enroll.kind === 'create')
+          this.emit('account_created', {
+            user_id: enrolled.user_id,
+            device_id: enrolled.device_id,
+            fingerprint: enrolled.fingerprint,
+            status: enrolled.status,
+          });
       }
       const welcome = (await this.rawRequest('auth', {
         device_id: toDeviceId(this.o.device.publicKey),
@@ -373,11 +423,90 @@ export class HubClient extends EventEmitter<HubClientEvents> {
         this.fatal(new HubFatalError('banned', err.message));
       } else if (err instanceof HubError && err.code === 'forbidden') {
         this.fatal(new HubFatalError('rejected', `hub rejected sign-in: ${err.message}`));
+      } else if (
+        err instanceof HubError &&
+        !st.registered &&
+        this.o.enroll?.kind !== 'create' &&
+        err.message !== 'connection closed'
+      ) {
+        // A used or wrong link code, or an account the hub doesn't know: retrying won't help.
+        this.fatal(new HubFatalError('rejected', err.message));
       } else {
         this.log.warn({ err: (err as Error).message }, 'sign-in failed');
         this.ws?.close(1000, 'sign-in failed');
       }
     }
+  }
+
+  /**
+   * Registers this device. Resolves undefined when it already stopped (fatal or denied).
+   * A link waits for the existing device's approval, pinging so the hub keeps the session.
+   */
+  private async enroll(e: Enrollment, sig: string): Promise<Enrolled | undefined> {
+    const device_pubkey = toB64(this.o.device.publicKey);
+    if (e.kind === 'create' || e.kind === 'restore') {
+      const { kind: _kind, ...rest } = e;
+      const reply =
+        e.kind === 'create'
+          ? await this.rawRequest('account.create', {
+              ...(rest as Omit<typeof e, 'kind'>),
+              device_pubkey,
+              client: this.o.client,
+              sig,
+            })
+          : await this.rawRequest('account.restore', {
+              root_pubkey: e.root_pubkey,
+              device_pubkey,
+              device_name: e.device_name,
+              platform: e.platform,
+              issued_at: e.cert.issued_at,
+              root_sig: e.cert.sig,
+              sig,
+            });
+      if (reply.t !== 'account.created') throw new HubError('internal', `unexpected ${reply.t}`);
+      return { ...reply.body, ...(e.kind === 'restore' ? { chain: [e.cert] } : {}) };
+    }
+
+    const done = this.nextEvent(['link.done', 'link.denied']);
+    done.catch(() => {}); // awaited below, after the claim is accepted
+    await this.rawRequest('link.claim', {
+      code: e.code,
+      device_name: e.device_name,
+      platform: e.platform,
+      device_pubkey,
+      sig,
+    });
+    this.log.info('link code accepted; waiting for approval on the other device');
+    this.startKeepalive();
+    const msg = await done;
+    if (msg.t !== 'link.done') {
+      this.fatal(new HubFatalError('link_denied', 'the other device did not approve this link'));
+      return undefined;
+    }
+    // Don't take the hub's word for it: the chain must lead from the account root to us.
+    const { user_id, device_id, chain } = msg.body;
+    const root = chain[0]?.signer_pubkey;
+    const ok =
+      root !== undefined &&
+      userId(fromB64(root)) === user_id &&
+      device_id === toDeviceId(this.o.device.publicKey) &&
+      verifyCertChain(fromB64(root), this.o.device.publicKey, chain).ok;
+    if (!ok) {
+      this.fatal(new HubFatalError('rejected', 'the hub sent a cert chain that does not verify'));
+      return undefined;
+    }
+    return {
+      user_id,
+      device_id,
+      fingerprint: fingerprint(fromB64(root)),
+      status: 'active',
+      chain,
+      ...(msg.body.sealed ? { sealed: msg.body.sealed } : {}),
+    };
+  }
+
+  private nextEvent(types: HubMessage['t'][]): Promise<HubMessage> {
+    return new Promise((resolve, reject) => this.eventWaiters.push({ types, resolve, reject }));
   }
 
   private async save(patch: Partial<HubClientState>) {

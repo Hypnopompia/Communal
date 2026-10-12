@@ -11,13 +11,27 @@ import { Command } from 'commander';
 import { pino } from 'pino';
 import {
   deviceId,
+  exportRecoveryFile,
   formatFingerprint,
   generateKeyPair,
+  importRecoveryFile,
   keyPairFromSecret,
+  RecoveryError,
+  rootSecretToWords,
+  toB64,
+  wordsToRootSecret,
   type KeyPair,
+  type RecoveryFile,
 } from '@communal/crypto';
 import {
+  AccountFile,
+  accountFields,
   CommunalCore,
+  joinHub as coreJoinHub,
+  linkDevice,
+  restoreAccount,
+  selfRoot,
+  type AccountContext,
   HubManager,
   LocalApi,
   LocalApiClient,
@@ -40,6 +54,8 @@ const client = { name: 'communal-cli', version: VERSION };
 
 const paths = {
   key: () => join(dataDir, 'device.key'),
+  /** The account root secret on a device restored from a recovery key (ADR 0014). */
+  rootKey: () => join(dataDir, 'root.key'),
   hubs: () => join(dataDir, 'hubs.json'),
   /** Single-hub config written before multi-hub support; migrated on first load. */
   legacyHub: () => join(dataDir, 'hub.json'),
@@ -61,6 +77,42 @@ function ensureDeviceKey(): KeyPair {
   const kp = generateKeyPair();
   writeFileSync(paths.key(), kp.secretKey, { mode: 0o600 });
   return kp;
+}
+
+function loadRootSecret(): Uint8Array | undefined {
+  try {
+    const b = new Uint8Array(readFileSync(paths.rootKey()));
+    return b.length === 32 ? b : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function saveRootSecret(secret: Uint8Array) {
+  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  writeFileSync(paths.rootKey(), secret, { mode: 0o600 });
+}
+
+/**
+ * Hubs and account files used directly, for setting a device up while the daemon is stopped.
+ * The caller stops `hubs` when done.
+ */
+function offlineContext(): AccountContext {
+  const device = ensureDeviceKey();
+  return {
+    device,
+    hubs: new HubManager({
+      device,
+      hubs: loadHubs(),
+      save: saveHubs,
+      client,
+      insecureTls,
+      log: pino({ level: 'warn' }),
+    }),
+    account: new AccountFile(dataDir),
+    saveRootSecret,
+    log: pino({ level: 'warn' }),
+  };
 }
 
 function saveHubs(hubs: HubEntry[]) {
@@ -142,40 +194,26 @@ async function joinHub(url: string, name: string, deviceName: string): Promise<b
       return false;
     }
   }
-  const hubs = new HubManager({
-    device: ensureDeviceKey(),
-    hubs: loadHubs(),
-    save: saveHubs,
-    client,
-    insecureTls,
-    log: pino({ level: 'warn' }),
-  });
-  if (hubs.find(url)) {
-    console.error(`already configured: ${url}`);
+  const ctx = offlineContext();
+  const account = ctx.account.loadOrMigrate(ctx.device, ctx.hubs.list());
+  try {
+    const r = await coreJoinHub(ctx.hubs, url, {
+      kind: 'create',
+      display_name: name,
+      device_name: deviceName,
+      platform: platform(),
+      ...accountFields(account),
+    });
+    // The first hub of a fresh device makes it the root of a new account.
+    if (!account) ctx.account.save(selfRoot(ctx.device));
+    printJoined(url, r.hub.id, r.status, r.hub.state.userId, r.hub.state.fingerprint);
+    return true;
+  } catch (err) {
+    console.error(`could not join ${url}: ${(err as Error).message}`);
     return false;
+  } finally {
+    await ctx.hubs.stop();
   }
-  const entry = await hubs.add(url, {
-    display_name: name,
-    device_name: deviceName,
-    platform: platform(),
-  });
-  const c = hubs.get(entry.id)!;
-  const outcome = new Promise<'ready' | 'pending_approval' | Error>((resolve) => {
-    c.once('ready', () => resolve('ready'));
-    c.once('pending_approval', () => resolve('pending_approval'));
-    c.once('fatal', (e) => resolve(e));
-    setTimeout(() => resolve(new Error('timed out connecting to the hub')), 30_000).unref();
-  });
-  c.start();
-  const result = await outcome;
-  await c.stop();
-  if (result instanceof Error) {
-    if (!entry.state.registered) await hubs.remove(entry.id);
-    console.error(`could not join ${url}: ${result.message}`);
-    return false;
-  }
-  printJoined(url, entry.id, result, entry.state.userId, entry.state.fingerprint);
-  return true;
 }
 
 function humanSize(n: number): string {
@@ -944,6 +982,370 @@ subs
     }),
   );
 
+// ── devices, linking and recovery (M8, ADR 0014) ────────────────────────────
+
+/** Reads a line from the terminal; `hidden` doesn't echo it (passphrases, recovery words). */
+async function ask(question: string, hidden = false): Promise<string> {
+  if (!process.stdin.isTTY) throw new Error('needs a terminal (or set the environment variable)');
+  const { createInterface } = await import('node:readline/promises');
+  const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+  if (hidden) {
+    // Echo nothing while the answer is typed.
+    const out = rl as unknown as { _writeToOutput: (s: string) => void };
+    let shown = false;
+    out._writeToOutput = (str: string) => {
+      if (!shown) process.stdout.write(str);
+      shown = true;
+    };
+  }
+  try {
+    return (await rl.question(question)).trim();
+  } finally {
+    if (hidden) process.stdout.write('\n');
+    rl.close();
+  }
+}
+
+async function confirm(question: string): Promise<boolean> {
+  if (!process.stdin.isTTY) return false;
+  return /^y(es)?$/i.test(await ask(`${question} [y/N] `));
+}
+
+program
+  .command('link <code...>')
+  .description('add this device to your account with a link code from another of your devices')
+  .requiredOption('--hub <url>', 'the hub the other device made the code on')
+  .option('--device-name <name>', 'name for this device', hostname())
+  .action(async (parts: string[], opts: { hub: string; deviceName: string }) => {
+    const code = parts.join(''); // "K7Q2 9XZD" typed with a space is fine too
+    const me = deviceId(ensureDeviceKey().publicKey);
+    console.log(`This device is ${me}. Check that your other device shows the same id.`);
+    console.log('Waiting for you to approve it on the other device…');
+    type Linked = {
+      user_id: string;
+      fingerprint: string;
+      others: { url: string; ok: boolean; status?: string; error?: string }[];
+    };
+    let r: Linked;
+    try {
+      if (await daemonRunning()) {
+        r = await api().post<Linked>('/v1/account/link', {
+          url: opts.hub,
+          code,
+          device_name: opts.deviceName,
+        });
+      } else {
+        const ctx = offlineContext();
+        try {
+          r = await linkDevice(ctx, {
+            url: opts.hub,
+            code,
+            device_name: opts.deviceName,
+            platform: platform(),
+          }).then((x) => ({
+            user_id: x.account.user_id,
+            fingerprint: x.fingerprint,
+            others: x.others,
+          }));
+        } finally {
+          await ctx.hubs.stop();
+        }
+      }
+    } catch (err) {
+      console.error(`could not link: ${(err as Error).message}`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`Linked to account ${r.user_id}`);
+    console.log(`  fingerprint: ${formatFingerprint(r.fingerprint)}`);
+    for (const o of r.others)
+      console.log(o.ok ? `  also joined ${o.url}` : `  could not join ${o.url}: ${o.error}`);
+  });
+
+program
+  .command('restore [recovery_file]')
+  .description('restore your account onto this fresh device from a recovery key')
+  .option('--words', 'type the 24 recovery words instead of using a file')
+  .option('--hub <url...>', 'hub(s) to restore onto (needed with --words)')
+  .option('--device-name <name>', 'name for this device', hostname())
+  .action(
+    async (
+      file: string | undefined,
+      opts: { words?: boolean; hub?: string[]; deviceName: string },
+    ) => {
+      if (!file && !opts.words) {
+        console.error('give the recovery file, or --words to type the recovery words');
+        process.exitCode = 1;
+        return;
+      }
+      try {
+        let rec: RecoveryFile | undefined;
+        let secret: Uint8Array;
+        let passphrase: string | undefined;
+        if (file) {
+          rec = JSON.parse(readFileSync(resolve(file), 'utf8')) as RecoveryFile;
+          passphrase =
+            process.env.COMMUNAL_RECOVERY_PASSPHRASE ?? (await ask('Recovery passphrase: ', true));
+          console.log('Unlocking (this takes a few seconds)…');
+          secret = await importRecoveryFile(rec, passphrase);
+        } else {
+          secret = wordsToRootSecret(
+            process.env.COMMUNAL_RECOVERY_WORDS ?? (await ask('Recovery words: ', true)),
+          );
+        }
+        const hubs = (opts.hub ?? []).map((url) => ({ url }));
+        for (const h of rec?.hubs ?? []) if (!hubs.some((x) => x.url === h.url)) hubs.push(h);
+        type Restored = {
+          user_id: string;
+          fingerprint: string;
+          hubs: { url: string; ok: boolean; error?: string }[];
+        };
+        let r: Restored;
+        if (await daemonRunning()) {
+          r = await api().post<Restored>('/v1/account/restore', {
+            ...(rec ? { file: rec, passphrase } : { words: rootSecretToWords(secret).join(' ') }),
+            hubs: opts.hub?.map((url) => ({ url })) ?? [],
+            device_name: opts.deviceName,
+          });
+        } else {
+          const ctx = offlineContext();
+          try {
+            const x = await restoreAccount(ctx, {
+              rootSecret: secret,
+              ...(rec ? { user_id: rec.user_id } : {}),
+              hubs,
+              device_name: opts.deviceName,
+              platform: platform(),
+            });
+            r = { user_id: x.account.user_id, fingerprint: x.fingerprint, hubs: x.hubs };
+          } finally {
+            await ctx.hubs.stop();
+          }
+        }
+        console.log(`Restored account ${r.user_id}`);
+        console.log(`  fingerprint: ${formatFingerprint(r.fingerprint)}`);
+        for (const h of r.hubs)
+          console.log(h.ok ? `  on ${h.url}` : `  could not restore on ${h.url}: ${h.error}`);
+        console.log('Revoke lost devices with `communal devices revoke <device_id>`.');
+      } catch (err) {
+        console.error(
+          err instanceof RecoveryError
+            ? err.message
+            : `could not restore: ${(err as Error).message}`,
+        );
+        process.exitCode = 1;
+      }
+    },
+  );
+
+const recovery = program.command('recovery').description('your account recovery key');
+
+recovery
+  .command('export')
+  .description('save the recovery key (only on the device that holds the account root key)')
+  .option('--out <file>', 'where to write the passphrase-protected recovery file')
+  .option('--words', 'show 24 words to write down instead of writing a file')
+  .action(async (opts: { out?: string; words?: boolean }) => {
+    // Works from the files alone, daemon or not: no network is involved.
+    const device = loadDeviceKey();
+    const account = device ? new AccountFile(dataDir).loadOrMigrate(device, loadHubs()) : undefined;
+    if (!device || !account) {
+      console.error('this device has no account yet');
+      process.exitCode = 1;
+      return;
+    }
+    const secret =
+      account.root_pubkey === toB64(device.publicKey) ? device.secretKey : loadRootSecret();
+    if (!secret) {
+      console.error(
+        "this device doesn't hold the account's root key; export the recovery key from your first device",
+      );
+      process.exitCode = 1;
+      return;
+    }
+    if (opts.words) {
+      console.log('Write these words down and keep them somewhere safe. Anyone who has them');
+      console.log('can take over your account.\n');
+      const words = rootSecretToWords(secret);
+      for (let i = 0; i < words.length; i += 6)
+        console.log(
+          words
+            .slice(i, i + 6)
+            .map((w, j) => `${String(i + j + 1).padStart(2)}. ${w.padEnd(9)}`)
+            .join(' '),
+        );
+      return;
+    }
+    if (!opts.out) {
+      console.error('give --out <file>, or --words');
+      process.exitCode = 1;
+      return;
+    }
+    const out = resolve(opts.out);
+    if (existsSync(out)) {
+      console.error(`${out} already exists`);
+      process.exitCode = 1;
+      return;
+    }
+    let passphrase = process.env.COMMUNAL_RECOVERY_PASSPHRASE;
+    if (passphrase === undefined) {
+      passphrase = await ask('Choose a passphrase: ', true);
+      if ((await ask('Repeat it: ', true)) !== passphrase) {
+        console.error('the passphrases differ');
+        process.exitCode = 1;
+        return;
+      }
+    }
+    if (passphrase.length < 8) {
+      console.error('use a passphrase of at least 8 characters');
+      process.exitCode = 1;
+      return;
+    }
+    const hubs = loadHubs()
+      .filter((h) => h.state.registered && h.state.hubPubkey)
+      .map((h) => ({ url: h.url, hub_pubkey: h.state.hubPubkey! }));
+    const rec = await exportRecoveryFile(secret, account.user_id, passphrase, undefined, hubs);
+    writeFileSync(out, JSON.stringify(rec, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
+    console.log(`Recovery file written to ${out}`);
+    console.log('Keep it and its passphrase safe: together they can take over your account.');
+  });
+
+type DeviceView = {
+  device_id: string;
+  name: string;
+  platform: string;
+  root: boolean;
+  this_device: boolean;
+  revoked: boolean;
+  hubs: { hub: string; online: boolean }[];
+};
+type LinkRequestView = {
+  request_id: string;
+  hub: string;
+  device_name: string;
+  platform: string;
+  device_id: string;
+};
+
+const devices = program
+  .command('devices')
+  .description('your devices: link new ones, revoke lost ones');
+
+devices
+  .command('list', { isDefault: true })
+  .description("this account's devices")
+  .action(() =>
+    viaDaemon(async (c) => {
+      const { devices: list } = await c.get<{ devices: DeviceView[] }>('/v1/devices');
+      for (const d of list) {
+        const tags = [
+          d.this_device ? 'this device' : '',
+          d.root ? 'first device' : '',
+          d.revoked ? 'REVOKED' : d.hubs.some((h) => h.online) ? 'online' : 'offline',
+        ].filter(Boolean);
+        console.log(
+          `${d.device_id}  ${d.name.padEnd(16)} ${d.platform.padEnd(7)} ${tags.join(', ')}`,
+        );
+      }
+    }),
+  );
+
+devices
+  .command('add')
+  .description('make a link code for a new device, then approve it when it claims the code')
+  .option('--hub <id>', 'the hub to make the code on (default: the first one online)')
+  .option(
+    '--yes',
+    'approve the device that claims the code without asking (the code is the secret)',
+  )
+  .action((opts: { hub?: string; yes?: boolean }) =>
+    viaDaemon(async (c) => {
+      const before = new Set(
+        (await c.get<{ requests: LinkRequestView[] }>('/v1/link/requests')).requests.map(
+          (r) => r.request_id,
+        ),
+      );
+      const code = await c.post<{ hub: string; code: string; expires_in: number }>(
+        '/v1/link/codes',
+        opts.hub ? { hub: opts.hub } : {},
+      );
+      const { hubs } = await c.get<{ hubs: { id: string; url: string }[] }>('/v1/hubs');
+      const url = hubs.find((h) => h.id === code.hub)?.url ?? code.hub;
+      console.log(
+        `Link code: ${code.code}  (valid for ${Math.round(code.expires_in / 60)} minutes)`,
+      );
+      console.log(`On the new device run:  communal link ${code.code} --hub ${url}`);
+      console.log('Waiting for it…');
+      const until = Date.now() + code.expires_in * 1000;
+      let req: LinkRequestView | undefined;
+      while (!req && Date.now() < until) {
+        await new Promise((r) => setTimeout(r, 1000));
+        req = (await c.get<{ requests: LinkRequestView[] }>('/v1/link/requests')).requests.find(
+          (r) => !before.has(r.request_id) && r.hub === code.hub,
+        );
+      }
+      if (!req) throw new Error('the code expired before a device claimed it');
+      console.log(`"${req.device_name}" (${req.platform}) wants to join, as ${req.device_id}.`);
+      const yes =
+        opts.yes ||
+        (await confirm('Approve it? It will see all your files and can act for your account.'));
+      if (!yes) {
+        await c.post(`/v1/link/requests/${req.request_id}/deny`, {});
+        console.log('Denied.');
+        return;
+      }
+      await c.post(`/v1/link/requests/${req.request_id}/approve`, {});
+      console.log(`Approved. ${req.device_name} is now one of your devices.`);
+    }),
+  );
+
+devices
+  .command('requests')
+  .description('devices waiting for approval')
+  .action(() =>
+    viaDaemon(async (c) => {
+      const { requests } = await c.get<{ requests: LinkRequestView[] }>('/v1/link/requests');
+      for (const r of requests)
+        console.log(`${r.request_id}  ${r.device_name} (${r.platform})  ${r.device_id}`);
+      if (requests.length === 0) console.log('none');
+    }),
+  );
+
+for (const verb of ['approve', 'deny'] as const) {
+  devices
+    .command(`${verb} <request_id>`)
+    .description(`${verb} a device waiting to be linked`)
+    .action((id: string) =>
+      viaDaemon(async (c) => {
+        await c.post(`/v1/link/requests/${encodeURIComponent(id)}/${verb}`, {});
+        console.log(verb === 'approve' ? 'Approved.' : 'Denied.');
+      }),
+    );
+}
+
+devices
+  .command('revoke <device_id>')
+  .description('revoke a lost or retired device on every hub (cannot be undone)')
+  .option('--yes', "don't ask for confirmation")
+  .action((id: string, opts: { yes?: boolean }) =>
+    viaDaemon(async (c) => {
+      if (
+        !opts.yes &&
+        !(await confirm(`Revoke ${id}? It loses access to your account for good.`))
+      ) {
+        console.log('Not revoked.');
+        return;
+      }
+      const r = await c.post<{ hubs: { hub: string; ok: boolean; error?: string }[] }>(
+        `/v1/devices/${encodeURIComponent(id)}/revoke`,
+        {},
+      );
+      console.log(`Revoked ${id}.`);
+      for (const h of r.hubs.filter((x) => !x.ok))
+        console.log(`  ${h.hub} will hear about it when it's back (${h.error})`);
+    }),
+  );
+
 // ── daemon & status ─────────────────────────────────────────────────────────
 
 program
@@ -988,6 +1390,7 @@ program
         ...(env.COMMUNAL_LAN_ONLY ? { lanOnly: env.COMMUNAL_LAN_ONLY === 'true' } : {}),
       },
       ...(env.COMMUNAL_DOWNLOADS ? { downloadsDir: env.COMMUNAL_DOWNLOADS } : {}),
+      root: { secret: loadRootSecret(), save: saveRootSecret },
       log,
     });
     // Upload log retention (HANDOFF §7), checked daily.

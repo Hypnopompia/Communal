@@ -129,6 +129,12 @@ export function issueRevocation(
   };
 }
 
+/** A revocation plus the signer's chain, so anyone can check it against the root (ADR 0014). */
+export interface RevocationProof {
+  revocation: Revocation;
+  chain: CertChain;
+}
+
 /**
  * Valid when signed by a device whose chain verifies for the same account. Revocations
  * already in force are applied to the signer's chain, so a revoked device can't revoke others.

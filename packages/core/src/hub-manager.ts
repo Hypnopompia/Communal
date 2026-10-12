@@ -6,6 +6,8 @@ import {
   HubClient,
   HubError,
   type HubClientOptions,
+  type Enrolled,
+  type Enrollment,
   type HubClientState,
   type HubFatalError,
 } from './hub-client.js';
@@ -25,16 +27,14 @@ export interface HubManagerEvents {
   presence: [{ hub: string; presence: HubBody<'presence'> }];
   event: [{ hub: string; msg: HubMessage }];
   account_created: [{ hub: string; created: HubBody<'account.created'> }];
+  enrolled: [{ hub: string; enrolled: Enrolled }];
   pending_approval: [{ hub: string }];
   disconnected: [{ hub: string; code: number; reason: string }];
   fatal: [{ hub: string; error: HubFatalError }];
 }
 
 /** Options shared by every hub's client (timers, TLS, logging, the device key...). */
-export type SharedClientOptions = Omit<
-  HubClientOptions,
-  'url' | 'state' | 'saveState' | 'createAccount'
->;
+export type SharedClientOptions = Omit<HubClientOptions, 'url' | 'state' | 'saveState' | 'enroll'>;
 
 export interface HubManagerOptions extends SharedClientOptions {
   hubs: HubEntry[];
@@ -87,14 +87,18 @@ export class HubManager extends EventEmitter<HubManagerEvents> {
   }
 
   /**
-   * Adds a hub and connects to it (if the manager is running). With `createAccount`, the
-   * device registers on that hub; the account keeps the same user_id on every hub because it
-   * derives from the root key.
+   * Adds a hub and connects to it (if the manager is running). With `enroll`, the device
+   * registers on that hub; the account keeps the same user_id on every hub because it derives
+   * from the root key. `hubPubkey` pins a key learned elsewhere (a link bundle, a recovery file).
    */
-  async add(url: string, createAccount?: HubClientOptions['createAccount']): Promise<HubEntry> {
+  async add(url: string, enroll?: Enrollment, hubPubkey?: string): Promise<HubEntry> {
     if (this.find(url)) throw new Error(`already configured: ${url}`);
-    const entry: HubEntry = { id: newHubId(), url, state: { registered: false } };
-    this.attach(entry, createAccount);
+    const entry: HubEntry = {
+      id: newHubId(),
+      url,
+      state: { registered: false, ...(hubPubkey ? { hubPubkey } : {}) },
+    };
+    this.attach(entry, enroll);
     await this.persist();
     if (this.started) this.hubs.get(entry.id)!.client.start();
     return entry;
@@ -132,20 +136,21 @@ export class HubManager extends EventEmitter<HubManagerEvents> {
     );
   }
 
-  private attach(entry: HubEntry, createAccount?: HubClientOptions['createAccount']) {
+  private attach(entry: HubEntry, enroll?: HubClientOptions['enroll']) {
     const { hubs: _hubs, save: _save, ...shared } = this.opts;
     const client = new HubClient({
       ...shared,
       url: entry.url,
       state: entry.state,
       saveState: () => this.persist(),
-      createAccount,
+      enroll,
     });
     const hub = entry.id;
     client.on('ready', (welcome) => this.emit('ready', { hub, welcome }));
     client.on('presence', (presence) => this.emit('presence', { hub, presence }));
     client.on('event', (msg) => this.emit('event', { hub, msg }));
     client.on('account_created', (created) => this.emit('account_created', { hub, created }));
+    client.on('enrolled', (enrolled) => this.emit('enrolled', { hub, enrolled }));
     client.on('pending_approval', () => this.emit('pending_approval', { hub }));
     client.on('disconnected', (d) => this.emit('disconnected', { hub, ...d }));
     client.on('fatal', (error) => this.emit('fatal', { hub, error }));

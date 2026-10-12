@@ -38,3 +38,18 @@ With no PII (§2), a banned person can generate a new key and join again. Hubs t
 - **Groups (M3).** Groups live on a hub and contain that hub's users. Should someone connected to you on two hubs appear as one person in the People screen? They have the same `user_id` everywhere, so merging is possible.
 - **Display names** can differ per hub. Which one does the UI show for a person seen on several?
 - **Privacy:** one key everywhere lets hub admins correlate a user across hubs. A per-hub identity option could come later if users ask for it.
+
+## Losing the first device
+
+**Status:** known limitation in v1 (M8, ADR 0014). Needs an owner decision before any fix.
+
+The account root is the first device's key. Every cert chain starts there, so that device **can't be revoked** without invalidating the whole account.
+
+- A first device that is lost or broken is harmless. It just stays in the device list.
+- A first device that is **stolen** (or a leaked recovery key) gives the thief the account for good. They can certify new devices, and nothing can revoke the root.
+
+Options:
+
+1. **Accept it for v1.** Tell people to keep the first device and the recovery key safe, and to start a new account if either is stolen.
+2. **Account key rotation:** a new root signed by the old one, with clients and hubs following the rotation. Peers that verified the old fingerprint would need to see it change. The "verified key changed" warning (§2) would fire, which is right but alarming.
+3. **Don't make the first device the root:** a separate root key that lives only in the recovery file and signs device certs during setup. Devices could then all be revoked, but linking would need the root key (or a delegation scheme).

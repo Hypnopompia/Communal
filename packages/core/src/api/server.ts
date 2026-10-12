@@ -4,6 +4,12 @@ import { timingSafeEqual } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { z } from 'zod';
 import { Kind } from '@communal/protocol';
+import {
+  importRecoveryFile,
+  RecoveryError,
+  wordsToRootSecret,
+  type RecoveryFile,
+} from '@communal/crypto';
 import { CoreError, type CommunalCore } from '../core.js';
 import { HubError } from '../hub-client.js';
 import { PeopleError } from '../people.js';
@@ -71,6 +77,26 @@ const UpsertGroup = z.object({
   members: z.array(z.string()).max(1000),
 });
 const HubQuery = z.object({ hub: z.string() });
+const DeviceName = z.string().trim().min(1).max(64);
+const Link = z.object({
+  url: z.string().url().max(512),
+  code: z.string().min(1).max(32),
+  device_name: DeviceName,
+});
+const Restore = z.object({
+  file: z.looseObject({ format: z.literal('communal-recovery') }).optional(),
+  passphrase: z.string().max(1024).optional(),
+  words: z.string().max(1024).optional(),
+  hubs: z
+    .array(z.object({ url: z.string().url().max(512) }))
+    .max(32)
+    .optional(),
+  device_name: DeviceName,
+});
+const ExportRecovery = z.union([
+  z.object({ format: z.literal('words') }),
+  z.object({ format: z.literal('file'), passphrase: z.string().max(1024) }),
+]);
 
 type Handler = (req: IncomingMessage, url: URL, body: unknown) => Promise<unknown>;
 
@@ -116,6 +142,66 @@ export class LocalApi {
       await this.core.removeHub(param(req, url, 1));
       return { ok: true };
     });
+
+    // ── account and devices (M8, ADR 0014) ──
+    route('GET', '/v1/account', async () => this.core.identity());
+    route('POST', '/v1/account/link', async (_req, _url, body) => {
+      const b = Link.parse(body);
+      const r = await this.core.link(b.url, b.code, b.device_name);
+      return {
+        user_id: r.account.user_id,
+        fingerprint: r.fingerprint,
+        hub: { id: r.hub.hub.id, url: r.hub.hub.url, status: r.hub.status },
+        others: r.others,
+      };
+    });
+    route('POST', '/v1/account/restore', async (_req, _url, body) => {
+      const b = Restore.parse(body);
+      let rootSecret: Uint8Array;
+      try {
+        if (b.file) {
+          if (b.passphrase === undefined)
+            throw new CoreError('bad_request', 'a recovery file needs its passphrase');
+          rootSecret = await importRecoveryFile(b.file as unknown as RecoveryFile, b.passphrase);
+        } else if (b.words) {
+          rootSecret = wordsToRootSecret(b.words);
+        } else {
+          throw new CoreError('bad_request', 'give a recovery file or the recovery words');
+        }
+      } catch (err) {
+        if (err instanceof RecoveryError) throw new CoreError('bad_request', err.message);
+        throw err;
+      }
+      const file = b.file as unknown as RecoveryFile | undefined;
+      // Hubs named on the command line come first; the file's carry their pinned keys.
+      const hubs = [...(b.hubs ?? [])];
+      for (const h of file?.hubs ?? []) if (!hubs.some((x) => x.url === h.url)) hubs.push(h);
+      const r = await this.core.restore({
+        rootSecret,
+        ...(file?.user_id ? { user_id: file.user_id } : {}),
+        hubs,
+        deviceName: b.device_name,
+      });
+      return { user_id: r.account.user_id, fingerprint: r.fingerprint, hubs: r.hubs };
+    });
+    route('POST', '/v1/recovery', async (_req, _url, body) =>
+      this.core.exportRecovery(ExportRecovery.parse(body)),
+    );
+    route('POST', '/v1/link/codes', async (_req, _url, body) =>
+      this.core.createLinkCode(z.object({ hub: z.string().optional() }).parse(body).hub),
+    );
+    route('GET', '/v1/link/requests', async () => ({ requests: this.core.linkRequests() }));
+    route('POST', '/v1/link/requests/:id/approve', async (req, url) =>
+      this.core.approveLink(param(req, url, 1)),
+    );
+    route('POST', '/v1/link/requests/:id/deny', async (req, url) => {
+      await this.core.denyLink(param(req, url, 1));
+      return { ok: true };
+    });
+    route('GET', '/v1/devices', async () => ({ devices: await this.core.devices() }));
+    route('POST', '/v1/devices/:id/revoke', async (req, url) =>
+      this.core.revokeDevice(param(req, url, 1)),
+    );
 
     route('GET', '/v1/shares', async () => ({ shares: this.core.shares() }));
     route('POST', '/v1/shares', async (_req, _url, body) => {
@@ -434,9 +520,13 @@ export class LocalApi {
       if (err instanceof SyntaxError)
         return send(400, { error: 'bad_request', message: 'invalid JSON' });
       if (err instanceof CoreError) {
-        const status = { bad_request: 400, not_found: 404, conflict: 409, unavailable: 503 }[
-          err.code
-        ];
+        const status = {
+          bad_request: 400,
+          forbidden: 403,
+          not_found: 404,
+          conflict: 409,
+          unavailable: 503,
+        }[err.code];
         return send(status, { error: err.code, message: err.message });
       }
       if (err instanceof HubError) {

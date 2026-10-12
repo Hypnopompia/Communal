@@ -45,7 +45,12 @@ function makeManager(saved: { hubs: HubEntry[] }) {
   return m;
 }
 
-const join_ = { display_name: 'alice', device_name: 'nas', platform: 'linux' as const };
+const join_ = {
+  kind: 'create' as const,
+  display_name: 'alice',
+  device_name: 'nas',
+  platform: 'linux' as const,
+};
 
 describe('multi-hub client', () => {
   it('joins two hubs with one identity and fans requests out to both', async () => {

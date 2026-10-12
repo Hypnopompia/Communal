@@ -52,6 +52,15 @@ export const Revocation = z.object({
   sig: Signature,
 });
 
+/**
+ * A revocation plus the signer's cert chain, so any hub or peer can check it even if the
+ * signing device never joined that hub (ADR 0014).
+ */
+export const RevocationProof = z.object({ revocation: Revocation, chain: CertChain });
+
+/** Opaque sealed box to a device key (ADR 0014); at most 16 KiB of base64url. */
+export const Sealed = B64.max(16_384);
+
 export const UserSummary = z.object({
   user_id: UserId,
   display_name: z.string().min(1).max(64),

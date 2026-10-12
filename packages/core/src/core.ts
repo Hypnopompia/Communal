@@ -2,7 +2,20 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pino, type Logger } from 'pino';
-import { deviceId, type KeyPair } from '@communal/crypto';
+import {
+  deviceId,
+  exportRecoveryFile,
+  fingerprint,
+  fromB64,
+  issueDeviceCert,
+  issueRevocation,
+  rootSecretToWords,
+  toB64,
+  type KdfParams,
+  type KeyPair,
+  type RecoveryFile,
+  type RevocationProof,
+} from '@communal/crypto';
 import type { ClientBody, HubBody } from '@communal/protocol';
 import { HubManager, type HubEntry, type SharedClientOptions } from './hub-manager.js';
 import { Indexer, type IndexerOptions } from './index/indexer.js';
@@ -28,8 +41,20 @@ import { PEEK_BYTES } from './transfer/uploader.js';
 import type { ThumbSize } from './media/analyze.js';
 import { IndexSync } from './index/sync.js';
 import { searchAll, type MergedSearch } from './search.js';
-import type { HubClientOptions } from './hub-client.js';
+import type { Enrollment } from './hub-client.js';
 import { CoreError } from './errors.js';
+import {
+  AccountFile,
+  accountFields,
+  joinHub,
+  linkDevice,
+  restoreAccount,
+  Revocations,
+  sealBundle,
+  selfRoot,
+  type AccountContext,
+  type AccountIdentity,
+} from './account.js';
 
 export interface CoreOptions {
   dataDir: string;
@@ -59,12 +84,30 @@ export interface CoreOptions {
    * `retryMs` is how often refused folders are asked about again.
    */
   subscriptions?: { trash?: TrashFn; retryMs?: number };
+  /**
+   * The account's root secret on a device restored from a recovery key (ADR 0014), and how to
+   * keep one that a restore produces. The first device's key is the root, so it needs neither.
+   */
+  root?: { secret?: Uint8Array; save?: (secret: Uint8Array) => void | Promise<void> };
   /** Fault injection for tests only. */
   testHooks?: UploaderTestHooks;
   log?: Logger;
 }
 
 export { CoreError };
+
+/** A link request waiting for this device's approval (ADR 0014). */
+export interface PendingLink {
+  request_id: string;
+  hub: string;
+  device_name: string;
+  platform: string;
+  device_id: string;
+  device_pubkey: string;
+  at: number;
+}
+
+type AccountCreate = Omit<Extract<Enrollment, { kind: 'create' }>, 'kind'>;
 
 /** A share name becomes the first segment of every hub-visible path. */
 const SHARE_NAME = /^(?!\.{1,2}$)[^/\\\0]{1,255}$/;
@@ -89,15 +132,24 @@ export class CommunalCore {
   readonly previews: Previews;
   readonly streams: Streams;
   readonly subscriptions: Subscriptions;
+  readonly revocations: Revocations;
   uploadLimits: UploadLimits;
   readonly log: Logger;
   private readonly hubsFile: string;
+  private readonly accountFile: AccountFile;
+  private accountId?: AccountIdentity;
+  private rootSecretKept?: Uint8Array;
+  private readonly pendingLinks = new Map<string, PendingLink>();
 
   constructor(private readonly o: CoreOptions) {
     this.log = o.log ?? pino({ name: 'core' });
     mkdirSync(o.dataDir, { recursive: true, mode: 0o700 });
     this.hubsFile = join(o.dataDir, 'hubs.json');
     this.store = new IndexStore(join(o.dataDir, 'index.db'));
+    this.revocations = new Revocations(this.store);
+    this.accountFile = new AccountFile(o.dataDir);
+    this.accountId = this.accountFile.loadOrMigrate(o.device, this.loadHubs());
+    this.rootSecretKept = o.root?.secret;
     this.hubs = new HubManager({
       ...o.hubClient,
       device: o.device,
@@ -119,6 +171,13 @@ export class CommunalCore {
     this.people = new People(this.hubs, this.store);
     // Each hub gets this device's full rule set for that hub on every sign-in (ADR 0009).
     this.hubs.on('ready', ({ hub }) => void this.pushRules(hub));
+    // Our account's revocations go to every hub on every sign-in, so a hub that was away when
+    // a device was revoked hears about it (ADR 0014).
+    this.hubs.on('ready', ({ hub }) => void this.pushRevocations(hub));
+    this.hubs.on('event', ({ hub, msg }) => {
+      if (msg.t === 'link.request') this.onLinkRequest(hub, msg.body);
+      if (msg.t === 'device.revoked') this.onRevoked(hub, msg.body);
+    });
 
     this.transport = new PeerTransport({ ...o.peer, device: o.device, log: this.log });
     // On each sign-in: probe the hub from the peer socket (NAT type, and our public address as
@@ -130,7 +189,14 @@ export class CommunalCore {
       ...(o.network?.override ? { override: o.network.override } : {}),
       log: this.log,
     });
-    this.broker = new PeerBroker(this.hubs, this.transport, o.device, this.network, this.log);
+    this.broker = new PeerBroker(
+      this.hubs,
+      this.transport,
+      o.device,
+      this.network,
+      this.revocations,
+      this.log,
+    );
     this.uploadLimits = { ...DEFAULT_UPLOAD_LIMITS, ...o.uploads };
     this.uploader = new Uploader({
       store: this.store,
@@ -225,36 +291,24 @@ export class CommunalCore {
   }
 
   /**
-   * Joins a hub and waits until signed in (or pending approval). Existing shares are NOT
+   * Joins a hub and waits until signed in (or pending approval). The first hub of a fresh
+   * device creates a new account with this device as its root; later hubs get the device's
+   * chain, so the account is the same everywhere (ADR 0007, 0014). Existing shares are NOT
    * published to the new hub automatically: their metadata would become visible to its admin.
    */
   async addHub(
     url: string,
-    account: NonNullable<HubClientOptions['createAccount']>,
+    account: AccountCreate,
     timeoutMs = 30_000,
   ): Promise<{ hub: HubEntry; status: 'ready' | 'pending_approval' }> {
-    const entry = await this.hubs.add(url, account).catch((e: Error) => {
-      throw new CoreError('conflict', e.message);
-    });
-    const client = this.hubs.get(entry.id)!;
-    const outcome = await new Promise<'ready' | 'pending_approval' | Error>((resolve) => {
-      const timer = setTimeout(
-        () => resolve(new Error('timed out connecting to the hub')),
-        timeoutMs,
-      );
-      const done = (v: 'ready' | 'pending_approval' | Error) => {
-        clearTimeout(timer);
-        resolve(v);
-      };
-      client.once('ready', () => done('ready'));
-      client.once('pending_approval', () => done('pending_approval'));
-      client.once('fatal', (e) => done(e));
-    });
-    if (outcome instanceof Error) {
-      if (!entry.state.registered) await this.hubs.remove(entry.id);
-      throw new CoreError('unavailable', outcome.message);
-    }
-    return { hub: entry, status: outcome };
+    const { hub, status } = await joinHub(
+      this.hubs,
+      url,
+      { kind: 'create', ...account, ...accountFields(this.accountId) },
+      { timeoutMs },
+    );
+    if (!this.accountId) this.setAccount(selfRoot(this.o.device));
+    return { hub, status };
   }
 
   async removeHub(idOrUrl: string) {
@@ -271,6 +325,261 @@ export class CommunalCore {
           s.hubs.filter((h) => h !== entry.id),
         );
     }
+  }
+
+  // ── account and devices (HANDOFF §2, §4; ADR 0014) ────────────────────────
+
+  /** The account this device belongs to, if any. */
+  get account(): AccountIdentity | undefined {
+    return this.accountId;
+  }
+
+  private setAccount(a: AccountIdentity) {
+    this.accountFile.save(a);
+    this.accountId = a;
+  }
+
+  private requireAccount(): AccountIdentity {
+    if (!this.accountId) throw new CoreError('not_found', 'this device has no account yet');
+    return this.accountId;
+  }
+
+  private accountContext(): AccountContext {
+    return {
+      hubs: this.hubs,
+      device: this.o.device,
+      account: this.accountFile,
+      saveRootSecret: async (secret) => {
+        this.rootSecretKept = secret;
+        await this.o.root?.save?.(secret);
+      },
+      log: this.log,
+    };
+  }
+
+  /** The root secret, if this device holds it: the first device, or one restored from it. */
+  private rootSecret(): Uint8Array | undefined {
+    const a = this.accountId;
+    if (!a) return undefined;
+    if (a.root_pubkey === toB64(this.o.device.publicKey)) return this.o.device.secretKey;
+    return this.rootSecretKept;
+  }
+
+  identity() {
+    const a = this.accountId;
+    return {
+      device_id: this.deviceId,
+      user_id: a?.user_id ?? null,
+      fingerprint: a ? fingerprint(fromB64(a.root_pubkey)) : null,
+      root_device: a ? a.root_pubkey === toB64(this.o.device.publicKey) : false,
+      holds_root_key: this.rootSecret() !== undefined,
+    };
+  }
+
+  /**
+   * Adds this fresh device to an existing account with a link code from one of its devices,
+   * then joins every hub that device is on (HANDOFF §2 "Adding a device").
+   */
+  async link(url: string, code: string, deviceName: string, timeoutMs?: number) {
+    const r = await linkDevice(this.accountContext(), {
+      url,
+      code,
+      device_name: deviceName,
+      platform: platform(),
+      ...(timeoutMs ? { timeoutMs } : {}),
+    });
+    this.accountId = r.account;
+    return r;
+  }
+
+  /** Restores the account onto this fresh device from its root secret (HANDOFF §4). */
+  async restore(o: {
+    rootSecret: Uint8Array;
+    user_id?: string;
+    hubs: { url: string; hub_pubkey?: string }[];
+    deviceName: string;
+  }) {
+    const r = await restoreAccount(this.accountContext(), {
+      rootSecret: o.rootSecret,
+      ...(o.user_id ? { user_id: o.user_id } : {}),
+      hubs: o.hubs,
+      device_name: o.deviceName,
+      platform: platform(),
+    });
+    this.accountId = r.account;
+    return r;
+  }
+
+  /** A 10-minute, single-use code another device can claim to join this account. */
+  async createLinkCode(hub?: string): Promise<{ hub: string; code: string; expires_in: number }> {
+    this.requireAccount();
+    const id = hub ?? this.hubs.list().find((h) => h.ready)?.id;
+    const client = id ? this.hubs.get(id) : undefined;
+    if (!id || !client) throw new CoreError('not_found', hub ? `no such hub: ${hub}` : 'no hub');
+    if (!client.ready) throw new CoreError('unavailable', 'hub is offline');
+    const r = await client.request('link.code.create', {});
+    if (r.t !== 'link.code') throw new CoreError('unavailable', `unexpected ${r.t}`);
+    return { hub: id, ...r.body };
+  }
+
+  /** Devices waiting for this device to approve their link. */
+  linkRequests(): PendingLink[] {
+    const cutoff = Date.now() - 10 * 60_000;
+    for (const [id, r] of this.pendingLinks) if (r.at < cutoff) this.pendingLinks.delete(id);
+    return [...this.pendingLinks.values()];
+  }
+
+  private onLinkRequest(
+    hub: string,
+    r: { request_id: string; device_name: string; platform: string; device_pubkey: string },
+  ) {
+    let device_id: string;
+    try {
+      device_id = deviceId(fromB64(r.device_pubkey));
+    } catch {
+      return;
+    }
+    this.pendingLinks.set(r.request_id, { ...r, hub, device_id, at: Date.now() });
+    this.log.info({ hub, request_id: r.request_id, device_id }, 'a device asks to link');
+  }
+
+  /**
+   * Approves a link: certifies the new device's key and seals our hub list to it, so it can
+   * join the account's other hubs without the hub learning them.
+   */
+  async approveLink(requestId: string) {
+    const a = this.requireAccount();
+    const r = this.pendingLinks.get(requestId);
+    if (!r) throw new CoreError('not_found', 'no such link request');
+    const client = this.hubs.get(r.hub);
+    if (!client?.ready) throw new CoreError('unavailable', 'hub is offline');
+    const pk = fromB64(r.device_pubkey);
+    this.pendingLinks.delete(requestId);
+    await client.request('link.approve', {
+      request_id: requestId,
+      cert: issueDeviceCert(this.o.device, a.user_id, pk),
+      sealed: sealBundle(this.hubs, pk),
+    });
+    return { device_id: r.device_id };
+  }
+
+  async denyLink(requestId: string) {
+    const r = this.pendingLinks.get(requestId);
+    if (!r) throw new CoreError('not_found', 'no such link request');
+    this.pendingLinks.delete(requestId);
+    await this.hubs.get(r.hub)?.request('link.deny', { request_id: requestId });
+  }
+
+  /** The account's devices as every hub sees them, merged by device id. */
+  async devices() {
+    const a = this.requireAccount();
+    const revoked = this.revocations.revokedFor(a.root_pubkey);
+    const merged = new Map<
+      string,
+      {
+        device_id: string;
+        name: string;
+        platform: string;
+        root: boolean;
+        this_device: boolean;
+        revoked: boolean;
+        hubs: { hub: string; online: boolean; last_seen: number | null }[];
+      }
+    >();
+    for (const r of await this.hubs.requestAll('device.list', {})) {
+      if (!r.ok || r.msg.t !== 'device.listing') continue;
+      for (const d of r.msg.body.devices) {
+        const m = merged.get(d.device_id) ?? {
+          device_id: d.device_id,
+          name: d.name,
+          platform: d.platform,
+          root: d.root,
+          this_device: d.device_id === this.deviceId,
+          revoked: false,
+          hubs: [],
+        };
+        m.revoked ||= d.revoked_at !== null || revoked.has(d.device_id);
+        m.hubs.push({ hub: r.hub, online: d.online, last_seen: d.last_seen });
+        merged.set(d.device_id, m);
+      }
+    }
+    return [...merged.values()];
+  }
+
+  /**
+   * Revokes another device of this account on every hub (HANDOFF §2: any device can revoke
+   * another). Hubs that are offline get it on their next sign-in.
+   */
+  async revokeDevice(target: string) {
+    const a = this.requireAccount();
+    if (target === this.deviceId)
+      throw new CoreError('bad_request', 'revoke this device from another one');
+    if (target === deviceId(fromB64(a.root_pubkey)))
+      throw new CoreError('bad_request', "the account's first device can't be revoked");
+    const proof: RevocationProof = {
+      revocation: issueRevocation(this.o.device, a.user_id, target),
+      chain: a.chain,
+    };
+    if (!this.revocations.accept(a.root_pubkey, proof))
+      throw new CoreError('conflict', 'that device is already revoked');
+    this.log.info({ revoked: target }, 'device revoked');
+    const results = await this.hubs.requestAll('device.revoke', proof);
+    return {
+      hubs: results.map((r) => ({
+        hub: r.hub,
+        ok: r.ok,
+        ...(r.ok ? {} : { error: r.error.message }),
+      })),
+    };
+  }
+
+  private async pushRevocations(hub: string) {
+    const a = this.accountId;
+    const client = this.hubs.get(hub);
+    if (!a || !client?.ready) return;
+    for (const p of this.revocations.proofs(a.user_id)) {
+      await client.request('device.revoke', p).catch((err: Error) => {
+        this.log.warn({ hub, err: err.message }, 'hub refused a revocation');
+      });
+    }
+  }
+
+  /** A hub tells us about a revocation in our account: keep it and pass it to the others. */
+  private onRevoked(hub: string, proof: RevocationProof) {
+    const a = this.accountId;
+    if (!a || proof.revocation.user_id !== a.user_id) return;
+    if (!this.revocations.accept(a.root_pubkey, proof)) return;
+    if (proof.revocation.device_id === this.deviceId) {
+      this.log.warn('this device has been revoked by another device of the account');
+      return;
+    }
+    this.log.info({ hub, revoked: proof.revocation.device_id }, 'learned of a revoked device');
+    for (const h of this.hubs.list()) if (h.id !== hub) void this.pushRevocations(h.id);
+  }
+
+  /**
+   * The recovery key (HANDOFF §4, ADR 0003): a passphrase-encrypted file that also lists the
+   * hubs to restore onto, or 24 words. Only a device holding the root key can export it.
+   */
+  async exportRecovery(
+    o: { format: 'words' } | { format: 'file'; passphrase: string; kdf?: KdfParams },
+  ): Promise<{ words: string[] } | { file: RecoveryFile }> {
+    const a = this.requireAccount();
+    const secret = this.rootSecret();
+    if (!secret) {
+      throw new CoreError(
+        'forbidden',
+        "this device doesn't hold the account's root key; export the recovery key from your first device",
+      );
+    }
+    if (o.format === 'words') return { words: rootSecretToWords(secret) };
+    if (o.passphrase.length < 8)
+      throw new CoreError('bad_request', 'use a passphrase of at least 8 characters');
+    const hubs = this.hubs
+      .list()
+      .filter((h) => h.state.registered && h.state.hubPubkey)
+      .map((h) => ({ url: h.url, hub_pubkey: h.state.hubPubkey! }));
+    return { file: await exportRecoveryFile(secret, a.user_id, o.passphrase, o.kdf, hubs) };
   }
 
   // ── shares ────────────────────────────────────────────────────────────────
@@ -462,6 +771,7 @@ export class CommunalCore {
   status() {
     return {
       device_id: this.deviceId,
+      account: this.identity(),
       hubs: this.hubs.list().map((h) => ({
         id: h.id,
         url: h.url,
@@ -476,4 +786,8 @@ export class CommunalCore {
       shares: this.store.shares().map((s) => ({ name: s.name, hubs: s.hubs })),
     };
   }
+}
+
+function platform(): 'darwin' | 'win32' | 'linux' {
+  return process.platform === 'darwin' || process.platform === 'win32' ? process.platform : 'linux';
 }

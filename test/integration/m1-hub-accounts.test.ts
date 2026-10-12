@@ -63,7 +63,7 @@ function makeNode(
       device: key,
       state,
       saveState: () => {},
-      createAccount: { display_name: name, device_name: `${name}-box`, platform: 'linux' },
+      enroll: { kind: 'create', display_name: name, device_name: `${name}-box`, platform: 'linux' },
       insecureTls: true,
       pingIntervalMs: 100,
       silenceMs: SILENCE_MS,

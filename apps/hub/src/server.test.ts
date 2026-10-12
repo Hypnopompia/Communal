@@ -408,7 +408,7 @@ describe('access control: account.create for an existing account (multi-hub, ADR
     expect(t.db.listUsers()).toHaveLength(0);
   });
 
-  it('refuses to create an account that already exists on this hub', async () => {
+  it('adds a device with a valid chain to an account already on this hub (ADR 0014)', async () => {
     const alice = await signUp(t.url, 'alice');
     alice.c.close();
     const laptop = generateKeyPair();
@@ -416,7 +416,20 @@ describe('access control: account.create for an existing account (multi-hub, ADR
     expect(
       await createWith(laptop, { root_pubkey: toB64(alice.key.publicKey), chain }),
     ).toMatchObject({
-      body: { code: 'conflict' },
+      t: 'account.created',
+      body: { user_id: alice.userId, device_id: deviceId(laptop.publicKey), status: 'active' },
     });
+    expect(t.db.getUser(alice.userId)?.display_name).toBe('alice');
+    expect(t.db.devicesOf(alice.userId)).toHaveLength(2);
+
+    // A chain signed by someone outside the account still gets nowhere.
+    const phone = generateKeyPair();
+    const stranger = generateKeyPair();
+    expect(
+      await createWith(phone, {
+        root_pubkey: toB64(alice.key.publicKey),
+        chain: [issueDeviceCert(stranger, alice.userId, phone.publicKey)],
+      }),
+    ).toMatchObject({ body: { code: 'forbidden' } });
   });
 });

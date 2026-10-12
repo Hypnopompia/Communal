@@ -11,6 +11,9 @@ import {
   issueDeviceCert,
   issueRevocation,
   keyPairFromSecret,
+  openSealed,
+  SealError,
+  sealTo,
   RecoveryError,
   rootSecretToWords,
   safetyCode,
@@ -145,7 +148,9 @@ describe('safety codes', () => {
 describe('recovery key', () => {
   it('round-trips through the encrypted file', async () => {
     const { root, uid } = account();
-    const file = await exportRecoveryFile(root.secretKey, uid, 'correct horse', FAST_KDF);
+    const hubs = [{ url: 'wss://hub.example/v1', hub_pubkey: toB64(generateKeyPair().publicKey) }];
+    const file = await exportRecoveryFile(root.secretKey, uid, 'correct horse', FAST_KDF, hubs);
+    expect(file.hubs).toEqual(hubs);
     const restored = await importRecoveryFile(JSON.parse(JSON.stringify(file)), 'correct horse');
     expect(toB64(restored)).toBe(toB64(root.secretKey));
     await expect(importRecoveryFile(file, 'wrong')).rejects.toBeInstanceOf(RecoveryError);
@@ -166,6 +171,21 @@ describe('recovery key', () => {
     if (swapped.join() !== words.join()) {
       expect(() => wordsToRootSecret(swapped)).toThrow(RecoveryError);
     }
+  });
+});
+
+describe('sealed box', () => {
+  it('opens only for the recipient key', () => {
+    const to = generateKeyPair();
+    const msg = new TextEncoder().encode('{"hubs":[]}');
+    const sealed = sealTo(to.publicKey, msg);
+    expect(new TextDecoder().decode(openSealed(to, sealed))).toBe('{"hubs":[]}');
+    expect(() => openSealed(generateKeyPair(), sealed)).toThrow(SealError);
+    // Any bit flip fails authentication.
+    const raw = fromB64(sealed);
+    raw[raw.length - 1]! ^= 1;
+    expect(() => openSealed(to, toB64(raw))).toThrow(SealError);
+    expect(() => openSealed(to, 'AAAA')).toThrow(SealError);
   });
 });
 
