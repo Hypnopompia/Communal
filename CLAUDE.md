@@ -6,18 +6,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Communal is a private, Napster-style file-sharing app: a self-hosted **hub** keeps the directory and index, and files move **directly between peers**. The authoritative spec is [HANDOFF.md](HANDOFF.md). Read the relevant section of it before working on any feature. Milestone status and known gaps are in [docs/progress.md](docs/progress.md), and decisions are in `docs/adr/`. Check both before starting a milestone.
 
+## Owner decisions that override HANDOFF
+
+These came from the owner during development. Don't revert them to the spec's wording.
+
+- **Multiple hubs per client, one identity** (ADR 0007). A search goes to every joined hub at once. The desktop Settings will need a hub list, not a single "Hub address".
+- **Access rules are per hub** (ADR 0007/0009). The same file can be public on one hub and private on another. A rule on one hub never grants access through another. The UI must make the per-hub scope obvious.
+- **Hub admins can ban and unban accounts** (ADR 0006).
+- **A web admin UI for hubs** (settings, approvals, bans, social graph) is wanted **after v1**. Open design questions are in `docs/questions.md`. Keep admin actions as `HubDb` methods so a second front end can reuse them.
+
 ## Commands
 
-- `pnpm check`: runs format check, lint, typecheck (all packages) and tests. CI runs the same thing.
+- `pnpm check`: runs format check, lint, typecheck (all packages) and tests. CI runs the same thing. `M2_FILES=5000 pnpm check` is the quick local variant (CI runs the full 100k).
 - `pnpm test`: runs Vitest across the repo, including the multi-node tests in `test/integration` (a workspace package of its own). The M2 scale test indexes 100k files (about 35 s); `M2_FILES=2000 pnpm test` makes it quick while iterating. For a single file use `pnpm exec vitest run packages/crypto/src/crypto.test.ts`, and for a single test add `-t "<name>"`.
 - `pnpm typecheck`, `pnpm lint`, `pnpm format`, `pnpm build` (compiles every package to `dist/`).
-- `pnpm spike:transport`: 1 GiB peer-transport benchmark over loopback. Add `--bytes 64M` for a quick run.
+- `pnpm spike:transport`: the M0 transport benchmark (1 GiB over loopback; `--bytes 64M` for a quick run). The real transport now lives in core `peer/transport.ts`. The spike stays as a benchmark.
+- `docker/nat/test.sh`: the NAT lab. It builds, transfers a file between two clients behind separate NAT routers, checks it, and tears down.
 - `pnpm dev:stack`: builds and starts the hub plus `node-a` (alice) and `node-b` (bob) via `docker/compose.dev.yml`. `pnpm dev:stack:reset` wipes the volumes. Docker Desktop's CLI lives in `~/.docker/bin` and may not be on PATH.
 - Inside a dev container: `docker compose -f docker/compose.dev.yml exec node-a communal <cmd>` (`share add /shares/alice --name Alice`, `search <words>`, `status`), or `communal-spike peer …` for the transport benchmark between containers.
 - Running an app from source: `pnpm --filter @communal/hub dev` (a dev build with self-signed TLS, data in `apps/hub/hub-data`), `pnpm --filter @communal/cli dev -- status`.
 - People and access (per hub, `--hub` needed when on several): `communal people search|request|accept|remove|verify`, `communal group set|list|delete`, `communal acl set <path> me|hub|users:<ids>|groups:<ids>`.
 - Transfers: `communal get <hash>`, `communal transfers`, `communal cancel <id>`, `communal log` (who downloaded what from this device).
 - Hub admin: `communal-hub users | approve <user_id> | ban <user_id> [--reason] | unban <user_id> | set join_mode open|approval`. These commands work directly on the SQLite database, so they run alongside a live hub.
+
+Shell notes for this machine:
+
+- Docker Desktop's CLI is at `~/.docker/bin`. Prepend it to `PATH` in each Bash call.
+- The shell is zsh, which doesn't split `$VAR` into words: `C="docker compose -f x"; $C up` fails. Use a function instead: `dc() { docker compose -f docker/compose.dev.yml "$@"; }`.
 
 Workspace packages export a custom `@communal/source` condition that points at `src/`. Vitest, tsc and `tsx --conditions=@communal/source` resolve to TypeScript sources, so nothing needs building for tests or dev runs. Only the Docker images use `dist/`. New packages should copy that `exports` shape and the `tsconfig.json`/`tsconfig.build.json` pair (the build config excludes `*.test.ts`).
 
@@ -67,9 +82,16 @@ How the pieces connect:
   - `startTestHub()`: an in-process hub on a random port, with a temp database and short timeouts.
   - `RawClient`: sends arbitrary frames, for access-control tests.
   - `signUp` / `signIn` helpers.
-- Every hub handler needs access-control cases in `apps/hub/src/server.test.ts`.
+- Every hub handler needs access-control cases. They're grouped by area in `apps/hub/src/`:
+  - `server.test.ts`: session, accounts, bans
+  - `catalog.test.ts`: index, search, browse, sources
+  - `access.test.ts`: the audience × viewer matrix, connections, groups, rules
+  - `broker.test.ts`: `connect.*`
+- Integration tests in `test/integration/` are named per milestone (`m1-…`, `m4-transfers…`). `CommunalCore` takes `peer: { loopback: true }` and short `downloads`/`indexer` timers for tests, plus `testHooks` for fault injection (e.g. corrupt chunks).
 - Social state for later milestones (connections etc.) can be seeded directly with `HubDb` methods such as `putConnection`.
 - Integration tests run the real hub and `HubClient`s, with timers shortened through constructor options. Never use real 30 s / 90 s waits.
+- **Keep clients alive inside a test hub's silence window.** A test hub with `silenceMs: 600` drops a client that pings every 30 s, and events sent while it's reconnecting are lost. Two flaky tests came from this. Give clients `pingIntervalMs` well under the hub's `silenceMs`, and call `RawClient.keepAlive()` for raw clients in long tests.
+- **Wait for conditions, not fixed sleeps.** Use the `until(cond)` helpers in the integration tests. Several tests were rewritten from sleeps to polling.
 
 ## Invariants that span multiple components
 

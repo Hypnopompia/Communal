@@ -1,5 +1,31 @@
 # Progress
 
+## Next up
+
+**M5 — Diagnostics (no relay).** HANDOFF §8 and §12. Starting points:
+
+- **What already exists:**
+  - The hub runs both UDP probe responders.
+  - The client already probes from its peer socket to learn a public candidate (`PeerTransport.probe`, `CommunalCore.probeVia`).
+  - `network.profile` is in the protocol, but the hub answers `not_implemented`.
+  - A failed punch currently surfaces only as "could not connect to any source" (`ConnectError` with reason `no_path`).
+- **To do:**
+  - NAT classification: send from one socket to _both_ probe ports and compare the observed ports.
+  - UPnP/NAT-PMP mapping: pick a maintained library and record it in an ADR.
+  - Global IPv6, and CGNAT detection (external IP in 100.64.0.0/10).
+  - Send `network.profile` to each hub.
+  - On failure, both sides send `connect.failed` with observations, and the hub combines them into `cause` + `easier_fix`.
+  - Show the diagnosis and tips in transfer state, the CLI and the API.
+- **Done when:** NAT-lab scenarios for symmetric NAT, blocked UDP and an offline peer each produce the right `cause`. Extend `docker/compose.nat.yml`; the routers are plain Alpine + iptables, so symmetric NAT can use `MASQUERADE --random` and blocked UDP a `DROP` rule.
+
+**Still open from M0:** the 1 GiB transfer between two physical machines on a LAN. It needs the owner's second machine.
+
+**Notes for M9 (desktop):**
+
+- `better-sqlite3` and `udx-native` are native modules. They need an Electron rebuild (or matching prebuilds) and a smoke test inside Electron's `utilityProcess`.
+- Settings needs a hub list (ADR 0007).
+- The access UI must show which hub each rule applies to.
+
 ## M4 — Direct transfers (2026-10-12)
 
 **Status: done.** Details and decisions are in ADR 0010.
