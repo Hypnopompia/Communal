@@ -25,3 +25,5 @@ export * from './media/thumbs.js';
 export * from './media/previews.js';
 export * from './media/worker.js';
 export * from './transfer/stream.js';
+export * from './subscriptions.js';
+export type { SubscriptionRow, SubFileRow } from './index/store.js';

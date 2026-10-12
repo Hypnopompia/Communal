@@ -214,12 +214,55 @@ const MIGRATIONS: string[] = [
   ALTER TABLE entries_staging ADD COLUMN rule_path TEXT;
   CREATE INDEX entries_rule ON entries (device_id, rule_path) WHERE rule_path IS NOT NULL;
   `,
+  `
+  -- M7 subscriptions (ADR 0013). rev: the device index rev at which the entry's content (hash)
+  -- last changed, so a watcher can catch up from since_rev.
+  ALTER TABLE entries ADD COLUMN rev INTEGER NOT NULL DEFAULT 0;
+  CREATE INDEX entries_rev ON entries (device_id, rev);
+
+  -- Paths removed from a device's index, kept so watchers who were away still hear about
+  -- deletions. rule_path is re-tagged like entries', so visibility follows the current rules.
+  CREATE TABLE tombstones (
+    device_id TEXT NOT NULL,
+    path      TEXT NOT NULL,
+    dir       TEXT NOT NULL,
+    rule_path TEXT,
+    rev       INTEGER NOT NULL,
+    at        INTEGER NOT NULL,
+    PRIMARY KEY (device_id, path)
+  );
+  CREATE INDEX tombstones_rev ON tombstones (device_id, rev);
+
+  -- Folder subscriptions (HANDOFF §5, §10). The watcher re-sends its watches on every sign-in;
+  -- this table records them (for the admin, and so unwatch has something to remove).
+  CREATE TABLE watches (
+    user_id        TEXT NOT NULL REFERENCES users (id),
+    watcher_device TEXT NOT NULL REFERENCES devices (id),
+    device_id      TEXT NOT NULL REFERENCES devices (id),
+    path           TEXT NOT NULL,
+    recursive      INTEGER NOT NULL,
+    mirror_deletes INTEGER NOT NULL,
+    since_rev      INTEGER NOT NULL,
+    created_at     INTEGER NOT NULL,
+    PRIMARY KEY (watcher_device, device_id, path)
+  );
+  CREATE INDEX watches_device ON watches (device_id);
+  `,
 ];
 
 const now = () => Math.floor(Date.now() / 1000);
 
+/** An upsert keeps the entry's rev unless its content changed (ADR 0013). */
+const KEEP_REV_UNLESS_CHANGED =
+  'CASE WHEN entries.hash IS excluded.hash THEN entries.rev ELSE excluded.rev END';
+
 export class HubDb {
   readonly raw: Database.Database;
+  /**
+   * How long removals are remembered for watchers that are away (ADR 0013). A watcher gone
+   * longer than this still gets every current file on its return, but misses older deletions.
+   */
+  tombstoneRetentionS = 180 * 86_400;
   /** device_id → its rule paths; entries are tagged with their governing rule on write. */
   private readonly ruleCache = new Map<string, Set<string>>();
 
@@ -418,20 +461,38 @@ export class HubDb {
     };
   }
 
-  /** Applies a delta and advances the device's rev, atomically. */
+  /**
+   * Applies a delta and advances the device's rev, atomically. Removed paths leave tombstones,
+   * and an entry's `rev` moves only when its content (hash) changes, so metadata-only updates
+   * don't look like new files to watchers.
+   */
   applyDelta(deviceId: string, rev: number, upsert: Entry[], remove: string[]) {
     const up = this.raw.prepare(
-      `INSERT INTO entries (device_id, path, dir, name, size, mtime, mime, kind, meta_json, thumb, hash, rule_path)
-       VALUES (@device_id, @path, @dir, @name, @size, @mtime, @mime, @kind, @meta_json, @thumb, @hash, @rule_path)
+      `INSERT INTO entries (device_id, path, dir, name, size, mtime, mime, kind, meta_json, thumb, hash, rule_path, rev)
+       VALUES (@device_id, @path, @dir, @name, @size, @mtime, @mime, @kind, @meta_json, @thumb, @hash, @rule_path, @rev)
        ON CONFLICT (device_id, path) DO UPDATE SET size = excluded.size, mtime = excluded.mtime,
          mime = excluded.mime, kind = excluded.kind, meta_json = excluded.meta_json,
-         thumb = excluded.thumb, hash = excluded.hash, rule_path = excluded.rule_path`,
+         thumb = excluded.thumb, hash = excluded.hash, rule_path = excluded.rule_path,
+         rev = ${KEEP_REV_UNLESS_CHANGED}`,
+    );
+    const bury = this.raw.prepare(
+      `INSERT OR REPLACE INTO tombstones (device_id, path, dir, rule_path, rev, at)
+       SELECT device_id, path, dir, rule_path, @rev, @at FROM entries WHERE device_id = @device AND path = @path`,
     );
     const del = this.raw.prepare('DELETE FROM entries WHERE device_id = ? AND path = ?');
+    const unbury = this.raw.prepare('DELETE FROM tombstones WHERE device_id = ? AND path = ?');
+    const at = now();
     this.raw.transaction(() => {
-      for (const p of remove) del.run(deviceId, p);
-      for (const e of upsert) up.run(this.entryParams(deviceId, e));
+      for (const p of remove) {
+        bury.run({ device: deviceId, path: p, rev, at });
+        del.run(deviceId, p);
+      }
+      for (const e of upsert) {
+        up.run({ ...this.entryParams(deviceId, e), rev });
+        unbury.run(deviceId, e.path);
+      }
       this.setIndexRev(deviceId, rev);
+      this.pruneTombstones(deviceId, at);
     })();
   }
 
@@ -450,20 +511,51 @@ export class HubDb {
     })();
   }
 
-  /** Replaces the device's whole index with the staged snapshot and sets its rev. */
+  /**
+   * Replaces the device's whole index with the staged snapshot and sets its rev. Like a delta:
+   * entries that disappear leave tombstones, and unchanged entries keep their rev.
+   */
   commitSnapshot(deviceId: string, rev: number) {
+    const p = { device: deviceId, rev, at: now() };
+    const gone = `device_id = @device AND NOT EXISTS (
+      SELECT 1 FROM entries_staging s WHERE s.device_id = @device AND s.path = entries.path)`;
     this.raw.transaction(() => {
-      this.raw.prepare('DELETE FROM entries WHERE device_id = ?').run(deviceId);
       this.raw
         .prepare(
-          `INSERT INTO entries (device_id, path, dir, name, size, mtime, mime, kind, meta_json, thumb, hash, rule_path)
-           SELECT device_id, path, dir, name, size, mtime, mime, kind, meta_json, thumb, hash, rule_path
-           FROM entries_staging WHERE device_id = ?`,
+          `INSERT OR REPLACE INTO tombstones (device_id, path, dir, rule_path, rev, at)
+           SELECT device_id, path, dir, rule_path, @rev, @at FROM entries WHERE ${gone}`,
         )
-        .run(deviceId);
+        .run(p);
+      this.raw.prepare(`DELETE FROM entries WHERE ${gone}`).run({ device: deviceId });
+      this.raw
+        .prepare(
+          // "WHERE true" lets SQLite parse an upsert whose source is a SELECT.
+          `INSERT INTO entries (device_id, path, dir, name, size, mtime, mime, kind, meta_json, thumb, hash, rule_path, rev)
+           SELECT device_id, path, dir, name, size, mtime, mime, kind, meta_json, thumb, hash, rule_path, @rev
+           FROM entries_staging WHERE device_id = @device AND true
+           ON CONFLICT (device_id, path) DO UPDATE SET size = excluded.size, mtime = excluded.mtime,
+             mime = excluded.mime, kind = excluded.kind, meta_json = excluded.meta_json,
+             thumb = excluded.thumb, hash = excluded.hash, rule_path = excluded.rule_path,
+             rev = ${KEEP_REV_UNLESS_CHANGED}`,
+        )
+        .run({ device: deviceId, rev });
+      this.raw
+        .prepare(
+          `DELETE FROM tombstones WHERE device_id = @device
+           AND path IN (SELECT path FROM entries_staging WHERE device_id = @device)`,
+        )
+        .run({ device: deviceId });
       this.raw.prepare('DELETE FROM entries_staging WHERE device_id = ?').run(deviceId);
       this.setIndexRev(deviceId, rev);
+      this.pruneTombstones(deviceId, p.at);
     })();
+  }
+
+  /** Tombstones older than the retention window are forgotten (ADR 0013). */
+  private pruneTombstones(deviceId: string, at: number) {
+    this.raw
+      .prepare('DELETE FROM tombstones WHERE device_id = ? AND at < ?')
+      .run(deviceId, at - this.tombstoneRetentionS);
   }
 
   entryCount(deviceId: string): number {
@@ -567,6 +659,17 @@ export class HubDb {
       const g = governingRule(paths, r.path);
       if (g !== r.rule_path) upd.run(g, deviceId, r.path);
     }
+    // Tombstones too: who hears about a deletion follows the current rules, like the files.
+    const updT = this.raw.prepare(
+      'UPDATE tombstones SET rule_path = ? WHERE device_id = ? AND path = ?',
+    );
+    const dead = this.raw
+      .prepare('SELECT path, rule_path FROM tombstones WHERE device_id = ?')
+      .all(deviceId) as { path: string; rule_path: string | null }[];
+    for (const r of dead) {
+      const g = governingRule(paths, r.path);
+      if (g !== r.rule_path) updT.run(g, deviceId, r.path);
+    }
   }
 
   /** Whether any device of the user has an "everyone on the hub" rule (affects presence). */
@@ -578,6 +681,40 @@ export class HubDb {
            WHERE d.user_id = ? AND d.revoked_at IS NULL AND r.kind = 'hub' LIMIT 1`,
         )
         .get(userId) !== undefined
+    );
+  }
+
+  // ── watches (subscriptions, M7) ───────────────────────────────────────────
+
+  putWatch(w: {
+    user_id: string;
+    watcher_device: string;
+    device_id: string;
+    path: string;
+    recursive: boolean;
+    mirror_deletes: boolean;
+    since_rev: number;
+  }) {
+    this.raw
+      .prepare(
+        `INSERT INTO watches (user_id, watcher_device, device_id, path, recursive, mirror_deletes, since_rev, created_at)
+         VALUES (@user_id, @watcher_device, @device_id, @path, @recursive, @mirror_deletes, @since_rev, @at)
+         ON CONFLICT (watcher_device, device_id, path) DO UPDATE SET recursive = excluded.recursive,
+           mirror_deletes = excluded.mirror_deletes, since_rev = excluded.since_rev`,
+      )
+      .run({
+        ...w,
+        recursive: w.recursive ? 1 : 0,
+        mirror_deletes: w.mirror_deletes ? 1 : 0,
+        at: now(),
+      });
+  }
+
+  removeWatch(watcherDevice: string, deviceId: string, path: string): boolean {
+    return (
+      this.raw
+        .prepare('DELETE FROM watches WHERE watcher_device = ? AND device_id = ? AND path = ?')
+        .run(watcherDevice, deviceId, path).changes > 0
     );
   }
 

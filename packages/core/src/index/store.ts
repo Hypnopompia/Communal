@@ -64,6 +64,48 @@ export interface UploadLogRow {
   kind: 'file' | 'thumbnail';
 }
 
+/** A followed folder on another device (HANDOFF §5 "Subscriptions", ADR 0013). */
+export interface SubscriptionRow {
+  id: string;
+  hub: string;
+  device_id: string;
+  /** The owner's folder, `Share/sub/` (always ends with `/`). */
+  path: string;
+  recursive: boolean;
+  dest_dir: string;
+  mirror_deletes: boolean;
+  paused: boolean;
+  /** The owner's index rev the last processed `watch.event` brought us to. */
+  rev: number;
+  /** `no_access` when the hub last refused the watch (the folder is gone or not shared). */
+  status: 'ok' | 'no_access';
+  created_at: number;
+}
+
+/** A local file's identity as we left it, to tell whether the user has touched it since. */
+export interface LocalStamp {
+  path: string;
+  size: number;
+  mtime: number;
+}
+
+/**
+ * One file of a subscription: `pending` (download queued), `done` (at `local`), `failed`
+ * (gone or no longer shared when we tried), or `removed` (deleted at the source; the local
+ * copy was kept).
+ */
+export interface SubFileRow {
+  sub_id: string;
+  /** The owner's share path. */
+  path: string;
+  hash: string;
+  state: 'pending' | 'done' | 'failed' | 'removed';
+  transfer_id: string | null;
+  local: LocalStamp | null;
+  /** The previous version's local copy, replaced once the new one is in (ADR 0013). */
+  prev: LocalStamp | null;
+}
+
 export interface Change {
   seq: number;
   share: string;
@@ -178,9 +220,60 @@ const MIGRATIONS = [
   );
   CREATE INDEX thumb_cache_lru ON thumb_cache (used_at);
   `,
+  `
+  -- M7: subscriptions to other devices' folders (ADR 0013).
+  CREATE TABLE subscriptions (
+    id             TEXT PRIMARY KEY,
+    hub            TEXT NOT NULL,
+    device_id      TEXT NOT NULL,
+    path           TEXT NOT NULL,
+    recursive      INTEGER NOT NULL,
+    dest_dir       TEXT NOT NULL,
+    mirror_deletes INTEGER NOT NULL,
+    paused         INTEGER NOT NULL DEFAULT 0,
+    rev            INTEGER NOT NULL DEFAULT 0,
+    status         TEXT NOT NULL DEFAULT 'ok',
+    created_at     INTEGER NOT NULL,
+    UNIQUE (hub, device_id, path)
+  );
+  -- local / prev: JSON {path, size, mtime} of our copy (see LocalStamp).
+  CREATE TABLE sub_files (
+    sub_id      TEXT NOT NULL REFERENCES subscriptions (id) ON DELETE CASCADE,
+    path        TEXT NOT NULL,
+    hash        TEXT NOT NULL,
+    state       TEXT NOT NULL CHECK (state IN ('pending', 'done', 'failed', 'removed')),
+    transfer_id TEXT,
+    local       TEXT,
+    prev        TEXT,
+    PRIMARY KEY (sub_id, path)
+  );
+  CREATE INDEX sub_files_hash ON sub_files (hash);
+  CREATE INDEX sub_files_transfer ON sub_files (transfer_id) WHERE transfer_id IS NOT NULL;
+  `,
 ];
 
 const now = () => Math.floor(Date.now() / 1000);
+
+type RawSub = Omit<SubscriptionRow, 'recursive' | 'mirror_deletes' | 'paused'> & {
+  recursive: number;
+  mirror_deletes: number;
+  paused: number;
+};
+const parseSub = (r: RawSub): SubscriptionRow => ({
+  ...r,
+  recursive: r.recursive === 1,
+  mirror_deletes: r.mirror_deletes === 1,
+  paused: r.paused === 1,
+});
+type RawSubFile = Omit<SubFileRow, 'local' | 'prev'> & {
+  local: string | null;
+  prev: string | null;
+};
+const parseSubFile = (r: RawSubFile): SubFileRow => ({
+  ...r,
+  local: r.local ? (JSON.parse(r.local) as LocalStamp) : null,
+  prev: r.prev ? (JSON.parse(r.prev) as LocalStamp) : null,
+});
 
 type RawTransfer = Omit<TransferRow, 'diagnosis'> & { diagnosis: string | null };
 const parseTransfer = (r: RawTransfer): TransferRow => ({
@@ -316,6 +409,27 @@ export class IndexStore {
         .run(hash, Buffer.from(chunkHashes), share, rel, expect.size, expect.mtime).changes > 0;
     if (ok) this.logChange(share, rel, 'upsert');
     return ok;
+  }
+
+  /**
+   * A file that appeared where another (same size and modification time) just disappeared is
+   * the same file moved: it keeps its hash, chunk hashes and media results instead of being
+   * hashed again. Call before the old row is removed. Moves then reach hubs as one delta, so
+   * subscribers can move their copy too (ADR 0013).
+   */
+  adoptContent(share: string, rel: string, from: { share: string; rel: string }): boolean {
+    return (
+      this.raw
+        .prepare(
+          `UPDATE files SET (hash, chunk_hashes, meta, thumb, media_at) = (
+             SELECT o.hash, o.chunk_hashes, o.meta, o.thumb, o.media_at FROM files o
+             WHERE o.share = @fs AND o.rel = @fr)
+           WHERE share = @share AND rel = @rel AND hash IS NULL AND EXISTS (
+             SELECT 1 FROM files o WHERE o.share = @fs AND o.rel = @fr AND o.hash IS NOT NULL
+               AND o.size = files.size AND o.mtime = files.mtime)`,
+        )
+        .run({ share, rel, fs: from.share, fr: from.rel }).changes > 0
+    );
   }
 
   nextUnhashed(limit: number): FileRow[] {
@@ -535,6 +649,117 @@ export class IndexStore {
         : this.raw.prepare('SELECT * FROM transfers ORDER BY created_at DESC').all()
     ) as RawTransfer[];
     return rows.map(parseTransfer);
+  }
+
+  // ── subscriptions (M7) ────────────────────────────────────────────────────
+
+  addSubscription(s: Omit<SubscriptionRow, 'paused' | 'rev' | 'status' | 'created_at'>) {
+    this.raw
+      .prepare(
+        `INSERT INTO subscriptions (id, hub, device_id, path, recursive, dest_dir, mirror_deletes, created_at)
+         VALUES (@id, @hub, @device_id, @path, @recursive, @dest_dir, @mirror_deletes, @at)`,
+      )
+      .run({
+        ...s,
+        recursive: s.recursive ? 1 : 0,
+        mirror_deletes: s.mirror_deletes ? 1 : 0,
+        at: now(),
+      });
+  }
+
+  updateSubscription(
+    id: string,
+    patch: Partial<Pick<SubscriptionRow, 'mirror_deletes' | 'paused' | 'rev' | 'status'>>,
+  ) {
+    const cols = Object.keys(patch);
+    if (cols.length === 0) return;
+    const values: Record<string, unknown> = { ...patch, id };
+    for (const k of ['mirror_deletes', 'paused'] as const)
+      if (patch[k] !== undefined) values[k] = patch[k] ? 1 : 0;
+    this.raw
+      .prepare(
+        `UPDATE subscriptions SET ${cols.map((c) => `${c} = @${c}`).join(', ')} WHERE id = @id`,
+      )
+      .run(values);
+  }
+
+  removeSubscription(id: string): boolean {
+    return this.raw.prepare('DELETE FROM subscriptions WHERE id = ?').run(id).changes > 0;
+  }
+
+  subscriptions(): SubscriptionRow[] {
+    return (
+      this.raw.prepare('SELECT * FROM subscriptions ORDER BY created_at, id').all() as RawSub[]
+    ).map(parseSub);
+  }
+
+  subscription(id: string): SubscriptionRow | undefined {
+    const r = this.raw.prepare('SELECT * FROM subscriptions WHERE id = ?').get(id) as
+      RawSub | undefined;
+    return r && parseSub(r);
+  }
+
+  findSubscription(hub: string, device: string, path: string): SubscriptionRow | undefined {
+    const r = this.raw
+      .prepare('SELECT * FROM subscriptions WHERE hub = ? AND device_id = ? AND path = ?')
+      .get(hub, device, path) as RawSub | undefined;
+    return r && parseSub(r);
+  }
+
+  /** File counts per state for one subscription. */
+  subFileCounts(id: string): Record<SubFileRow['state'], number> {
+    const out = { pending: 0, done: 0, failed: 0, removed: 0 };
+    for (const r of this.raw
+      .prepare('SELECT state, count(*) AS n FROM sub_files WHERE sub_id = ? GROUP BY state')
+      .all(id) as { state: SubFileRow['state']; n: number }[])
+      out[r.state] = r.n;
+    return out;
+  }
+
+  subFile(subId: string, path: string): SubFileRow | undefined {
+    const r = this.raw
+      .prepare('SELECT * FROM sub_files WHERE sub_id = ? AND path = ?')
+      .get(subId, path) as RawSubFile | undefined;
+    return r && parseSubFile(r);
+  }
+
+  subFileByTransfer(transferId: string): SubFileRow | undefined {
+    const r = this.raw.prepare('SELECT * FROM sub_files WHERE transfer_id = ?').get(transferId) as
+      RawSubFile | undefined;
+    return r && parseSubFile(r);
+  }
+
+  /** Files of any subscription with this content that we have locally. */
+  subFilesWithHash(hash: string): SubFileRow[] {
+    return (
+      this.raw
+        .prepare("SELECT * FROM sub_files WHERE hash = ? AND state IN ('done', 'removed')")
+        .all(hash) as RawSubFile[]
+    ).map(parseSubFile);
+  }
+
+  /** Every file still waiting for its download (checked against the transfers on start). */
+  pendingSubFiles(): SubFileRow[] {
+    return (
+      this.raw.prepare("SELECT * FROM sub_files WHERE state = 'pending'").all() as RawSubFile[]
+    ).map(parseSubFile);
+  }
+
+  putSubFile(f: SubFileRow) {
+    this.raw
+      .prepare(
+        `INSERT OR REPLACE INTO sub_files (sub_id, path, hash, state, transfer_id, local, prev)
+         VALUES (@sub_id, @path, @hash, @state, @transfer_id, @local, @prev)`,
+      )
+      .run({
+        ...f,
+        local: f.local ? JSON.stringify(f.local) : null,
+        prev: f.prev ? JSON.stringify(f.prev) : null,
+      });
+  }
+
+  deleteSubFile(subId: string, path: string) {
+    this.raw.prepare('DELETE FROM sub_files WHERE sub_id = ? AND path = ?').run(subId, path);
   }
 
   // ── upload log ────────────────────────────────────────────────────────────

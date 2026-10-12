@@ -821,6 +821,129 @@ program
     }),
   );
 
+// ── subscriptions (M7) ──────────────────────────────────────────────────────
+
+type Subscription = {
+  id: string;
+  hub: string;
+  device_id: string;
+  path: string;
+  dest_dir: string;
+  mirror_deletes: boolean;
+  paused: boolean;
+  status: 'ok' | 'no_access';
+  files: { pending: number; done: number; failed: number; removed: number };
+};
+
+/** HANDOFF §5: whether to mirror deletions is asked at subscribe time, defaulting to no. */
+async function askMirrorDeletes(): Promise<boolean> {
+  if (!process.stdin.isTTY) return false;
+  const { createInterface } = await import('node:readline/promises');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const a = await rl.question(
+      'When a file is deleted at the source, move your copy to the trash too? [y/N] ',
+    );
+    return /^y(es)?$/i.test(a.trim());
+  } finally {
+    rl.close();
+  }
+}
+
+program
+  .command('subscribe <device_id> <path>')
+  .description('follow a folder on another device: new files download, changes follow')
+  .option('--hub <id>', 'the hub to follow it through (needed when on several)')
+  .option('--dest <dir>', 'folder to keep the files in (default: downloads/<folder name>)')
+  .option('--mirror-deletes', 'move local copies to the trash when deleted at the source')
+  .option('--no-mirror-deletes', 'keep local copies when files are deleted at the source')
+  .option('--flat', 'only the files directly in the folder, not its subfolders')
+  .action(
+    (
+      device: string,
+      path: string,
+      opts: { hub?: string; dest?: string; mirrorDeletes?: boolean; flat?: boolean },
+    ) =>
+      viaDaemon(async (c) => {
+        const hubId = await pickHub(c, opts.hub);
+        const mirror = opts.mirrorDeletes ?? (await askMirrorDeletes());
+        const { subscription: s } = await c.post<{ subscription: Subscription }>(
+          '/v1/subscriptions',
+          {
+            hub: hubId,
+            device,
+            path,
+            mirror_deletes: mirror,
+            recursive: !opts.flat,
+            ...(opts.dest ? { dest: resolve(opts.dest) } : {}),
+          },
+        );
+        console.log(`${s.id}  following ${s.path} → ${s.dest_dir}`);
+        console.log(
+          `  deletions at the source: ${s.mirror_deletes ? 'moved to the trash here too' : 'kept here'}`,
+        );
+      }),
+  );
+
+const subs = program.command('subscriptions').description('folders you follow');
+
+subs
+  .command('list', { isDefault: true })
+  .description('list subscriptions and their files')
+  .action(() =>
+    viaDaemon(async (c) => {
+      const { subscriptions } = await c.get<{ subscriptions: Subscription[] }>('/v1/subscriptions');
+      if (subscriptions.length === 0) console.log('no subscriptions');
+      for (const s of subscriptions) {
+        const state = s.paused
+          ? 'paused'
+          : s.status === 'no_access'
+            ? 'not shared with you (or gone)'
+            : 'following';
+        const f = s.files;
+        console.log(`${s.id}  ${state}  ${s.hub}  ${s.device_id}  ${s.path} → ${s.dest_dir}`);
+        console.log(
+          `    ${f.done} here, ${f.pending} downloading` +
+            (f.failed ? `, ${f.failed} no longer available` : '') +
+            (f.removed ? `, ${f.removed} kept after deletion at the source` : '') +
+            `; deletions: ${s.mirror_deletes ? 'mirrored to the trash' : 'kept'}`,
+        );
+      }
+    }),
+  );
+
+subs
+  .command('set <id>')
+  .description('change a subscription')
+  .option('--mirror-deletes <on|off>', 'mirror deletions at the source (to the trash)')
+  .option('--pause', 'stop following for now')
+  .option('--resume', 'follow again, catching up on what changed')
+  .action((id: string, opts: { mirrorDeletes?: string; pause?: boolean; resume?: boolean }) =>
+    viaDaemon(async (c) => {
+      const patch: { mirror_deletes?: boolean; paused?: boolean } = {};
+      if (opts.mirrorDeletes !== undefined) {
+        if (!['on', 'off'].includes(opts.mirrorDeletes))
+          throw new Error('--mirror-deletes takes on or off');
+        patch.mirror_deletes = opts.mirrorDeletes === 'on';
+      }
+      if (opts.pause && opts.resume) throw new Error('choose --pause or --resume');
+      if (opts.pause || opts.resume) patch.paused = !!opts.pause;
+      if (Object.keys(patch).length === 0) throw new Error('nothing to change');
+      await c.put(`/v1/subscriptions/${encodeURIComponent(id)}`, patch);
+      console.log(`updated ${id}`);
+    }),
+  );
+
+subs
+  .command('remove <id>')
+  .description('stop following (files already here stay)')
+  .action((id: string) =>
+    viaDaemon(async (c) => {
+      await c.delete(`/v1/subscriptions/${encodeURIComponent(id)}`);
+      console.log(`stopped following (${id}); files already here stay`);
+    }),
+  );
+
 // ── daemon & status ─────────────────────────────────────────────────────────
 
 program

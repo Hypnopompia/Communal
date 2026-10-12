@@ -94,8 +94,22 @@ interface Session {
   snapshot?: { rev: number; nextPage: number };
   /** The device's latest `network.profile` (memory only; resent after every sign-in). */
   profile?: ClientBody<'network.profile'>;
+  /** Folders this device watches, keyed by `device_id + path` (resent after every sign-in). */
+  watches: Map<string, LiveWatch>;
   log: Logger;
 }
+
+/** A live subscription: `sent` is the owner's index rev the watcher was last brought up to. */
+interface LiveWatch {
+  device: string;
+  path: string;
+  recursive: boolean;
+  sent: number;
+}
+
+/** Max watches per session, and max files + removals per `watch.event` page. */
+const MAX_WATCHES = 1_000;
+const WATCH_PAGE = 1_000;
 
 interface Brokered {
   downloader: Session;
@@ -240,6 +254,7 @@ export class HubServer {
       nonce: randomBytes(32),
       observedAddr: `${remote.replace(/^::ffff:/, '')}:${req.socket.remotePort ?? 0}`,
       lastSeen: Date.now(),
+      watches: new Map(),
       log: this.log.child({ session_id: id }),
     };
     this.sessions.add(s);
@@ -407,6 +422,14 @@ export class HubServer {
           return this.send(s, 'ok', {}, msg.id);
         case 'acl.replace':
           return this.onAcl(s, msg.id, msg.body.device_id, msg.body.rules, true);
+        case 'watch':
+          return this.onWatch(s, msg.id, msg.body);
+        case 'unwatch': {
+          const path = folderPath(msg.body.path);
+          s.watches.delete(watchKey(msg.body.device_id, path));
+          this.db.removeWatch(s.device!, msg.body.device_id, path);
+          return this.send(s, 'ok', {}, msg.id);
+        }
         default:
           return this.fail(s, 'not_implemented', `${msg.t} is not implemented yet`, msg.id);
       }
@@ -583,6 +606,7 @@ export class HubServer {
     s.snapshot = undefined;
     s.log.info({ rev: body.rev, entries: this.db.entryCount(device) }, 'index snapshot applied');
     this.send(s, 'index.ack', { rev: body.rev }, re);
+    this.notifyWatchers((w) => w.device === device);
   }
 
   private onDelta(s: Session, re: string, body: ClientBody<'index.delta'>) {
@@ -594,6 +618,87 @@ export class HubServer {
     }
     this.db.applyDelta(device, body.rev, body.upsert, body.remove);
     this.send(s, 'index.ack', { rev: body.rev }, re);
+    this.notifyWatchers((w) => w.device === device);
+  }
+
+  // ── subscriptions (HANDOFF §5 "Subscriptions", ADR 0013) ──────────────────
+
+  private onWatch(s: Session, re: string, body: ClientBody<'watch'>) {
+    const path = folderPath(body.path);
+    if (body.device_id === s.device)
+      return this.fail(s, 'bad_request', 'cannot watch a folder on this device', re);
+    // Same answer whether the device or folder doesn't exist or the watcher can't see into it.
+    if (!this.catalog.canWatch(s.user!, body.device_id, path))
+      return this.fail(s, 'not_found', 'no such folder', re);
+    const key = watchKey(body.device_id, path);
+    if (!s.watches.has(key) && s.watches.size >= MAX_WATCHES)
+      return this.fail(s, 'rate_limited', 'too many subscriptions', re);
+    this.db.putWatch({
+      user_id: s.user!,
+      watcher_device: s.device!,
+      device_id: body.device_id,
+      path,
+      recursive: body.recursive,
+      mirror_deletes: body.mirror_deletes,
+      since_rev: body.since_rev,
+    });
+    const w: LiveWatch = { device: body.device_id, path, recursive: body.recursive, sent: 0 };
+    s.watches.set(key, w);
+    this.send(s, 'ok', {}, re);
+    // Catch up from since_rev. A since_rev beyond the device's rev means the hub's index was
+    // rebuilt since (or the client is confused): start again from everything.
+    const since = body.since_rev > this.db.indexRev(body.device_id) ? 0 : body.since_rev;
+    this.sendWatchChanges(s, w, since, true);
+  }
+
+  /**
+   * Sends what changed in a watched folder since `since`, in pages. Every page but the last
+   * carries `since` as its rev, so a watcher that stores each event's rev as its cursor never
+   * skips a page it didn't get.
+   */
+  private sendWatchChanges(s: Session, w: LiveWatch, since: number, always: boolean) {
+    const rev = this.db.indexRev(w.device);
+    const { added, removed } = this.catalog.watchChanges(
+      s.user!,
+      w.device,
+      w.path,
+      w.recursive,
+      since,
+    );
+    w.sent = rev;
+    if (!always && added.length === 0 && removed.length === 0) return;
+    const items = [...removed.map((p) => ({ removed: p })), ...added.map((e) => ({ added: e }))];
+    for (let i = 0; i === 0 || i < items.length; i += WATCH_PAGE) {
+      const page = items.slice(i, i + WATCH_PAGE);
+      const last = i + WATCH_PAGE >= items.length;
+      this.send(s, 'watch.event', {
+        device_id: w.device,
+        path: w.path,
+        rev: last ? rev : since,
+        added: page.flatMap((x) => ('added' in x ? [x.added] : [])),
+        removed: page.flatMap((x) => ('removed' in x ? [x.removed] : [])),
+      });
+    }
+  }
+
+  /** Brings matching live watches up to date (after index changes). */
+  private notifyWatchers(match: (w: LiveWatch, watcher: Session) => boolean) {
+    for (const s of this.online.values()) {
+      for (const w of s.watches.values())
+        if (match(w, s)) this.sendWatchChanges(s, w, w.sent, false);
+    }
+  }
+
+  /**
+   * After a change in who can see what (rules, connections, groups), re-sends everything the
+   * matching watchers can now see. Files that just became visible would otherwise never be
+   * announced, since their rev is old. Clients ignore what they already have, and a file that
+   * became invisible is simply not mentioned: losing access never looks like a deletion.
+   */
+  private rewatch(match: (w: LiveWatch, watcher: Session) => boolean) {
+    for (const s of this.online.values()) {
+      for (const w of s.watches.values()) if (match(w, s)) this.sendWatchChanges(s, w, 0, false);
+    }
   }
 
   // ── people: user search, connections, groups (HANDOFF §2, §5) ─────────────
@@ -667,6 +772,11 @@ export class HubServer {
     // Newly connected: each now sees the other's devices.
     this.announceDevices(me, [requester], true);
     this.announceDevices(requester, [me], true);
+    // List rules naming either of them now apply.
+    this.rewatch((w, x) => {
+      const owner = this.db.getDevice(w.device)?.user_id;
+      return (x.user === me && owner === requester) || (x.user === requester && owner === me);
+    });
   }
 
   private onConnectionRemove(s: Session, re: string, other: string) {
@@ -701,6 +811,9 @@ export class HubServer {
     this.db.upsertGroup(me, id, body.name, [...new Set(body.members)]);
     const group = this.db.groupsOf(me).find((g) => g.group_id === id)!;
     this.send(s, 'group.listing', { groups: [group] }, re);
+    // New members may now see files shared with the group.
+    const members = new Set(group.members);
+    this.rewatch((w, x) => members.has(x.user!) && this.db.getDevice(w.device)?.user_id === me);
   }
 
   // ── brokering (HANDOFF §8; no relay, ever) ─────────────────────────────────
@@ -846,6 +959,7 @@ export class HubServer {
       }
     }
     const before = this.db.sharesWithHub(s.user!);
+    const rulesBefore = JSON.stringify(this.db.rules(deviceId));
     if (replace) {
       this.db.replaceRules(
         deviceId,
@@ -855,6 +969,9 @@ export class HubServer {
       this.db.setRule(deviceId, rules[0]!.path, rules[0]!.audience);
     }
     this.send(s, 'ok', {}, re);
+    // acl.replace comes with every sign-in; only an actual change can make files visible.
+    if (JSON.stringify(this.db.rules(deviceId)) !== rulesBefore)
+      this.rewatch((w) => w.device === deviceId);
     // Sharing with the whole hub makes this user's devices' presence visible to everyone.
     const after = this.db.sharesWithHub(s.user!);
     if (before !== after) {
@@ -908,3 +1025,10 @@ export class HubServer {
     }
   }
 }
+
+/** Watched paths are folders: `Photos` and `Photos/` are the same subscription. */
+function folderPath(p: string): string {
+  return p.endsWith('/') ? p : p + '/';
+}
+
+const watchKey = (device: string, path: string) => `${device}\0${path}`;

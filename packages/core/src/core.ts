@@ -20,6 +20,7 @@ import {
 } from './transfer/uploader.js';
 import { Downloads, type DownloadOptions } from './transfer/downloader.js';
 import { Streams } from './transfer/stream.js';
+import { Subscriptions, type TrashFn } from './subscriptions.js';
 import { MediaWorker, type MediaOptions } from './media/worker.js';
 import { ThumbCache, ThumbStore } from './media/thumbs.js';
 import { Previews } from './media/previews.js';
@@ -28,6 +29,7 @@ import type { ThumbSize } from './media/analyze.js';
 import { IndexSync } from './index/sync.js';
 import { searchAll, type MergedSearch } from './search.js';
 import type { HubClientOptions } from './hub-client.js';
+import { CoreError } from './errors.js';
 
 export interface CoreOptions {
   dataDir: string;
@@ -52,19 +54,17 @@ export interface CoreOptions {
   >;
   /** Metadata and thumbnails of our own files (M6); `thumbCacheBytes` caps the viewer cache. */
   media?: Omit<MediaOptions, 'log'> & { thumbCacheBytes?: number };
+  /**
+   * Folder subscriptions (M7). `trash` replaces the OS trash for deleted files (tests);
+   * `retryMs` is how often refused folders are asked about again.
+   */
+  subscriptions?: { trash?: TrashFn; retryMs?: number };
   /** Fault injection for tests only. */
   testHooks?: UploaderTestHooks;
   log?: Logger;
 }
 
-export class CoreError extends Error {
-  constructor(
-    readonly code: 'bad_request' | 'not_found' | 'conflict' | 'unavailable',
-    message: string,
-  ) {
-    super(message);
-  }
-}
+export { CoreError };
 
 /** A share name becomes the first segment of every hub-visible path. */
 const SHARE_NAME = /^(?!\.{1,2}$)[^/\\\0]{1,255}$/;
@@ -88,6 +88,7 @@ export class CommunalCore {
   readonly thumbCache: ThumbCache;
   readonly previews: Previews;
   readonly streams: Streams;
+  readonly subscriptions: Subscriptions;
   uploadLimits: UploadLimits;
   readonly log: Logger;
   private readonly hubsFile: string;
@@ -156,6 +157,14 @@ export class CommunalCore {
       this.store,
       o.media?.thumbCacheBytes ?? 256 * 1024 * 1024,
     );
+    this.subscriptions = new Subscriptions({
+      store: this.store,
+      hubs: this.hubs,
+      downloads: this.downloads,
+      downloadsDir: o.downloadsDir ?? join(o.dataDir, 'downloads'),
+      ...o.subscriptions,
+      log: this.log,
+    });
     const answerTimeoutMs = o.downloads?.answerTimeoutMs;
     this.previews = new Previews({
       broker: this.broker,
@@ -184,10 +193,12 @@ export class CommunalCore {
     await this.indexer.start();
     this.media.start();
     this.downloads.start();
+    this.subscriptions.start();
   }
 
   async stop() {
     await this.downloads.stop();
+    await this.subscriptions.stop();
     this.streams.closeAll();
     this.media.stop();
     await this.indexer.stop();
@@ -249,6 +260,7 @@ export class CommunalCore {
   async removeHub(idOrUrl: string) {
     const entry = this.hubs.find(idOrUrl);
     if (!entry) throw new CoreError('not_found', `no such hub: ${idOrUrl}`);
+    await this.subscriptions.forgetHub(entry.id);
     await this.hubs.remove(entry.id);
     this.store.forgetHub(entry.id);
     this.store.dropRules({ hub: entry.id });

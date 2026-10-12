@@ -28,6 +28,7 @@ These came from the owner during development. Don't revert them to the spec's wo
 - People and access (per hub, `--hub` needed when on several): `communal people search|request|accept|remove|verify`, `communal group set|list|delete`, `communal acl set <path> me|hub|users:<ids>|groups:<ids>`.
 - Previews: `communal browse` (icon, metadata, ▣ = has thumbnail), `communal thumbs <hub> <device> <folder>` (batch into the cache), `communal peek <hub> <device> <hash>`.
 - Transfers: `communal get <hash>`, `communal transfers` (shows the diagnosis and tips when a source can't be reached), `communal cancel <id>`, `communal log` (who downloaded what from this device).
+- Subscriptions: `communal subscribe <device> <path> [--mirror-deletes|--no-mirror-deletes] [--dest]`, `communal subscriptions [list|set|remove]`.
 - Network: `communal netcheck` (NAT type per hub, UPnP/NAT-PMP mapping, IPv6, CGNAT). The daemon maps its UDP port on the router unless `COMMUNAL_UPNP=false`.
 - Hub admin: `communal-hub users | approve <user_id> | ban <user_id> [--reason] | unban <user_id> | set join_mode open|approval`. These commands work directly on the SQLite database, so they run alongside a live hub.
 
@@ -75,6 +76,11 @@ How the pieces connect:
   - On `no_path` or `handshake_failed`, both sides send `connect.failed` with their observations. The downloader's report is a request, and the hub answers it with the diagnosis from `diagnose()` in `apps/hub/src/diagnosis.ts`, a pure function covering the §8 table.
   - The transfer row keeps the diagnosis, and `explain()` in core `transfer/diagnosis.ts` holds the user-facing text.
   - `CommunalCore` leaves the router mapper off unless given one, so tests never touch a real router. Simulate bad networks with `peer.testDropPunches` and `network.override`.
+- **Subscriptions** (ADR 0013):
+  - Hub entries carry `rev` (the rev at which their content last changed), and removed paths leave `tombstones`, so `watch` can catch up from `since_rev`. Events go through `Catalog.watchChanges()` → `visible()`.
+  - **Losing access must never look like a deletion.** Hidden files simply stop being mentioned.
+  - Core `subscriptions.ts` applies events one at a time per subscription and only moves the cursor once an event is fully applied. Deleted files go to the OS trash (`trash`), never `rm`. Local copies the user changed are never touched.
+  - Tests inject `subscriptions.trash` so they never touch the real trash.
 - **Hub visibility** is decided in exactly one place, `Catalog.visible()` in `apps/hub/src/catalog.ts`. Never filter access in individual queries. Each entry carries its governing rule (`entries.rule_path`), which `HubDb` re-tags whenever rules change (ADR 0009).
 - **Access rules are per hub, and the client's copy is authoritative** (core `index.db` table `acl`). It's pushed whole with `acl.replace` on every sign-in. List grants only work while the two users are connected.
 - **Clients never trust a hub's claims about identity:** run `checkSummary` on every `UserSummary` (core `people.ts`).
@@ -99,6 +105,7 @@ How the pieces connect:
   - `catalog.test.ts`: index, search, browse, sources
   - `access.test.ts`: the audience × viewer matrix, connections, groups, rules
   - `broker.test.ts`: `connect.*`
+  - `watch.test.ts`: `watch` / `unwatch` / `watch.event`
 - Integration tests in `test/integration/` are named per milestone (`m1-…`, `m4-transfers…`). `CommunalCore` takes `peer: { loopback: true }` and short `downloads`/`indexer` timers for tests, plus `testHooks` for fault injection (e.g. corrupt chunks).
 - Social state for later milestones (connections etc.) can be seeded directly with `HubDb` methods such as `putConnection`.
 - Integration tests run the real hub and `HubClient`s, with timers shortened through constructor options. Never use real 30 s / 90 s waits.

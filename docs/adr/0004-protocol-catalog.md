@@ -45,6 +45,7 @@
 - **`welcome.nat_probe_ports`** are the ports the hub actually bound, so a hub configured with port 0 (tests) still reports usable ports.
 - **`Candidate`** is `{kind: lan|public|mapped|ipv6|advertised, host, port}`. `host` must be an IP literal (ADR 0001). The udx stream id is added in M4.
 - **Link codes** are formatted `XXXX-XXXX` (Crockford-ish alphabet, uppercase).
+- **`watch` / `unwatch`** (M7) are answered with `ok`. The path is normalised to a folder. After `ok`, the hub sends the catch-up as one or more `watch.event`s. Every page but the last carries the old cursor as its `rev` (ADR 0013).
 - **`SharePath`** is `ShareName/rel/path`. It rejects absolute paths, `..`, `.`, empty segments, backslashes and NUL. A trailing `/` marks a folder (ACL rules, browse, watch).
 
 ## Peer frame encoding

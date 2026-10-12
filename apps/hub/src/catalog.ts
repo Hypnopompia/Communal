@@ -1,5 +1,5 @@
 import type { ClientBody, HubBody } from '@communal/protocol';
-import { rowToEntry, type EntryRow, type HubDb } from './db.js';
+import { rowToEntry, type Entry, type EntryRow, type HubDb } from './db.js';
 
 /**
  * Search, browse and sources over the hub's index. Every query goes through `visible()`, the
@@ -169,6 +169,51 @@ export class Catalog {
         )
         .get({ viewer, device: deviceId, hash }) !== undefined
     );
+  }
+
+  /**
+   * Whether the viewer may watch a folder (HANDOFF §6: watch is filtered like browse): it's on
+   * one of their own devices, or they can see at least one entry under it.
+   */
+  canWatch(viewer: string, deviceId: string, dir: string): boolean {
+    const d = this.db.getDevice(deviceId);
+    if (!d || d.revoked_at !== null) return false;
+    if (d.user_id === viewer) return true;
+    return (
+      this.db.raw
+        .prepare(
+          `SELECT 1 FROM entries e WHERE e.device_id = @device AND substr(e.dir, 1, @len) = @dir
+           AND ${this.visible()} LIMIT 1`,
+        )
+        .get({ viewer, device: deviceId, dir, len: dir.length }) !== undefined
+    );
+  }
+
+  /**
+   * What changed in a watched folder after rev `since` (0: everything), as the viewer may see
+   * it: files that have a hash (only those can be downloaded), and removals. Tombstones carry a
+   * governing rule like entries, so deletions of files the viewer can't see stay hidden too.
+   */
+  watchChanges(
+    viewer: string,
+    deviceId: string,
+    dir: string,
+    recursive: boolean,
+    since: number,
+  ): { added: Entry[]; removed: string[] } {
+    const under = recursive ? 'substr(e.dir, 1, @len) = @dir' : 'e.dir = @dir';
+    const params = { viewer, device: deviceId, dir, len: dir.length, since };
+    const where = `e.device_id = @device AND ${under} AND (@since = 0 OR e.rev > @since) AND ${this.visible()}`;
+    const added = (
+      this.db.raw
+        .prepare(`SELECT e.* FROM entries e WHERE ${where} AND e.hash IS NOT NULL ORDER BY e.path`)
+        .all(params) as EntryRow[]
+    ).map(rowToEntry);
+    const removed = this.db.raw
+      .prepare(`SELECT e.path FROM tombstones e WHERE ${where} ORDER BY e.path`)
+      .pluck()
+      .all(params) as string[];
+    return { added, removed };
   }
 
   /** A device is browsable when the viewer can see at least one entry on it. */

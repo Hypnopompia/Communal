@@ -198,11 +198,15 @@ export class Indexer extends EventEmitter<IndexerEvents> {
     );
 
     let removed = 0;
+    const unseen = [...known.keys()].filter((rel) => !seen.has(rel));
+    const moved = movedFrom(unseen.map((rel) => ({ rel, ...known.get(rel)! })));
     this.store.batch(() => {
-      for (const d of detected) this.store.upsertFile({ share: name, ...d });
-      for (const rel of known.keys()) {
-        if (!seen.has(rel) && this.store.removeFile(name, rel)) removed++;
+      for (const d of detected) {
+        this.store.upsertFile({ share: name, ...d });
+        const from = known.has(d.rel) ? undefined : moved.get(`${d.size}:${d.mtime}`);
+        if (from) this.store.adoptContent(name, d.rel, { share: name, rel: from });
       }
+      for (const rel of unseen) if (this.store.removeFile(name, rel)) removed++;
     });
     const ms = Date.now() - started;
     this.log.info(
@@ -250,6 +254,8 @@ export class Indexer extends EventEmitter<IndexerEvents> {
     for (const [name, rels] of batch) {
       const share = this.store.share(name);
       if (!share) continue;
+      const added: Omit<FileRow, 'hash'>[] = [];
+      const gone: string[] = [];
       for (const rel of rels) {
         const abs = rel === '' ? share.root : join(share.root, ...rel.split('/'));
         const st = await lstat(abs).catch(() => null);
@@ -258,18 +264,36 @@ export class Indexer extends EventEmitter<IndexerEvents> {
           const mtime = Math.floor(st.mtimeMs);
           if (!prev || prev.size !== st.size || prev.mtime !== mtime) {
             const t = await detect(abs, rel.slice(rel.lastIndexOf('/') + 1));
-            this.store.upsertFile({ share: name, rel, size: st.size, mtime, ...t });
-            changed = true;
+            added.push({ share: name, rel, size: st.size, mtime, ...t });
           }
         } else if (st?.isDirectory()) {
           // A folder appeared (moved in): a scan picks up everything inside it.
           await this.scan(name);
         } else {
-          // Gone (or replaced by something unshareable): drop the file or everything under it.
+          gone.push(rel); // or replaced by something unshareable
+        }
+      }
+      // Additions first, so a file renamed within this batch keeps its hash (see movedFrom).
+      const moved = movedFrom(
+        gone.flatMap((rel) => {
+          const f = this.store.file(name, rel);
+          return f ? [f] : [];
+        }),
+      );
+      this.store.batch(() => {
+        for (const f of added) {
+          const isNew = !this.store.file(name, f.rel);
+          this.store.upsertFile(f);
+          const from = isNew ? moved.get(`${f.size}:${f.mtime}`) : undefined;
+          if (from) this.store.adoptContent(name, f.rel, { share: name, rel: from });
+          changed = true;
+        }
+        // Drop the file, or everything under a folder that went away.
+        for (const rel of gone) {
           if (this.store.removeFile(name, rel)) changed = true;
           if (this.store.removeUnder(name, rel) > 0) changed = true;
         }
-      }
+      });
     }
     if (changed) {
       this.emit('changed');
@@ -361,4 +385,21 @@ export class Indexer extends EventEmitter<IndexerEvents> {
       );
     }
   }
+}
+
+/**
+ * Removed files by size:mtime, for spotting renames and moves: a new file with exactly the
+ * same size and modification time (to the millisecond) as one that just went away is taken to
+ * be that file. Ambiguous signatures (two removed files alike) are left out.
+ */
+function movedFrom(removed: { rel: string; size: number; mtime: number }[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const dup = new Set<string>();
+  for (const f of removed) {
+    const k = `${f.size}:${f.mtime}`;
+    if (out.has(k)) dup.add(k);
+    out.set(k, f.rel);
+  }
+  for (const k of dup) out.delete(k);
+  return out;
 }

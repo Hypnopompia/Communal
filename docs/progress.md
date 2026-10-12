@@ -2,26 +2,119 @@
 
 ## Next up
 
-**M7 — Subscriptions.** HANDOFF §5 "Subscriptions" and §12. Starting points:
+**M8 — Devices and recovery.** HANDOFF §4, §11 (first launch) and §12. Starting points:
 
 - **What already exists:**
-  - `watch`, `unwatch` and `watch.event` are in the protocol. The hub answers `not_implemented`, and the `watches` table isn't created yet.
-  - Downloads already queue while the owner is offline and resume when they're back.
-  - Each watch belongs to one hub (ADR 0007).
+  - `link.*`, `account.restore`, `device.revoke` and `device.list` are in the protocol. The hub answers `not_implemented`.
+  - Certs, chain verification, revocations and both recovery-key formats are in `@communal/crypto`.
+  - `account.create` with `root_pubkey` + `chain` already keeps one `user_id` across hubs (ADR 0007).
+  - Peers verify cert chains both ways (ADR 0010), but don't check revocations yet.
 - **To do:**
-  - Hub: `watch` with an access check, through `Catalog.visible()` like everything else. Then `watch.event` on index deltas for visible paths only, and catch-up from `since_rev`.
-  - Client: subscriptions stored locally with a destination folder and `mirror_deletes` (asked at subscribe time, default no), auto-download of new hashes, and deletes to the OS trash.
-  - Losing access stops new downloads, and existing files stay.
-- **Done when:** adding and deleting files at the source propagates as specified, including after the subscriber was offline.
+  - Link codes with approval on an existing device.
+  - Revocation distributed to every hub and checked by peers.
+  - Recovery key export and restore.
+  - Rules for another of your own devices (carried over from M3).
+- **Done when:** a second desktop and a headless node are linked and both see all own files; a revoked device is refused by peers; restoring from a recovery key works with every device wiped.
 
 **Still open from M0:** the 1 GiB transfer between two physical machines on a LAN. It needs the owner's second machine.
 
 **Notes for M9 (desktop):**
 
 - `better-sqlite3` and `udx-native` are native modules. They need an Electron rebuild (or matching prebuilds) and a smoke test inside Electron's `utilityProcess`.
+- `trash` runs bundled binaries on macOS and Windows (`macos-trash`, `windows-trash.exe`). They must be unpacked from the asar (ADR 0013).
 - Settings needs a hub list (ADR 0007).
 - The access UI must show which hub each rule applies to.
 - Turn on the router port mapper (`RouterPortMapper`) the way the CLI daemon does. Settings → Network shows `GET /v1/network` and re-runs `POST /v1/network/check`. Transfers show `diagnosis.message`, `tips` and `fix` (ADR 0011).
+- The Subscribe button must ask about mirroring deletions, with "no" as the default. The API requires the answer.
+
+## M7 — Subscriptions (2026-10-12)
+
+**Status: done.** Details and decisions are in ADR 0013. No protocol changes.
+
+### What exists
+
+- **Hub:**
+  - `entries.rev` (the rev at which content last changed) and `tombstones` for removed paths, so the hub can say what changed since any rev. Snapshots now produce the same changes as deltas.
+  - `watch` with the same access check as browse. A folder you can't see looks like one that doesn't exist. Replies `ok`, then catches up from `since_rev`.
+  - Live `watch.event`s after every index change, filtered through `Catalog.visible()`, deletions included.
+  - Paged events, where only the last page advances the cursor.
+  - A full re-announcement when visibility widens: rules changed, a connection accepted, a group edited. Losing access is never reported as a deletion.
+  - `unwatch`, and the `watches` table (HANDOFF §10).
+- **Core** (`Subscriptions`):
+  - Subscriptions and their files are stored locally, with a cursor per subscription. Every subscription re-watches on sign-in, and refused ones are retried every 10 minutes.
+  - New files are downloaded, or copied when the content is already local. A move at the source becomes a local move.
+  - Changed files replace the old version, which goes to the trash.
+  - With `mirror_deletes`, deletions go to the **OS trash** (`trash` package), and emptied folders are removed.
+  - A local copy the user changed is never trashed or replaced.
+  - Downloads that no hub offers any more fail as "no longer available" instead of waiting forever. This applies to all downloads.
+- **Indexer:** a renamed or moved file keeps its hash, matched by identical size and millisecond mtime in the same batch, so a move reaches hubs as one delta.
+- **API:** `GET/POST /v1/subscriptions`, `PUT/DELETE /v1/subscriptions/:id`. `mirror_deletes` is required at creation.
+- **CLI:**
+  - `communal subscribe <device> <path> [--dest] [--mirror-deletes | --no-mirror-deletes] [--flat] [--hub]`. On a terminal it asks whether to mirror deletions, default no.
+  - `communal subscriptions [list]`, `subscriptions set <id> --mirror-deletes on|off | --pause | --resume`, `subscriptions remove <id>`.
+
+### Done criteria
+
+- [x] **Adding and deleting files at the source propagates as specified** (`test/integration/m7-subscriptions.test.ts`, real hub and cores):
+  - adds and deletes arrive live
+  - a deleted folder empties locally and is removed
+  - duplicates aren't downloaded twice
+- [x] **Including after the subscriber was offline:** with the subscriber stopped, an add, an edit and a delete at the source all arrive on restart, through catch-up from the stored cursor. Old versions and deleted files are in the trash.
+- [x] **Offline queueing:** a file announced while its owner is offline waits, and lands when the owner returns.
+- [x] **The mirror-deletes prompt plus trash:** asked at subscribe time and required by the API. Without it deleted files stay, with it they go to the trash. It can be changed later.
+- [x] **Access-loss behaviour:**
+  - nothing new is downloaded and nothing is deleted
+  - a pending download of a file no longer offered fails as "no longer available"
+  - the subscription shows `no_access`
+  - when access returns, it catches up, including the deletion it missed
+
+### Also tested
+
+- `apps/hub/src/watch.test.ts` (14), access control:
+  - no session
+  - invisible, missing and foreign folders get identical answers
+  - your own devices may watch private folders
+  - hidden files and their deletions are never sent
+  - a removed connection stops events with no deletions, and reconnecting re-announces the folder
+  - banned owners are hidden
+- `apps/hub/src/watch.test.ts`, catch-up and live events:
+  - catch-up from `since_rev`
+  - a cursor ahead of the hub
+  - snapshots as deltas
+  - non-recursive watches
+  - re-announcement only when rules really change
+  - `unwatch`
+  - paging
+  - tombstone retention
+- Also in `m7-subscriptions.test.ts`:
+  - moves become local moves with no new transfer
+  - locally edited files are never trashed
+  - the local API
+- `packages/core/src/index/index.test.ts`: renames keep their hash, through the watcher and through a scan, and ambiguous ones are hashed afresh.
+- The full suite (257 tests, including the 100k-file test: hashed and synced in 23 s) passes. The M4, M7 and watch tests passed 3 times in a row.
+
+### Demo (dev stack)
+
+```bash
+A sh -c 'mkdir -p /tmp/m7/trip && echo one > /tmp/m7/one.txt && echo two > /tmp/m7/trip/two.txt'
+A share add /tmp/m7 --name M7; A acl set M7/ hub
+B subscribe <alice_device> M7/ --mirror-deletes --dest /var/lib/communal/sub-m7
+B subscriptions                          # 2 here, 0 downloading; deletions: mirrored to the trash
+A sh -c 'mkdir /tmp/m7/later && mv /tmp/m7/one.txt /tmp/m7/later/'   # bob moves his copy, no download
+docker compose -f docker/compose.dev.yml stop node-b
+A sh -c 'echo four > /tmp/m7/four.txt && rm /tmp/m7/trip/two.txt'
+docker compose -f docker/compose.dev.yml start node-b                # catches up: four.txt here, two.txt in ~/.local/share/Trash
+```
+
+The same steps, with other file names, were run against the dev stack. A first try that moved one 4-byte file while deleting another written in the same millisecond was correctly treated as ambiguous: download plus trash instead of a local move.
+
+### Carried forward
+
+- **A tombstone's visibility follows the current rules.** Making a folder public reveals the _paths_ of files deleted from it earlier, to watchers who were away. It never reveals content (ADR 0013).
+- **Deletions older than 180 days** are forgotten by the hub. A subscriber away longer gets all current files back, but keeps copies of files deleted before the window.
+- **A live rename only keeps its hash when its unlink and add land in the same watcher batch** (2 s). Otherwise the subscriber trashes and re-downloads, which is correct, just slower.
+- **Full re-announcements** after a visibility change send the whole visible folder. That's fine for thousands of files. Very large subscribed folders on hubs where rules change often may want a cheaper diff later.
+- **Desktop UI** (Subscriptions screen, HANDOFF §11): M9.
 
 ## M6 — File types, metadata, thumbnails, previews (2026-10-12)
 

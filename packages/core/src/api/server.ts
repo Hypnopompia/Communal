@@ -200,6 +200,46 @@ export class LocalApi {
         throw new CoreError('not_found', 'no such download');
       return { ok: true };
     });
+    // ── subscriptions (M7) ──
+    route('GET', '/v1/subscriptions', async () => ({
+      subscriptions: this.core.subscriptions.list(),
+    }));
+    route('POST', '/v1/subscriptions', async (_req, _url, body) => {
+      const b = z
+        .object({
+          hub: z.string(),
+          device: z.string(),
+          path: z.string().min(1).max(4096),
+          dest: z.string().min(1).max(4096).optional(),
+          // Asked at subscribe time (HANDOFF §5), so it's required here rather than defaulted.
+          mirror_deletes: z.boolean(),
+          recursive: z.boolean().default(true),
+        })
+        .parse(body);
+      return {
+        subscription: await this.core.subscriptions.add({
+          hub: b.hub,
+          device: b.device,
+          path: b.path,
+          mirrorDeletes: b.mirror_deletes,
+          recursive: b.recursive,
+          ...(b.dest ? { dest: b.dest } : {}),
+        }),
+      };
+    });
+    route('PUT', '/v1/subscriptions/:id', async (req, url, body) => {
+      const b = z
+        .object({ mirror_deletes: z.boolean(), paused: z.boolean() })
+        .partial()
+        .parse(body);
+      await this.core.subscriptions.update(param(req, url, 1), b);
+      return { ok: true };
+    });
+    route('DELETE', '/v1/subscriptions/:id', async (req, url) => {
+      await this.core.subscriptions.remove(param(req, url, 1));
+      return { ok: true };
+    });
+
     route('GET', '/v1/uploads/log', async (_req, url) => {
       const p = z
         .object({

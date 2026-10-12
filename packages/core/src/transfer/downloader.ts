@@ -59,6 +59,9 @@ class Retryable extends Error {
   }
 }
 
+/** The error of a download whose file no hub offers us any more. */
+export const GONE = 'no longer available (deleted, changed, or not shared with you any more)';
+
 const NOTHING_KNOWN = { nat: 'unknown', upnp: false, ipv6: false, cgnat: false } as const;
 
 const newTransferId = () => 't_' + toBase32(randomBytes(10));
@@ -208,20 +211,28 @@ export class Downloads extends EventEmitter<DownloadEvents> {
     if (retry) this.schedule(id, this.o.retryMs);
   }
 
-  /** Online sources across every hub (deduplicated by device; never ourselves). */
-  private async sources(hash: string): Promise<Source[]> {
+  /**
+   * Online sources across every hub (deduplicated by device; never ourselves). `gone` means
+   * every hub answered and none lists a copy we may fetch, online or not: the file was
+   * deleted or changed, or isn't shared with us any more.
+   */
+  private async sources(hash: string): Promise<{ online: Source[]; gone: boolean }> {
     const results = await this.o.hubs.requestAll('sources', { hash });
     const seen = new Set<string>();
-    const out: Source[] = [];
+    const online: Source[] = [];
+    let listed = false;
     for (const r of results) {
       if (!r.ok || r.msg.t !== 'sources.list') continue;
       for (const s of r.msg.body.sources) {
-        if (!s.online || s.device_id === this.o.myDevice || seen.has(s.device_id)) continue;
+        if (s.device_id === this.o.myDevice) continue;
+        listed = true;
+        if (!s.online || seen.has(s.device_id)) continue;
         seen.add(s.device_id);
-        out.push({ hub: r.hub, device: s.device_id });
+        online.push({ hub: r.hub, device: s.device_id });
       }
     }
-    return out;
+    const answered = results.every((r) => r.ok && r.msg.t === 'sources.list');
+    return { online, gone: answered && !listed };
   }
 
   private connect(src: Source, hash: string): Promise<PeerChannel> {
@@ -235,7 +246,8 @@ export class Downloads extends EventEmitter<DownloadEvents> {
   }
 
   private async download(t: TransferRow, signal: AbortSignal): Promise<string> {
-    const sources = await this.sources(t.hash);
+    const { online: sources, gone } = await this.sources(t.hash);
+    if (gone) throw new Error(GONE);
     if (sources.length === 0) {
       // The hubs list the file's sources as offline: no need to try reaching them.
       throw new Retryable('no source is online', {
@@ -524,7 +536,8 @@ async function openOrCreate(path: string): Promise<FileHandle> {
   }
 }
 
-async function uniquePath(dir: string, name: string): Promise<string> {
+/** `dir/name`, or `dir/stem (n).ext` for the first n that doesn't exist yet. */
+export async function uniquePath(dir: string, name: string): Promise<string> {
   const ext = extname(name);
   const stem = name.slice(0, name.length - ext.length);
   for (let n = 0; ; n++) {

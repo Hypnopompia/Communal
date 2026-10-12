@@ -1,4 +1,13 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -166,6 +175,50 @@ describe('indexer', () => {
     await idx.scan('Stuff');
     const log = store.changesSince(before, 100).map((c) => `${c.op} ${c.rel}`);
     expect(log.sort()).toEqual(['remove gone.txt', 'upsert new.txt']);
+    store.close();
+  });
+
+  it('keeps the hash of a renamed or moved file instead of hashing it again', async () => {
+    const { root, store, idx } = setup();
+    writeFileSync(join(root, 'a.txt'), 'same content');
+    writeFileSync(join(root, 'sub', 'x.bin'), 'xx');
+    writeFileSync(join(root, 'sub', 'y.bin'), 'yy');
+    await idx.start();
+    await until(() => store.counts().hashed === 3);
+    const hash = store.file('Stuff', 'a.txt')!.hash;
+    // Watch the hasher: an adopted hash means renamed files never go back into its queue.
+    const queued: string[] = [];
+    const next = store.nextUnhashed.bind(store);
+    store.nextUnhashed = (n) => {
+      const rows = next(n);
+      queued.push(...rows.map((r) => r.rel));
+      return rows;
+    };
+
+    // Live rename (watcher batch) …
+    renameSync(join(root, 'a.txt'), join(root, 'sub', 'b.txt'));
+    await until(() => !store.file('Stuff', 'a.txt') && !!store.file('Stuff', 'sub/b.txt')?.hash);
+    expect(store.file('Stuff', 'sub/b.txt')!.hash).toBe(hash);
+
+    // … and one only a scan sees (deterministic, so the hasher queue is checked here; a live
+    // rename's unlink and add can straddle two watcher batches in a test this fast).
+    await idx.removeShare('Stuff');
+    queued.length = 0;
+    renameSync(join(root, 'sub', 'b.txt'), join(root, 'c.txt'));
+    await idx.rescanAll(); // also wakes the hasher
+    expect(store.file('Stuff', 'c.txt')!.hash).toBe(hash);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(queued).not.toContain('c.txt');
+
+    // Two vanished files alike can't be told apart: both new names are hashed afresh.
+    const t = new Date('2024-01-01T00:00:00Z');
+    for (const n of ['x.bin', 'y.bin']) utimesSync(join(root, 'sub', n), t, t);
+    await idx.scan('Stuff');
+    renameSync(join(root, 'sub', 'x.bin'), join(root, 'x2.bin'));
+    renameSync(join(root, 'sub', 'y.bin'), join(root, 'y2.bin'));
+    await idx.scan('Stuff');
+    expect(store.file('Stuff', 'x2.bin')!.hash).toBeNull();
+    await idx.stop();
     store.close();
   });
 
