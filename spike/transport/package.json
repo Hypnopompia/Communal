@@ -1,0 +1,21 @@
+{
+  "name": "@communal/spike-transport",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "bench": "tsx --conditions=@communal/source src/bench.ts local"
+  },
+  "dependencies": {
+    "@communal/crypto": "workspace:*",
+    "@hyperswarm/secret-stream": "^6.9.2",
+    "@noble/hashes": "^2.4.0",
+    "b4a": "^1.9.0",
+    "udx-native": "^1.21.3"
+  },
+  "bin": {
+    "communal-spike": "./dist/bench.js"
+  }
+}

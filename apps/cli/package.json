@@ -1,0 +1,20 @@
+{
+  "name": "@communal/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "communal": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsx --conditions=@communal/source src/main.ts"
+  },
+  "dependencies": {
+    "@communal/crypto": "workspace:*",
+    "@communal/protocol": "workspace:*",
+    "commander": "^15.0.0",
+    "pino": "^10.4.0"
+  }
+}
