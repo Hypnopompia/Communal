@@ -230,11 +230,7 @@ export class Indexer extends EventEmitter<IndexerEvents> {
     });
     const mark = (abs: string) => {
       const rel = abs === share.root ? '' : toRel(share.root, abs);
-      if (rel === null) return;
-      let set = this.dirty.get(name);
-      if (!set) this.dirty.set(name, (set = new Set()));
-      set.add(rel);
-      this.flushTimer ??= setTimeout(() => void this.flush(), this.o.flushMs);
+      if (rel !== null) this.touch(name, rel);
     };
     w.on('add', mark)
       .on('change', mark)
@@ -243,6 +239,14 @@ export class Indexer extends EventEmitter<IndexerEvents> {
       .on('addDir', mark);
     w.on('error', (err) => this.log.warn({ share: name, err: String(err) }, 'watcher error'));
     this.watchers.set(name, w);
+  }
+
+  /** Queues a path (file or folder, `''` for the root) for the next batch, as a watcher event does. */
+  touch(share: string, rel: string) {
+    let set = this.dirty.get(share);
+    if (!set) this.dirty.set(share, (set = new Set()));
+    set.add(rel);
+    this.flushTimer ??= setTimeout(() => void this.flush(), this.o.flushMs);
   }
 
   /** Applies batched watcher events: re-stat each dirty path and update the index. */
@@ -370,8 +374,7 @@ export class Indexer extends EventEmitter<IndexerEvents> {
       const st = await lstat(abs);
       if (!st.isFile() || st.size !== f.size || Math.floor(st.mtimeMs) !== f.mtime) {
         // Changed since indexed; let the watcher/scan path refresh metadata first.
-        this.dirty.set(f.share, (this.dirty.get(f.share) ?? new Set()).add(f.rel));
-        this.flushTimer ??= setTimeout(() => void this.flush(), this.o.flushMs);
+        this.touch(f.share, f.rel);
         this.hashFailures.set(`${f.share}/${f.rel}`, `${f.size}:${f.mtime}`);
         return;
       }

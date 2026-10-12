@@ -195,15 +195,20 @@ describe('indexer', () => {
       return rows;
     };
 
-    // Live rename (watcher batch) …
-    renameSync(join(root, 'a.txt'), join(root, 'sub', 'b.txt'));
-    await until(() => !store.file('Stuff', 'a.txt') && !!store.file('Stuff', 'sub/b.txt')?.hash);
-    expect(store.file('Stuff', 'sub/b.txt')!.hash).toBe(hash);
-
-    // … and one only a scan sees (deterministic, so the hasher queue is checked here; a live
-    // rename's unlink and add can straddle two watcher batches in a test this fast).
+    // Live rename: its unlink and add in one watcher batch. The events are fed in by hand
+    // because macOS can drop folder events outright under heavy disk load (FSEvents), e.g. while
+    // the M2 test writes 100k files; only the periodic rescan would then notice the move.
     await idx.removeShare('Stuff');
-    queued.length = 0;
+    renameSync(join(root, 'a.txt'), join(root, 'sub', 'b.txt'));
+    idx.touch('Stuff', 'a.txt');
+    idx.touch('Stuff', 'sub/b.txt');
+    await idx.flush(); // also wakes the hasher
+    expect(store.file('Stuff', 'a.txt')).toBeUndefined();
+    expect(store.file('Stuff', 'sub/b.txt')!.hash).toBe(hash);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(queued).not.toContain('sub/b.txt');
+
+    // … and one only a scan sees.
     renameSync(join(root, 'sub', 'b.txt'), join(root, 'c.txt'));
     await idx.rescanAll(); // also wakes the hasher
     expect(store.file('Stuff', 'c.txt')!.hash).toBe(hash);
