@@ -24,6 +24,15 @@
 - Settings → Account: export the recovery key with `POST /v1/recovery`. It only works on a device where `GET /v1/account` says `holds_root_key`; elsewhere, say which device to use.
   - Store `root.key` with `safeStorage`, and pass it as `CoreOptions.root`.
 
+**Do in M9: source availability in search.** Today an offline device's entries stay in the hub index indefinitely. Search and browse still return them with `online: false`, and the ranking ignores whether a source is online. A download of a file with no online source sits in `waiting` (`peer_offline`) until a source comes back. A file whose owner has been gone for weeks looks the same as one whose owner went to lunch. `devices.last_seen` is recorded but only shown to the owner. Planned changes:
+
+- Add `last_seen` to each source in `search` and `sources.list`, so the UI can say "offline · seen 3 weeks ago". These are new fields, so record them in ADR 0004.
+- Add an availability filter to `search`: any (the default), online now, or seen within N days. It belongs in the search query, not in `Catalog.visible()`, because it's about relevance, not access. Online state lives in memory, so pass the online device ids into the SQL rather than filtering after the query (which breaks paging).
+- Rank by availability within relevance: online, then recently seen, then stale.
+- Desktop search gets a "Show only available files" toggle, and each hit shows when its sources were last seen. The CLI gets matching `search` flags.
+- Decide before building: `last_seen` reveals when someone was last active. Presence already shows online/offline, so this adds history. Consider rounding to "today / this week / this month / longer" instead of sending exact timestamps, and record the choice in an ADR.
+- Later, with the hub admin UI: a retention setting that hides a device's entries after X days unseen. Its next snapshot would restore them.
+
 ## M8 — Devices and recovery (2026-10-12)
 
 **Status: done.** Details and decisions are in ADR 0014. Protocol changes are listed in ADR 0004.
