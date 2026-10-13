@@ -227,6 +227,31 @@ describe('indexer', () => {
     store.close();
   });
 
+  it('catches siblings the watcher missed when anything in their folder changes', async () => {
+    const root = join(dir, 'share');
+    mkdirSync(join(root, 'sub'), { recursive: true });
+    writeFileSync(join(root, 'a.txt'), 'a');
+    writeFileSync(join(root, 'sub', 'keep.txt'), 'k');
+    const store = new IndexStore(join(dir, 'index.db'));
+    store.addShare('Stuff', root, []);
+    const idx = new Indexer(store, { flushMs: 10_000, log: quiet });
+    await idx.start();
+    // No watcher: every event below is "missed" except the one reported by hand.
+    await idx.removeShare('Stuff');
+    writeFileSync(join(root, 'b.txt'), 'b');
+    writeFileSync(join(root, 'c.txt'), 'c');
+    unlinkSync(join(root, 'a.txt'));
+    writeFileSync(join(root, '.DS_Store'), 'junk');
+    idx.noteChange('Stuff', 'b.txt');
+    await idx.flush();
+    const rels = () => [...store.fileNamesIn('Stuff', '')].sort();
+    expect(rels()).toEqual(['b.txt', 'c.txt']);
+    // Files in other folders are left to their own events (and the periodic rescan).
+    expect([...store.fileNamesIn('Stuff', 'sub')]).toEqual(['keep.txt']);
+    await idx.stop();
+    store.close();
+  });
+
   it('catches changes the watcher missed with a periodic rescan', async () => {
     const root = join(dir, 'share');
     mkdirSync(root);

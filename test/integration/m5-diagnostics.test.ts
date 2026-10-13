@@ -19,6 +19,7 @@ import {
   type Explained,
   type NetworkProfile,
   type PortMapper,
+  apiSocketPath,
 } from '@communal/core';
 import { HubDb } from '@communal/hub';
 import { sleep, startTestHub, type TestHub } from '@communal/hub/testing';
@@ -185,7 +186,7 @@ describe('M5: connect.failed diagnosis', () => {
     });
 
     const api = new LocalApi(bob);
-    const sock = join(tmp('communal-m5-sock-'), 'api.sock');
+    const sock = apiSocketPath(tmp('communal-m5-sock-'));
     await api.listen({ socketPath: sock });
     cleanups.push(() => api.close());
     const { downloads } = await new LocalApiClient({ socketPath: sock }).get<{

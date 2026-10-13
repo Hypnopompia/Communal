@@ -25,6 +25,7 @@ import {
   LocalApiClient,
   linkDevice,
   type HubEntry,
+  apiSocketPath,
 } from '@communal/core';
 import { HubDb } from '@communal/hub';
 import { sleep, startTestHub, type TestHub } from '@communal/hub/testing';
@@ -347,7 +348,7 @@ describe('M8: devices and recovery', () => {
     const [h1, h2] = [await hub(), await hub()];
     const a = await alice(h1, h2);
     const api = new LocalApi(a.c);
-    const socketPath = join(a.c.dataDir, 'api.sock');
+    const socketPath = apiSocketPath(a.c.dataDir);
     await api.listen({ socketPath });
     cleanups.push(() => api.close());
     const c = new LocalApiClient({ socketPath });

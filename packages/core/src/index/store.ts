@@ -392,6 +392,20 @@ export class IndexStore {
     return gone;
   }
 
+  /** Names of the files directly in a folder (`''` for the share root), not in subfolders. */
+  fileNamesIn(share: string, dirRel: string): Set<string> {
+    const prefix = dirRel === '' ? '' : dirRel.endsWith('/') ? dirRel : dirRel + '/';
+    const rels = this.raw
+      .prepare(
+        // A range on the (share, rel) key rather than a scan of the whole share.
+        `SELECT rel FROM files WHERE share = ? AND rel >= ? AND rel < ?
+         AND instr(substr(rel, ?), '/') = 0`,
+      )
+      .pluck()
+      .all(share, prefix, prefix + '\u{10ffff}', prefix.length + 1) as string[];
+    return new Set(rels.map((r) => r.slice(prefix.length)));
+  }
+
   /** Removes everything under a folder (rel prefix). */
   removeUnder(share: string, dirRel: string): number {
     const prefix = dirRel.endsWith('/') ? dirRel : dirRel + '/';

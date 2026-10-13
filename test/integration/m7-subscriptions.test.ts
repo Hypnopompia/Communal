@@ -11,7 +11,7 @@ import { basename, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { pino } from 'pino';
 import { generateKeyPair, type KeyPair } from '@communal/crypto';
-import { CommunalCore, GONE, LocalApi, LocalApiClient } from '@communal/core';
+import { CommunalCore, GONE, LocalApi, LocalApiClient, apiSocketPath } from '@communal/core';
 import { HubDb } from '@communal/hub';
 import { sleep, startTestHub, type TestHub } from '@communal/hub/testing';
 
@@ -360,7 +360,7 @@ describe('M7: subscriptions', () => {
     await alice.c.setRule(alice.hubId, 'Photos/private/', 'me');
     const bob = await subscriber(h);
     const api = new LocalApi(bob.c);
-    const sock = join(tmp('communal-m7-sock-'), 'api.sock');
+    const sock = apiSocketPath(tmp('communal-m7-sock-'));
     await api.listen({ socketPath: sock });
     cleanups.push(() => api.close());
     const cli = new LocalApiClient({ socketPath: sock });

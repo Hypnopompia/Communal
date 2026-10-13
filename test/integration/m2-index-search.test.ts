@@ -11,7 +11,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { pino } from 'pino';
 import { generateKeyPair } from '@communal/crypto';
-import { CommunalCore, LocalApi, LocalApiClient, type MergedSearch } from '@communal/core';
+import {
+  CommunalCore,
+  LocalApi,
+  LocalApiClient,
+  type MergedSearch,
+  apiSocketPath,
+} from '@communal/core';
 import { HubDb } from '@communal/hub';
 import { sleep, startTestHub, type TestHub } from '@communal/hub/testing';
 
@@ -279,7 +285,7 @@ describe('M2: indexing, sync and search', () => {
     const h = await hub();
     const c = await core('alice');
     const api = new LocalApi(c);
-    const sock = join(tmp('communal-m2-sock-'), 'api.sock');
+    const sock = apiSocketPath(tmp('communal-m2-sock-'));
     await api.listen({ socketPath: sock });
     cleanups.push(() => api.close());
     const cli = new LocalApiClient({ socketPath: sock });
@@ -303,7 +309,8 @@ describe('M2: indexing, sync and search', () => {
       status: 400,
     });
     const { statSync } = await import('node:fs');
-    expect(statSync(sock).mode & 0o777).toBe(0o600);
+    // Windows uses a named pipe (per-user access), with no file mode to check.
+    if (process.platform !== 'win32') expect(statSync(sock).mode & 0o777).toBe(0o600);
 
     const tcp = new LocalApi(c);
     const base = await tcp.listen({ host: '127.0.0.1', port: 0, token: 'sekret-token-123' });

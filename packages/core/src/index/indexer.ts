@@ -63,6 +63,8 @@ export class Indexer extends EventEmitter<IndexerEvents> {
   private readonly log: Logger;
   private readonly watchers = new Map<string, FSWatcher>();
   private readonly dirty = new Map<string, Set<string>>();
+  /** Folders with watcher events this batch, compared with the index in full (see flush). */
+  private readonly dirtyDirs = new Map<string, Set<string>>();
   private flushTimer?: NodeJS.Timeout;
   private rescanTimer?: NodeJS.Timeout;
   private scanning = false;
@@ -230,7 +232,7 @@ export class Indexer extends EventEmitter<IndexerEvents> {
     });
     const mark = (abs: string) => {
       const rel = abs === share.root ? '' : toRel(share.root, abs);
-      if (rel !== null) this.touch(name, rel);
+      if (rel !== null) this.noteChange(name, rel);
     };
     w.on('add', mark)
       .on('change', mark)
@@ -249,8 +251,60 @@ export class Indexer extends EventEmitter<IndexerEvents> {
     this.flushTimer ??= setTimeout(() => void this.flush(), this.o.flushMs);
   }
 
+  /** A watcher event for a path: re-check it, and its folder as a whole (see reconcileDirs). */
+  noteChange(share: string, rel: string) {
+    this.touch(share, rel);
+    // The watcher can drop a sibling's event when a folder changes several times at once (a
+    // file added while a subfolder is deleted): look at the whole folder too.
+    if (rel !== '')
+      this.touchDir(share, rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '');
+  }
+
+  private touchDir(share: string, dirRel: string) {
+    let set = this.dirtyDirs.get(share);
+    if (!set) this.dirtyDirs.set(share, (set = new Set()));
+    set.add(dirRel);
+  }
+
+  /**
+   * Paths in the touched folders whose presence differs from the index: files on disk the index
+   * doesn't have, and indexed files no longer on disk. Only names are compared (no stat), so
+   * this stays cheap for big folders; content changes always come with their own events.
+   */
+  private async reconcileDirs(): Promise<Map<string, Set<string>>> {
+    const out = new Map<string, Set<string>>();
+    const dirs = [...this.dirtyDirs.entries()];
+    this.dirtyDirs.clear();
+    for (const [name, rels] of dirs) {
+      const share = this.store.share(name);
+      if (!share) continue;
+      const found = new Set<string>();
+      for (const dirRel of rels) {
+        const abs = dirRel === '' ? share.root : join(share.root, ...dirRel.split('/'));
+        const onDisk = new Set<string>();
+        const dir = await opendir(abs).catch(() => null);
+        if (dir)
+          for await (const e of dir) if (e.isFile() && !isIgnored(e.name)) onDisk.add(e.name);
+        const indexed = this.store.fileNamesIn(name, dirRel);
+        const rel = (n: string) => (dirRel === '' ? n : `${dirRel}/${n}`);
+        // Same rule as the scan: only names that make a valid hub path.
+        for (const n of onDisk)
+          if (!indexed.has(n) && SharePath.safeParse(`x/${rel(n)}`).success) found.add(rel(n));
+        for (const n of indexed) if (!onDisk.has(n)) found.add(rel(n));
+      }
+      if (found.size) out.set(name, found);
+    }
+    return out;
+  }
+
   /** Applies batched watcher events: re-stat each dirty path and update the index. */
   async flush() {
+    this.flushTimer = undefined;
+    for (const [name, rels] of await this.reconcileDirs()) {
+      if (rels.size) this.log.debug({ share: name, paths: rels.size }, 'watcher missed changes');
+      for (const rel of rels) this.touch(name, rel);
+    }
+    clearTimeout(this.flushTimer);
     this.flushTimer = undefined;
     const batch = [...this.dirty.entries()];
     this.dirty.clear();

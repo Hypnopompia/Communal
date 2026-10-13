@@ -7,5 +7,7 @@ export default defineConfig({
   test: {
     include: ['packages/*/src/**/*.test.ts', 'apps/*/src/**/*.test.ts', 'test/**/*.test.ts'],
     testTimeout: 20_000,
+    // Cleanup after the 100k-file M2 test (stopping the core, deleting the tree) is slow on CI.
+    hookTimeout: 60_000,
   },
 });

@@ -19,6 +19,7 @@ import {
   LocalApiClient,
   ThumbCache,
   isWebp,
+  apiSocketPath,
 } from '@communal/core';
 import { mixedFolder, png } from '@communal/core/testing';
 import { HubDb } from '@communal/hub';
@@ -106,7 +107,7 @@ async function share(
 
 async function api(c: CommunalCore) {
   const a = new LocalApi(c);
-  const sock = join(tmp('communal-m6-sock-'), 'api.sock');
+  const sock = apiSocketPath(tmp('communal-m6-sock-'));
   await a.listen({ socketPath: sock });
   cleanups.push(() => a.close());
   return { client: new LocalApiClient({ socketPath: sock }), sock };

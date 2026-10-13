@@ -31,6 +31,8 @@
   - Small thumbnails in search results and list views are scaled, not cropped.
   - Dialogs focus the chosen option.
   - A new search from an agent replaces the current one.
+- **Indexer fix:** the file watcher can drop a sibling's event when a folder changes several times at once. The indexer now compares each touched folder's files by name with the index, so a missed file is picked up in the same batch rather than at the 15-minute rescan. This was the cause of the occasional M7 subscription test failure.
+- **CI on GitHub** (first runs): pnpm is set up before setup-node's package-manager cache, the container transport spike moved off the daemons' ports, Windows checkouts keep LF line endings, and scripts work out their own paths with `fileURLToPath`. The test hook timeout went up to 60 s for the cleanup after the 100k-file test.
 - MIT license, README, versions 0.1.0.
 
 ## M9 — Desktop app + packaging (2026-10-12)
