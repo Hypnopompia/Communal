@@ -31,7 +31,6 @@ These need a person or hardware that CI doesn't have.
 
 ### Decided, ready to build
 
-- **People on several hubs** (ADR 0021): one person per `user_id` in People, named as on the first hub you joined. Actions stay per hub.
 - **First-device guidance** (ADR 0021): the guide and recovery-key screens say to keep the first computer and the recovery key safe, and to start a new account if either is stolen.
 
 ### Waiting for user feedback
@@ -69,6 +68,16 @@ These are fine for now. Fix them if they start to bite.
 
 - **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
 - **From HANDOFF §15:** hubs caching thumbnails of hub-wide files, and mobile clients.
+
+## People across hubs, and quitting shows offline at once (2026-10-13)
+
+- **People (ADR 0021):** someone on several of your hubs is shown once, named as on the first hub you joined (`people-merge.ts`, unit-tested).
+  - Requests, connections and requests waiting for an answer each show a line per hub with that hub's own Accept, Decline, Disconnect or Cancel. With one hub the screen looks as before.
+  - Find people and Groups get a hub picker, since searching and groups are per hub.
+  - Disconnecting names the hub and says other hubs aren't affected.
+  - The sidebar badge counts people, not requests. `useNames()` keeps the first hub's name.
+  - Checked in the running app with two named hubs.
+- **Presence (owner report; amends ADR 0006):** quitting the app or daemon closes the hub socket normally (1000), and the hub now publishes offline at once instead of after the 90 s grace period. Dropped connections still wait, so a blip doesn't flicker. In the running app, a quit client showed offline within a second. Test in `server.test.ts`. It reaches other computers once the production hub is upgraded.
 
 ## Re-share warning (2026-10-13)
 

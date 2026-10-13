@@ -54,6 +54,7 @@ If this is ever fixed, the preferred design is a separate root key that lives on
 
 - **One person per `user_id`** in the People screen, with the hubs you know them on. Connections, groups and access stay per hub (ADR 0007), so each hub's actions and status are shown under that hub. The per-hub scope must stay obvious.
 - **Display name:** the one from the first hub you joined (the first in `hubs.json`) where you know them.
+- **Built (2026-10-13):** People merges by `user_id` (`people-merge.ts`). Requests, connections and waiting answers show one row per person, with a line per hub and that hub's actions. Find people and Groups get a hub picker. The sidebar badge counts people, not requests. Names follow the first hub in `useNames()` too.
 - **Per-hub identities:** not planned. The guide says hub admins can tell that one person is on two hubs.
 
 ## Consequences

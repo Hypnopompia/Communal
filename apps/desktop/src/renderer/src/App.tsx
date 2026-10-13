@@ -431,10 +431,13 @@ function useBadges(): Partial<Record<Route['screen'], number>> {
   });
   const transfers = useApi<{ downloads: Transfer[] }>(['transfers'], '/v1/downloads');
   return {
-    people: people.reduce(
-      (n, q) => n + (q.data?.connections.filter((c) => c.state === 'pending_in').length ?? 0),
-      0,
-    ),
+    // People asking to connect, once each however many hubs they asked on (ADR 0021).
+    people: new Set(
+      people.flatMap(
+        (q) =>
+          q.data?.connections.filter((c) => c.state === 'pending_in').map((c) => c.user_id) ?? [],
+      ),
+    ).size,
     settings: links.data?.requests.length ?? 0,
     transfers:
       transfers.data?.downloads.filter((d) => d.state === 'active' || d.state === 'queued')

@@ -48,13 +48,14 @@ export function useNames() {
   const users = new Map<string, string>();
   const verified = new Set<string>();
   const devices = new Map<string, { name: string; user: string; user_id: string }>();
+  // Hubs in the order you joined them: someone on several is named as on the first (ADR 0021).
   for (const q of people)
     for (const c of q.data?.connections ?? []) {
-      users.set(c.user_id, c.display_name);
+      if (!users.has(c.user_id)) users.set(c.user_id, c.display_name);
       if (c.verified) verified.add(c.user_id);
     }
   for (const d of data?.devices ?? []) {
-    users.set(d.user.user_id, d.user.display_name);
+    if (!users.has(d.user.user_id)) users.set(d.user.user_id, d.user.display_name);
     if (d.user.verified) verified.add(d.user.user_id);
     devices.set(d.device_id, {
       name: d.device_name,

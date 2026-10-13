@@ -3,7 +3,9 @@
  * verification and the groups editor. Connections and groups live on each hub.
  */
 import { useState } from 'react';
+import { useQueries } from '@tanstack/react-query';
 import { api, qs, type Connection, type Group, type HubStatus, type Person } from '../api';
+import { mergePeople, type HubLink, type MergedPerson } from '../people-merge';
 import { ago, hubName, plural, seenLabel } from '../format';
 import { useHubs } from '../hubs';
 import { useApi } from '../query';
@@ -14,8 +16,38 @@ import { VerifiedMark } from '../ui/VerifiedMark';
 
 export function People() {
   const { hubs } = useHubs();
-  const [hubId, setHubId] = useState<string | null>(null);
-  const hub = hubs.find((h) => h.id === hubId) ?? hubs.find((h) => h.ready) ?? hubs[0];
+  const ready = hubs.filter((h) => h.ready);
+  const away = hubs.filter((h) => !h.ready);
+  const many = hubs.length > 1;
+  // Same keys as useApi, so `people` and `presence` hints refresh these too.
+  const lists = useQueries({
+    queries: ready.map((h) => {
+      const path = `/v1/people${qs({ hub: h.id })}`;
+      return {
+        queryKey: ['api', ['people', 'presence'], path],
+        queryFn: () => api.get<{ connections: Connection[] }>(path),
+      };
+    }),
+  });
+  const people = mergePeople(
+    ready.map((h, i) => ({ hub: h.id, connections: lists[i]?.data?.connections ?? [] })),
+  );
+  const loaded = lists.length > 0 && lists.every((q) => q.data);
+  const error = lists.find((q) => q.error)?.error ?? null;
+  const [verifying, setVerifying] = useState<{ hub: string; person: Person } | null>(null);
+  const act = useAction(
+    (action: 'accept' | 'remove' | 'request', hub: string, user_id: string) =>
+      api.post(`/v1/people/${action}`, { hub, user_id }),
+    { topics: ['people', 'presence'] },
+  );
+  const hubById = (id: string) => hubs.find((h) => h.id === id)!;
+  const on = (id: string) => (many ? `on ${hubName(hubById(id))}` : '');
+  const incoming = people.filter((p) => p.hubs.some((l) => l.state === 'pending_in'));
+  const accepted = people.filter((p) => p.hubs.some((l) => l.state === 'accepted'));
+  const outgoing = people.filter((p) => p.hubs.some((l) => l.state === 'pending_out'));
+  const lines = (p: MergedPerson, state: HubLink['state']) =>
+    p.hubs.filter((l) => l.state === state);
+
   return (
     <div className="page">
       <div className="page-head">
@@ -24,109 +56,101 @@ export function People() {
           <p className="lede">
             Connect with people you know to share with them. Either of you can disconnect at any
             time.
+            {many && ' You connect on each hub separately; someone on several hubs is shown once.'}
           </p>
         </div>
-        {hubs.length > 1 && (
-          <div className="actions">
-            <div className="segmented" role="group" aria-label="Hub">
-              {hubs.map((h) => (
-                <button key={h.id} aria-pressed={h.id === hub?.id} onClick={() => setHubId(h.id)}>
-                  {hubName(h)}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
-      {!hub ? null : !hub.ready ? (
-        <div className="notice warn">{hubName(hub)} isn’t reachable right now.</div>
-      ) : (
-        <HubPeople key={hub.id} hub={hub} />
+      {away.length > 0 && (
+        <div className="notice warn">
+          {away.map((h) => hubName(h)).join(', ')} {away.length === 1 ? 'isn’t' : 'aren’t'}{' '}
+          reachable right now, so people there aren’t shown.
+        </div>
       )}
-    </div>
-  );
-}
+      <ErrorNote error={error ?? act.error} />
 
-function HubPeople({ hub }: { hub: HubStatus }) {
-  const conns = useApi<{ connections: Connection[] }>(
-    ['people', 'presence'],
-    `/v1/people${qs({ hub: hub.id })}`,
-  );
-  const [verifying, setVerifying] = useState<Connection | null>(null);
-  const act = useAction(
-    (action: 'accept' | 'remove' | 'request', user_id: string) =>
-      api.post(`/v1/people/${action}`, { hub: hub.id, user_id }),
-    { topics: ['people', 'presence'] },
-  );
-  // Presence changes come as `presence` hints: they move connections' online state.
-  const all = conns.data?.connections ?? [];
-  const incoming = all.filter((c) => c.state === 'pending_in');
-  const accepted = all.filter((c) => c.state === 'accepted');
-  const outgoing = all.filter((c) => c.state === 'pending_out');
-  const many = useHubs().hubs.length > 1;
-
-  return (
-    <>
-      <ErrorNote error={conns.error ?? act.error} />
       {incoming.length > 0 && (
         <section className="section">
           <h2>Want to connect with you</h2>
           <div className="panel rows">
-            {incoming.map((c) => (
-              <PersonRow key={c.user_id} p={c} sub={`Asked ${ago(c.since)}`}>
-                <button
-                  className="btn small quiet"
-                  onClick={() => void act.run('remove', c.user_id)}
-                >
-                  Decline
-                </button>
-                <button
-                  className="btn small primary"
-                  onClick={() => void act.run('accept', c.user_id)}
-                >
-                  Accept
-                </button>
-              </PersonRow>
+            {incoming.map((p) => (
+              <PersonRow
+                key={p.user_id}
+                p={p}
+                lines={lines(p, 'pending_in').map((l) => ({
+                  key: l.hub,
+                  text: `Asked ${ago(l.since)} ${on(l.hub)}`.trim(),
+                  actions: (
+                    <>
+                      <button
+                        className="btn small quiet"
+                        onClick={() => void act.run('remove', l.hub, p.user_id)}
+                      >
+                        Decline
+                      </button>
+                      <button
+                        className="btn small primary"
+                        onClick={() => void act.run('accept', l.hub, p.user_id)}
+                      >
+                        Accept
+                      </button>
+                    </>
+                  ),
+                }))}
+              />
             ))}
           </div>
         </section>
       )}
 
-      <FindPeople
-        hub={hub}
-        known={new Set(all.map((c) => c.user_id))}
-        onRequest={(id) => act.run('request', id)}
-      />
+      {ready.length > 0 && (
+        <FindPeople
+          hubs={ready}
+          known={(hub) =>
+            new Set(people.filter((p) => p.hubs.some((l) => l.hub === hub)).map((p) => p.user_id))
+          }
+          onRequest={(hub, id) => act.run('request', hub, id)}
+        />
+      )}
 
       <section className="section">
-        <div className="section-head">
-          <h2>Connections</h2>
-          {many && <span className="hint">on {hubName(hub)}</span>}
-        </div>
-        {conns.data && accepted.length === 0 ? (
+        <h2>Connections</h2>
+        {loaded && accepted.length === 0 ? (
           <Empty title="No connections yet">
             Search for someone above and send them a request. They’ll see it the next time they open
             Communal.
           </Empty>
         ) : (
           <div className="panel rows">
-            {accepted.map((c) => (
-              <PersonRow
-                key={c.user_id}
-                p={c}
-                online={c.online}
-                sub={
-                  c.seen
-                    ? `${seenLabel(c.seen)} · connected ${ago(c.since)}`
-                    : `Connected ${ago(c.since)}`
-                }
-              >
-                <button className="btn small quiet" onClick={() => setVerifying(c)}>
-                  {c.verified ? 'Safety code' : 'Verify'}
-                </button>
-                <RemoveButton name={c.display_name} onRemove={() => act.run('remove', c.user_id)} />
-              </PersonRow>
-            ))}
+            {accepted.map((p) => {
+              const links = lines(p, 'accepted');
+              return (
+                <PersonRow
+                  key={p.user_id}
+                  p={p}
+                  online={p.online}
+                  sub={p.seen ? seenLabel(p.seen) : undefined}
+                  extra={
+                    <button
+                      className="btn small quiet"
+                      onClick={() => setVerifying({ hub: links[0]!.hub, person: p })}
+                    >
+                      {p.verified ? 'Safety code' : 'Verify'}
+                    </button>
+                  }
+                  lines={links.map((l) => ({
+                    key: l.hub,
+                    text: `Connected ${ago(l.since)} ${on(l.hub)}`.trim(),
+                    actions: (
+                      <RemoveButton
+                        name={p.display_name}
+                        where={many ? hubName(hubById(l.hub)) : undefined}
+                        onRemove={() => act.run('remove', l.hub, p.user_id)}
+                      />
+                    ),
+                  }))}
+                />
+              );
+            })}
           </div>
         )}
       </section>
@@ -135,55 +159,140 @@ function HubPeople({ hub }: { hub: HubStatus }) {
         <section className="section">
           <h2>Waiting for an answer</h2>
           <div className="panel rows">
-            {outgoing.map((c) => (
-              <PersonRow key={c.user_id} p={c} sub={`Asked ${ago(c.since)}`}>
-                <button
-                  className="btn small quiet"
-                  onClick={() => void act.run('remove', c.user_id)}
-                >
-                  Cancel request
-                </button>
-              </PersonRow>
+            {outgoing.map((p) => (
+              <PersonRow
+                key={p.user_id}
+                p={p}
+                lines={lines(p, 'pending_out').map((l) => ({
+                  key: l.hub,
+                  text: `Asked ${ago(l.since)} ${on(l.hub)}`.trim(),
+                  actions: (
+                    <button
+                      className="btn small quiet"
+                      onClick={() => void act.run('remove', l.hub, p.user_id)}
+                    >
+                      Cancel request
+                    </button>
+                  ),
+                }))}
+              />
             ))}
           </div>
         </section>
       )}
 
-      <Groups hub={hub} connections={accepted} />
+      {ready.length > 0 && <GroupsOnHubs hubs={ready} people={people} />}
       {verifying && (
-        <VerifyDialog hub={hub} person={verifying} onClose={() => setVerifying(null)} />
+        <VerifyDialog
+          hub={hubById(verifying.hub)}
+          person={verifying.person}
+          onClose={() => setVerifying(null)}
+        />
       )}
-    </>
-  );
-}
-
-function PersonRow({
-  p,
-  sub,
-  online,
-  children,
-}: {
-  p: Person;
-  sub: string;
-  online?: boolean;
-  children?: React.ReactNode;
-}) {
-  return (
-    <div className="row">
-      <Disc name={p.display_name} seed={p.fingerprint} online={online} />
-      <div className="grow">
-        <div className="title">
-          {p.display_name}
-          <VerifiedMark on={p.verified} />
-        </div>
-        <div className="sub">{sub}</div>
-      </div>
-      <div className="end">{children}</div>
     </div>
   );
 }
 
-function RemoveButton({ name, onRemove }: { name: string; onRemove: () => Promise<unknown> }) {
+/** Groups live on one hub and hold that hub's connections: pick the hub when there are several. */
+function GroupsOnHubs({ hubs, people }: { hubs: HubStatus[]; people: MergedPerson[] }) {
+  const [hubId, setHubId] = useState(hubs[0]!.id);
+  const hub = hubs.find((h) => h.id === hubId) ?? hubs[0]!;
+  const connections: Connection[] = people.flatMap((p) =>
+    p.hubs
+      .filter((l) => l.hub === hub.id && l.state === 'accepted')
+      .map((l) => ({ ...p, state: l.state, since: l.since })),
+  );
+  return (
+    <Groups
+      key={hub.id}
+      hub={hub}
+      connections={connections}
+      picker={hubs.length > 1 ? <HubPicker hubs={hubs} value={hub.id} onChange={setHubId} /> : null}
+    />
+  );
+}
+
+function HubPicker({
+  hubs,
+  value,
+  onChange,
+}: {
+  hubs: HubStatus[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  return (
+    <div className="segmented" role="group" aria-label="Hub" style={{ justifySelf: 'start' }}>
+      {hubs.map((h) => (
+        <button key={h.id} aria-pressed={h.id === value} onClick={() => onChange(h.id)}>
+          {hubName(h)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * One person. `lines` are what's going on with them on each hub, with that hub's actions: with
+ * a single line they read like one row, with several each hub gets its own line.
+ */
+function PersonRow({
+  p,
+  sub,
+  online,
+  extra,
+  lines = [],
+  children,
+}: {
+  p: Person;
+  sub?: string;
+  online?: boolean;
+  /** Actions about the person rather than one hub (verifying). */
+  extra?: React.ReactNode;
+  lines?: { key: string; text: string; actions: React.ReactNode }[];
+  children?: React.ReactNode;
+}) {
+  const single = lines.length === 1 ? lines[0]! : null;
+  const subText = single ? [sub, single.text].filter(Boolean).join(' · ') : sub;
+  return (
+    <div className="row" style={{ alignItems: lines.length > 1 ? 'flex-start' : undefined }}>
+      <Disc name={p.display_name} seed={p.fingerprint} online={online} />
+      <div className="grow" style={{ minWidth: 0 }}>
+        <div className="title">
+          {p.display_name}
+          <VerifiedMark on={p.verified} />
+        </div>
+        {subText && <div className="sub">{subText}</div>}
+        {lines.length > 1 && (
+          <div className="hub-lines">
+            {lines.map((l) => (
+              <div key={l.key} className="hub-line">
+                <span>{l.text}</span>
+                {l.actions}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="end">
+        {extra}
+        {single?.actions}
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function RemoveButton({
+  name,
+  where,
+  onRemove,
+}: {
+  name: string;
+  /** The hub, when you're on several: disconnecting is per hub. */
+  where?: string;
+  onRemove: () => Promise<unknown>;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -191,10 +300,14 @@ function RemoveButton({ name, onRemove }: { name: string; onRemove: () => Promis
         Disconnect
       </button>
       {open && (
-        <Dialog title={`Disconnect from ${name}?`} onClose={() => setOpen(false)}>
+        <Dialog
+          title={where ? `Disconnect from ${name} on ${where}?` : `Disconnect from ${name}?`}
+          onClose={() => setOpen(false)}
+        >
           <p className="muted">
-            You stop seeing what {name} shares with you, and {name} stops seeing what you shared
-            with them, right away. You can connect again later.
+            You stop seeing what {name} shares with you{where ? ` on ${where}` : ''}, and {name}{' '}
+            stops seeing what you shared with them there, right away. You can connect again later.
+            {where ? ' Other hubs you’re both on aren’t affected.' : ''}
           </p>
           <div className="dialog-actions">
             <button className="btn" onClick={() => setOpen(false)}>
@@ -214,14 +327,19 @@ function RemoveButton({ name, onRemove }: { name: string; onRemove: () => Promis
 }
 
 function FindPeople({
-  hub,
-  known,
-  onRequest,
+  hubs,
+  known: knownOn,
+  onRequest: requestOn,
 }: {
-  hub: HubStatus;
-  known: Set<string>;
-  onRequest: (id: string) => Promise<unknown>;
+  hubs: HubStatus[];
+  /** Who you're already connected with, or have a request with, on a hub. */
+  known: (hub: string) => Set<string>;
+  onRequest: (hub: string, id: string) => Promise<unknown>;
 }) {
+  const [hubId, setHubId] = useState(hubs[0]!.id);
+  const hub = hubs.find((h) => h.id === hubId) ?? hubs[0]!;
+  const known = knownOn(hub.id);
+  const onRequest = (id: string) => requestOn(hub.id, id);
   const [q, setQ] = useState('');
   const [sent, setSent] = useState<Set<string>>(new Set());
   const results = useApi<{ users: Person[] }>(
@@ -231,6 +349,16 @@ function FindPeople({
   return (
     <section className="section">
       <h2>Find people</h2>
+      {hubs.length > 1 && (
+        <HubPicker
+          hubs={hubs}
+          value={hub.id}
+          onChange={(id) => {
+            setHubId(id);
+            setSent(new Set());
+          }}
+        />
+      )}
       <div className="search-box" style={{ maxWidth: 480 }}>
         <Icon name="search" />
         <input
@@ -279,7 +407,7 @@ function VerifyDialog({
   onClose,
 }: {
   hub: HubStatus;
-  person: Connection;
+  person: Person;
   onClose: () => void;
 }) {
   const code = useApi<{ code: string }>(
@@ -328,7 +456,16 @@ function VerifyDialog({
   );
 }
 
-function Groups({ hub, connections }: { hub: HubStatus; connections: Connection[] }) {
+function Groups({
+  hub,
+  connections,
+  picker,
+}: {
+  hub: HubStatus;
+  connections: Connection[];
+  /** Which hub's groups, when you're on several. */
+  picker?: React.ReactNode;
+}) {
   const groups = useApi<{ groups: Group[] }>(['people'], `/v1/groups${qs({ hub: hub.id })}`);
   const [editing, setEditing] = useState<Group | 'new' | null>(null);
   const name = (id: string) => connections.find((c) => c.user_id === id)?.display_name ?? 'someone';
@@ -338,8 +475,10 @@ function Groups({ hub, connections }: { hub: HubStatus; connections: Connection[
         <h2>Groups</h2>
         <span className="hint">
           Only you see your groups. Use them to share with several people at once.
+          {picker ? ' Each hub has its own.' : ''}
         </span>
       </div>
+      {picker}
       <ErrorNote error={groups.error} />
       {(groups.data?.groups.length ?? 0) > 0 && (
         <div className="panel rows">

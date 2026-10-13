@@ -885,6 +885,24 @@ textarea.input {
 .attention:empty {
   display: none;
 }
+/* People on several hubs: what's going on with them on each one, with its actions. */
+.hub-lines {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+}
+.hub-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.hub-line > span {
+  flex: 1;
+  min-width: 0;
+}
 .attention-row {
   display: flex;
   align-items: center;
