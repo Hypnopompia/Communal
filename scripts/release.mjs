@@ -15,8 +15,9 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = join(dirname(new URL(import.meta.url).pathname), '..');
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const desktop = join(root, 'apps/desktop');
 const repo = 'Hypnopompia/Communal';
 const { version } = JSON.parse(readFileSync(join(desktop, 'package.json'), 'utf8'));

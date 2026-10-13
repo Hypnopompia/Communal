@@ -19,8 +19,9 @@ import { cpSync, existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { arch as hostArch, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const here = dirname(new URL(import.meta.url).pathname);
+const here = dirname(fileURLToPath(import.meta.url));
 const app = join(here, '..');
 const root = join(app, '../..');
 const argv = process.argv.slice(2).filter((a) => a !== '--');

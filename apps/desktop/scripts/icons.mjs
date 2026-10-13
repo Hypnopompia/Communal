@@ -3,8 +3,9 @@
 import { createRequire } from 'node:module';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const here = dirname(new URL(import.meta.url).pathname);
+const here = dirname(fileURLToPath(import.meta.url));
 const sharp = createRequire(join(here, '../../../packages/core/package.json'))('sharp');
 
 const discs = (fill) => `

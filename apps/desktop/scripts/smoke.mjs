@@ -5,8 +5,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const app = join(dirname(new URL(import.meta.url).pathname), '..');
+const app = join(dirname(fileURLToPath(import.meta.url)), '..');
 const electron = createRequire(join(app, 'package.json'))('electron');
 const data = mkdtempSync(join(tmpdir(), 'communal-smoke-'));
 // Chromium refuses to run as root with its sandbox (containers, some CI); only then turn it off.

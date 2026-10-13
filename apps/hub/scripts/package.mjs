@@ -6,8 +6,9 @@
 import { execFileSync } from 'node:child_process';
 import { chmodSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const here = dirname(new URL(import.meta.url).pathname);
+const here = dirname(fileURLToPath(import.meta.url));
 const hub = join(here, '..');
 const root = join(hub, '../..');
 const { version } = JSON.parse(readFileSync(join(hub, 'package.json'), 'utf8'));
