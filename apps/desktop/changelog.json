@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.1.3",
+    "date": "2026-10-13",
+    "changes": [
+      "When you're looking at someone's computer (or another of yours) in the Library, new files, removed files and new thumbnails now show up right away. You no longer need to leave and come back. This needs your hub to be updated too.",
+      "The Library's list of computers also updates by itself when someone starts or stops sharing with you.",
+      "The Library remembers whether you picked grid or list view."
+    ]
+  },
+  {
     "version": "0.1.2",
     "date": "2026-10-13",
     "changes": [
