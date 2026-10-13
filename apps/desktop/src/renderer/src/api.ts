@@ -64,6 +64,9 @@ export type Kind =
 
 export type Seen = 'now' | 'today' | 'week' | 'month' | 'older';
 
+/** Whose files a search keeps (the core filters; the hub never learns who you verified). */
+export type SearchFrom = 'anyone' | 'connections' | 'verified';
+
 export interface Meta {
   width?: number;
   height?: number;
@@ -91,6 +94,8 @@ export interface HubProblem {
 export interface HubStatus {
   id: string;
   url: string;
+  /** The hub's readable name, set by its admin (null: show the host name). */
+  name: string | null;
   ready: boolean;
   problem: HubProblem | null;
   registered: boolean;
@@ -196,6 +201,9 @@ export type Audience = 'me' | 'hub' | { users?: string[]; groups?: string[] };
 export interface Connection extends Person {
   state: 'accepted' | 'pending_in' | 'pending_out';
   since: number;
+  /** Accepted connections, from hubs that say: any of their computers online, else when last. */
+  online?: boolean;
+  seen?: Seen;
 }
 
 export interface Group {

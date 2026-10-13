@@ -12,6 +12,9 @@ export interface MergedHit extends Omit<Hit, 'sources'> {
   sources: MergedSource[];
 }
 
+/** Whose files a search keeps: everyone's, or only your connections' or verified people's. */
+export type SearchFrom = 'anyone' | 'connections' | 'verified';
+
 export interface MergedSearch {
   hits: MergedHit[];
   /** Per hub: whether it answered, its next-page cursor, or why it didn't. */

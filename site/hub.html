@@ -77,7 +77,12 @@
 
         <h2 id="install">Install</h2>
         <p>
-          Download <code>communal-hub-&lt;version&gt;.tar.gz</code> from the
+          The quickest way installs the latest release, or upgrades to it after backing up the hub’s
+          data (it needs Node.js 24 or later):
+        </p>
+        <pre><code>curl -fsSL https://hypnopompia.github.io/Communal/install.sh | sh -s -- hub</code></pre>
+        <p>
+          Or by hand: download <code>communal-hub-&lt;version&gt;.tar.gz</code> from the
           <a href="https://github.com/Hypnopompia/Communal/releases/latest">latest release</a>,
           then:
         </p>
@@ -122,7 +127,12 @@ sudo certbot certonly --standalone -d hub.example.com \
         <pre><code>sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub users
 sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub approve &lt;user_id&gt;
 sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub ban &lt;user_id&gt; --reason "…"
-sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub set join_mode open</code></pre>
+sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub set join_mode open
+sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub set name "Hunter family"</code></pre>
+        <p>
+          The <b>name</b> is what people see in the app instead of the hub’s address. Clients pick
+          it up the next time they connect.
+        </p>
         <p>
           With <code>join_mode open</code> anyone who knows the address can join. Since accounts
           need no email, a banned person can come back with a new key on an open hub; use approval

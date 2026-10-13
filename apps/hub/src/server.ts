@@ -36,7 +36,7 @@ import {
   type HubBody,
   type HubType,
 } from '@communal/protocol';
-import { Catalog } from './catalog.js';
+import { Catalog, seenBucket } from './catalog.js';
 import { diagnose, natView, type Observation } from './diagnosis.js';
 import type { HubDb, RevocationProof, UserRow } from './db.js';
 
@@ -307,10 +307,12 @@ export class HubServer {
     };
     this.sessions.add(s);
     s.log.debug({ remote }, 'connected');
+    const name = this.db.hubName;
     this.send(s, 'challenge', {
       nonce: toB64(s.nonce),
       hub_id: this.opts.hubId,
       hub_pubkey: this.hubPubkey,
+      ...(name ? { name } : {}),
     });
 
     ws.on('message', (data, isBinary) => {
@@ -940,7 +942,17 @@ export class HubServer {
           : c.requested_by === userId
             ? 'pending_out'
             : 'pending_in';
-      connections.push({ user: this.summary(u), state, since: c.created_at } as const);
+      const entry = { user: this.summary(u), state, since: c.created_at } as const;
+      if (state !== 'accepted') {
+        connections.push(entry);
+        continue;
+      }
+      // Presence is visible to accepted connections only (see canSee).
+      const online = this.db.devicesOf(u.id).some((d) => this.isOnline(d));
+      const seen = online
+        ? ('now' as const)
+        : seenBucket(this.db.lastSeenOf(u.id), Math.floor(Date.now() / 1000));
+      connections.push({ ...entry, online, seen });
     }
     return { connections };
   }

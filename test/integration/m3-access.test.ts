@@ -119,6 +119,47 @@ describe('M3: per-hub access with real clients', () => {
     });
   });
 
+  it('narrows a search to connections or verified people, and learns the hub’s name', async () => {
+    const h = await hub();
+    h.db.setSetting('name', 'Hunter family');
+    const carol = await core('carol');
+    const ch = (await carol.addHub(h.url, acct('carol'))).hub.id;
+    expect(carol.status().hubs[0]!.name).toBe('Hunter family');
+
+    // Bob is a verified connection, Dave a connection, Erin a stranger sharing with the hub.
+    const owners: Record<string, string> = {};
+    for (const name of ['bob', 'dave', 'erin']) {
+      const c = await core(name);
+      const id = (await c.addHub(h.url, acct(name))).hub.id;
+      owners[name] = c.hubs.find(id)!.state.userId!;
+      const root = tmp(`communal-m3-${name}-share-`);
+      writeFileSync(join(root, `song by ${name}.mp3`), `${name}'s song`);
+      await c.addShare('Music', root);
+      await c.setRule(id, 'Music/', 'hub');
+      await until(() => c.store.counts().hashed === 1, 5_000, 'hash');
+      await until(
+        async () => (await c.sync.idle(), h.db.entryCount(c.deviceId) === 1),
+        5_000,
+        'index',
+      );
+      if (name !== 'erin') {
+        await c.people.request(id, carol.hubs.find(ch)!.state.userId!);
+        await carol.people.accept(ch, owners[name]!);
+      }
+    }
+    await carol.people.verify(ch, owners.bob!, true);
+
+    const from = async (f: 'anyone' | 'connections' | 'verified') =>
+      (await carol.search({ q: 'song', limit: 10 }, undefined, f)).hits.map((x) => x.name).sort();
+    expect(await from('anyone')).toEqual([
+      'song by bob.mp3',
+      'song by dave.mp3',
+      'song by erin.mp3',
+    ]);
+    expect(await from('connections')).toEqual(['song by bob.mp3', 'song by dave.mp3']);
+    expect(await from('verified')).toEqual(['song by bob.mp3']);
+  });
+
   it('re-sends its rules when a hub has lost them', async () => {
     const a = await hub();
     const alice = await core('alice');

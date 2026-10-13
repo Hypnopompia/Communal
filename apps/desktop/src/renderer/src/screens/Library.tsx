@@ -9,6 +9,7 @@ import { useLibrary, useStatus } from '../hubs';
 import { useNav, type Route } from '../nav';
 import { useApi } from '../query';
 import { Disc } from '../ui/Disc';
+import { VerifiedMark } from '../ui/VerifiedMark';
 import {
   describe,
   DownloadFolderDialog,
@@ -17,6 +18,7 @@ import {
   previewable,
   PreviewDialog,
   SubscribeDialog,
+  DownloadButton,
   useDownload,
   useThumbs,
   type FileLike,
@@ -61,11 +63,15 @@ export function Library({ route }: { route: Extract<Route, { screen: 'library' }
 function People({ devices, error }: { devices: LibraryDevice[] | undefined; error: Error | null }) {
   const go = useNav();
   const me = useStatus().data?.account.user_id;
-  const people = new Map<string, { name: string; fingerprint: string; devices: LibraryDevice[] }>();
+  const people = new Map<
+    string,
+    { name: string; fingerprint: string; verified: boolean; devices: LibraryDevice[] }
+  >();
   for (const d of devices ?? []) {
     const p = people.get(d.user.user_id) ?? {
       name: d.user.display_name,
       fingerprint: d.user.fingerprint,
+      verified: d.user.verified,
       devices: [],
     };
     // The same computer on two hubs is one entry; prefer the hub where it's online.
@@ -107,7 +113,10 @@ function People({ devices, error }: { devices: LibraryDevice[] | undefined; erro
               size={40}
               online={p.devices.some((d) => d.online)}
             />
-            <h2>{id === me ? `${p.name} (you)` : p.name}</h2>
+            <h2>
+              {id === me ? `${p.name} (you)` : p.name}
+              <VerifiedMark on={p.verified} />
+            </h2>
           </div>
           <div className="panel rows">
             {p.devices.map((d) => (
@@ -198,6 +207,7 @@ function Browse({
         <div>
           <h1>
             {device ? computerName(device.user.display_name, device.device_name) : 'Computer'}
+            <VerifiedMark on={device?.user.verified} />
           </h1>
           <span className={`status${online ? ' on' : ''}`}>
             {device ? seenLabel(online ? 'now' : device.seen) : online ? 'Online' : 'Offline'}
@@ -312,20 +322,11 @@ function Browse({
                   )}
                   {f.hash ? (
                     !own && (
-                      <>
-                        <button
-                          className="btn small quiet"
-                          onClick={() => void download.run(f.hash!, f.name, true)}
-                        >
-                          Save to…
-                        </button>
-                        <button
-                          className="btn small"
-                          onClick={() => void download.run(f.hash!, f.name)}
-                        >
-                          Download
-                        </button>
-                      </>
+                      <DownloadButton
+                        small
+                        onDownload={() => void download.run(f.hash!, f.name)}
+                        onSaveTo={() => void download.run(f.hash!, f.name, true)}
+                      />
                     )
                   ) : (
                     <span className="faint small">Still being prepared</span>

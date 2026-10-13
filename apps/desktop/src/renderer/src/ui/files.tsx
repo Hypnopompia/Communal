@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   api,
@@ -12,7 +12,7 @@ import {
 import { baseName, date, duration, plural, size } from '../format';
 import { useApi } from '../query';
 import { Dialog, ErrorNote, useAction } from './kit';
-import { FileIcon, FolderIcon } from './icons';
+import { FileIcon, FolderIcon, Icon } from './icons';
 
 /**
  * Fetches a batch of thumbnails from one device into the core's cache (one peer request for a
@@ -173,18 +173,80 @@ export function PreviewDialog({
         <span className="muted" style={{ flex: 1 }}>
           {describe(file.kind, file.meta, file.size)}
         </span>
-        {onSaveTo && (
-          <button className="btn" onClick={onSaveTo}>
-            Save to…
-          </button>
-        )}
-        {onDownload && (
-          <button className="btn primary" onClick={onDownload}>
-            Download
-          </button>
-        )}
+        {onDownload && <DownloadButton primary onDownload={onDownload} onSaveTo={onSaveTo} />}
       </div>
     </Dialog>
+  );
+}
+
+/**
+ * Download, into the downloads folder; its menu offers Save to…, which asks where (ADR 0018).
+ */
+export function DownloadButton({
+  onDownload,
+  onSaveTo,
+  small,
+  primary,
+}: {
+  onDownload: () => void;
+  onSaveTo?: () => void;
+  small?: boolean;
+  primary?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    ref.current?.querySelector<HTMLElement>('[role=menuitem]')?.focus();
+    const away = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
+    // Capture, so Escape closes only the menu, not a dialog it's in.
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', away);
+    window.addEventListener('keydown', esc, true);
+    return () => {
+      document.removeEventListener('mousedown', away);
+      window.removeEventListener('keydown', esc, true);
+    };
+  }, [open]);
+  const cls = `btn${small ? ' small' : ''}${primary ? ' primary' : ''}`;
+  if (!onSaveTo)
+    return (
+      <button className={cls} onClick={onDownload}>
+        Download
+      </button>
+    );
+  return (
+    <div className="split" ref={ref}>
+      <button className={cls} onClick={onDownload} title="Into your downloads folder">
+        Download
+      </button>
+      <button
+        className={cls}
+        aria-label="Other ways to download"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+      >
+        <Icon name="chevron" size={14} />
+      </button>
+      {open && (
+        <div className="menu" role="menu">
+          <button
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              onSaveTo();
+            }}
+          >
+            Save to…
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -245,7 +245,7 @@ function HubAttention({
         waiting.map((h) => (
           <div key={h.id} className="notice warn attention-row">
             <span>
-              <b>{hubName(h.url)}</b> lets people in by hand, and its admin hasn’t approved you yet.
+              <b>{hubName(h)}</b> lets people in by hand, and its admin hasn’t approved you yet.
               Until then you can’t search or see people there. Communal checks again by itself.
             </span>
           </div>
@@ -254,7 +254,7 @@ function HubAttention({
         refused.map((h) => (
           <div key={h.id} className="notice bad attention-row">
             <span>
-              Can’t connect to <b>{hubName(h.url)}</b>:{' '}
+              Can’t connect to <b>{hubName(h)}</b>:{' '}
               {problemText(h.problem!.reason, h.problem!.message)}
             </span>
             <button className="btn small" onClick={() => go({ screen: 'settings', tab: 'hubs' })}>

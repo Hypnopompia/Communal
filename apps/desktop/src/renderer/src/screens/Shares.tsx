@@ -20,6 +20,7 @@ import { useHubs, useStatus } from '../hubs';
 import { useApi } from '../query';
 import { FileIcon, FolderIcon, Icon } from '../ui/icons';
 import { Dialog, Empty, ErrorNote, Progress, useAction } from '../ui/kit';
+import { VerifiedMark } from '../ui/VerifiedMark';
 import { SyncedFolderPanel } from './SyncedFolder';
 
 /** The synced folder's share (ADR 0019): shown in its own panel, not as a share. */
@@ -32,8 +33,8 @@ export function Shares() {
   const status = useStatus().data;
   const { hubs } = useHubs();
   const [adding, setAdding] = useState(false);
-  const [hub, setHub] = useState<string | null>(null);
-  const activeHub = hubs.find((h) => h.id === hub) ?? hubs[0];
+  // The synced folder is shown in its own panel, and stays visible only to you.
+  const own = shares.data?.shares.filter((s) => s.name !== SYNC_SHARE);
 
   return (
     <div className="page">
@@ -56,7 +57,7 @@ export function Shares() {
       <ErrorNote error={shares.error} />
       <SyncedFolderPanel />
 
-      {shares.data?.shares.every((s) => s.name === SYNC_SHARE) && (
+      {own?.length === 0 && (
         <Empty
           title="You’re not sharing anything yet"
           action={
@@ -69,42 +70,9 @@ export function Shares() {
         </Empty>
       )}
 
-      {shares.data?.shares
-        .filter((s) => s.name !== SYNC_SHARE)
-        .map((s) => (
-          <ShareRowView key={s.name} share={s} hubs={hubs} />
-        ))}
-
-      {shares.data && shares.data.shares.length > 0 && activeHub && (
-        <section className="section">
-          <div className="section-head" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
-            <h2>Who can see what</h2>
-            {hubs.length > 1 && (
-              <div className="segmented" role="group" aria-label="Hub">
-                {hubs.map((h) => (
-                  <button
-                    key={h.id}
-                    aria-pressed={h.id === activeHub.id}
-                    onClick={() => setHub(h.id)}
-                  >
-                    {hubName(h.url)}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          <div className="notice">
-            <span>
-              These choices apply on <b>{hubName(activeHub.url)}</b> only.
-              {hubs.length > 1 && ' A file can be public on one hub and private on another.'}
-            </span>
-          </div>
-          <AccessTree
-            hub={activeHub}
-            shares={shares.data.shares.filter((s) => s.hubs.includes(activeHub.id))}
-          />
-        </section>
-      )}
+      {own?.map((s) => (
+        <ShareRowView key={s.name} share={s} hubs={hubs} />
+      ))}
       {adding && <AddShare hubs={hubs} onClose={() => setAdding(false)} />}
     </div>
   );
@@ -148,18 +116,22 @@ function IndexProgress({
   );
 }
 
+/**
+ * A shared folder with who can see it. Rules are per hub (ADR 0007/0009), so with several hubs
+ * there's a line per hub, each naming its hub, and a hub the folder isn't listed on says so.
+ */
 function ShareRowView({ share, hubs }: { share: Share; hubs: HubStatus[] }) {
   const [confirm, setConfirm] = useState(false);
+  const [inside, setInside] = useState<HubStatus | null>(null);
   const remove = useAction(() => api.del(`/v1/shares/${encodeURIComponent(share.name)}`), {
     topics: ['index'],
     done: `Stopped sharing ${share.name}`,
   });
   const setHubs = useAction(
     (ids: string[]) => api.put(`/v1/shares/${encodeURIComponent(share.name)}/hubs`, { hubs: ids }),
-    {
-      topics: ['index'],
-    },
+    { topics: ['index'] },
   );
+  const listedOn = hubs.filter((h) => share.hubs.includes(h.id));
   return (
     <div className="panel">
       <div className="row">
@@ -180,28 +152,48 @@ function ShareRowView({ share, hubs }: { share: Share; hubs: HubStatus[] }) {
           </button>
         </div>
       </div>
-      {hubs.length > 1 && (
-        <div className="row" style={{ flexWrap: 'wrap', gap: '6px 18px' }}>
-          <span className="muted small">Listed on</span>
-          {hubs.map((h) => (
-            <label key={h.id} className="check" style={{ alignItems: 'center' }}>
-              <input
-                type="checkbox"
-                style={{ marginTop: 0 }}
-                checked={share.hubs.includes(h.id)}
+      {hubs.map((h) =>
+        share.hubs.includes(h.id) ? (
+          <ShareAccess
+            key={h.id}
+            share={share}
+            hub={h}
+            named={hubs.length > 1}
+            onInside={() => setInside(h)}
+            onUnlist={
+              hubs.length > 1 ? () => setHubs.run(share.hubs.filter((x) => x !== h.id)) : undefined
+            }
+          />
+        ) : (
+          <div key={h.id} className="row">
+            <div className="grow">
+              <div className="small">
+                <b>{hubName(h)}</b>
+              </div>
+              <div className="sub">Not listed: nobody there sees this folder.</div>
+            </div>
+            <div className="end">
+              <button
+                className="btn small"
                 disabled={setHubs.busy}
-                onChange={(e) =>
-                  void setHubs.run(
-                    e.target.checked ? [...share.hubs, h.id] : share.hubs.filter((x) => x !== h.id),
-                  )
-                }
-              />
-              <span>{hubName(h.url)}</span>
-            </label>
-          ))}
-        </div>
+                onClick={() => void setHubs.run([...share.hubs, h.id])}
+              >
+                List it here
+              </button>
+            </div>
+          </div>
+        ),
       )}
       <ErrorNote error={setHubs.error ?? remove.error} />
+      {inside && (
+        <InsideDialog
+          share={share}
+          hubs={listedOn}
+          hub={inside}
+          onHub={setInside}
+          onClose={() => setInside(null)}
+        />
+      )}
       {confirm && (
         <Dialog title={`Stop sharing “${share.name}”?`} onClose={() => setConfirm(false)}>
           <p className="muted">
@@ -220,6 +212,77 @@ function ShareRowView({ share, hubs }: { share: Share; hubs: HubStatus[] }) {
             </button>
           </div>
         </Dialog>
+      )}
+    </div>
+  );
+}
+
+/** Who can see a share on one hub, with the way in to its files' own settings. */
+function ShareAccess({
+  share,
+  hub,
+  named,
+  onInside,
+  onUnlist,
+}: {
+  share: Share;
+  hub: HubStatus;
+  /** Name the hub (when there are several): the choice applies there only. */
+  named: boolean;
+  onInside: () => void;
+  onUnlist?: () => Promise<unknown>;
+}) {
+  const rules = useApi<{ rules: Rules }>(['index'], `/v1/acl${qs({ hub: hub.id })}`);
+  const label = useAudienceText(hub);
+  const [editing, setEditing] = useState(false);
+  const list = rules.data?.rules[hub.id] ?? [];
+  const root = `${share.name}/`;
+  const e = effective(list, root);
+  const own = list.filter((r) => r.path.startsWith(root) && r.path !== root).length;
+  return (
+    <div className="row">
+      <div className="grow" style={{ display: 'grid', gap: 2 }}>
+        {named && (
+          <div className="small">
+            <b>{hubName(hub)}</b>
+          </div>
+        )}
+        <div className="sub">
+          <AudienceGlyph audience={e.audience} />{' '}
+          {named && e.audience === 'hub' ? 'Everyone on this hub' : label(e.audience)}
+          {own > 0 && (
+            <span className="faint">
+              {' '}
+              · {plural(own, 'file or folder', 'files or folders')} inside{' '}
+              {own === 1 ? 'has its' : 'have their'} own setting
+            </span>
+          )}
+        </div>
+        {!hub.ready && (
+          <span className="faint small">
+            {hubName(hub)} isn’t reachable, so this can’t be changed right now.
+          </span>
+        )}
+        <ErrorNote error={rules.error} />
+      </div>
+      <div className="end">
+        <button className="btn small quiet" disabled={!hub.ready} onClick={onInside}>
+          Files inside…
+        </button>
+        <button className="btn small" disabled={!hub.ready} onClick={() => setEditing(true)}>
+          Change
+        </button>
+      </div>
+      {editing && (
+        <AudienceDialog
+          hub={hub}
+          path={root}
+          current={list.find((r) => r.path === root)?.audience ?? null}
+          inheritedFrom={e}
+          label={label}
+          onUnlist={onUnlist}
+          onClose={() => setEditing(false)}
+        />
       )}
     </div>
   );
@@ -278,15 +341,15 @@ function AddShare({ hubs, onClose }: { hubs: HubStatus[]; onClose: () => void })
                   )
                 }
               />
-              <span>{hubName(h.url)}</span>
+              <span>{hubName(h)}</span>
             </label>
           ))}
         </fieldset>
       )}
       <div className="notice">
         <span>
-          <Icon name="lock" size={14} /> Only you can see it at first. Choose who else can under
-          “Who can see what”.
+          <Icon name="lock" size={14} /> Only you can see it at first. Choose who else can with
+          “Change” on the folder.
         </span>
       </div>
       <ErrorNote error={add.error} />
@@ -319,7 +382,7 @@ function useAudienceText(hub: HubStatus) {
   );
   return (a: Audience) => {
     if (a === 'me') return 'Only me';
-    if (a === 'hub') return `Everyone on ${hubName(hub.url)}`;
+    if (a === 'hub') return `Everyone on ${hubName(hub)}`;
     const names = [
       ...(a.users ?? []).map(
         (u) => people.data?.connections.find((c) => c.user_id === u)?.display_name ?? 'someone',
@@ -335,25 +398,47 @@ function useAudienceText(hub: HubStatus) {
   };
 }
 
-function AccessTree({ hub, shares }: { hub: HubStatus; shares: Share[] }) {
+/**
+ * Choosing for the files and folders inside a share, on one hub. While a choice is being made
+ * the picker takes this dialog's place (one dialog at a time, so Escape closes only it).
+ */
+function InsideDialog({
+  share,
+  hubs,
+  hub,
+  onHub,
+  onClose,
+}: {
+  share: Share;
+  /** The hubs the share is listed on. */
+  hubs: HubStatus[];
+  hub: HubStatus;
+  onHub: (h: HubStatus) => void;
+  onClose: () => void;
+}) {
   const me = useStatus().data;
+  const root = `${share.name}/`;
   const rules = useApi<{ rules: Rules }>(['index'], `/v1/acl${qs({ hub: hub.id })}`);
-  const [path, setPath] = useState('');
+  const [path, setPath] = useState(root);
   const [editing, setEditing] = useState<string | null>(null);
   const list = rules.data?.rules[hub.id] ?? [];
   const label = useAudienceText(hub);
   const listing = useApi<Listing>(
     ['index'],
-    hub.ready && me && path ? `/v1/browse${qs({ hub: hub.id, device: me.device_id, path })}` : null,
+    hub.ready && me ? `/v1/browse${qs({ hub: hub.id, device: me.device_id, path })}` : null,
   );
-  if (!hub.ready)
+
+  if (editing)
     return (
-      <div className="notice warn">
-        {hubName(hub.url)} isn’t reachable right now, so its access settings can’t be changed.
-      </div>
+      <AudienceDialog
+        hub={hub}
+        path={editing}
+        current={list.find((r) => r.path === editing)?.audience ?? null}
+        inheritedFrom={effective(list, editing)}
+        label={label}
+        onClose={() => setEditing(null)}
+      />
     );
-  if (shares.length === 0)
-    return <p className="muted">None of your shares is listed on {hubName(hub.url)}.</p>;
 
   const segs = path.split('/').filter(Boolean);
   const Row = ({
@@ -398,16 +483,26 @@ function AccessTree({ hub, shares }: { hub: HubStatus; shares: Share[] }) {
   };
 
   return (
-    <>
-      <nav className="crumbs" aria-label="Folder">
-        {segs.length === 0 ? (
-          <span className="here">All shares</span>
-        ) : (
-          <button onClick={() => setPath('')}>All shares</button>
+    <Dialog title={`Inside “${share.name}”`} onClose={onClose} wide>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <span className="muted small" style={{ flex: 1 }}>
+          Choose differently for files and folders inside. These choices apply on{' '}
+          <b>{hubName(hub)}</b> only.
+        </span>
+        {hubs.length > 1 && (
+          <div className="segmented" role="group" aria-label="Hub">
+            {hubs.map((h) => (
+              <button key={h.id} aria-pressed={h.id === hub.id} onClick={() => onHub(h)}>
+                {hubName(h)}
+              </button>
+            ))}
+          </div>
         )}
+      </div>
+      <nav className="crumbs" aria-label="Folder">
         {segs.map((s, i) => (
           <span key={i} style={{ display: 'contents' }}>
-            <span className="faint">›</span>
+            {i > 0 && <span className="faint">›</span>}
             {i === segs.length - 1 ? (
               <span className="here">{s}</span>
             ) : (
@@ -418,33 +513,22 @@ function AccessTree({ hub, shares }: { hub: HubStatus; shares: Share[] }) {
       </nav>
       <ErrorNote error={rules.error ?? listing.error} />
       <div className="panel rows">
-        {path === '' ? (
-          shares.map((s) => <Row key={s.name} p={`${s.name}/`} name={s.name} folder />)
-        ) : (
-          <>
-            {listing.data?.dirs.map((d) => (
-              <Row key={d.name} p={`${path}${d.name}/`} name={d.name} folder />
-            ))}
-            {listing.data?.files.map((f) => (
-              <Row key={f.path} p={f.path} name={baseName(f.path)} folder={false} icon={f.icon} />
-            ))}
-            {listing.data && listing.data.dirs.length + listing.data.files.length === 0 && (
-              <div className="row muted">This folder is empty.</div>
-            )}
-          </>
+        {listing.data?.dirs.map((d) => (
+          <Row key={d.name} p={`${path}${d.name}/`} name={d.name} folder />
+        ))}
+        {listing.data?.files.map((f) => (
+          <Row key={f.path} p={f.path} name={baseName(f.path)} folder={false} icon={f.icon} />
+        ))}
+        {listing.data && listing.data.dirs.length + listing.data.files.length === 0 && (
+          <div className="row muted">This folder is empty.</div>
         )}
       </div>
-      {editing && (
-        <AudienceDialog
-          hub={hub}
-          path={editing}
-          current={list.find((r) => r.path === editing)?.audience ?? null}
-          inheritedFrom={effective(list, editing)}
-          label={label}
-          onClose={() => setEditing(null)}
-        />
-      )}
-    </>
+      <div className="dialog-actions">
+        <button className="btn" onClick={onClose}>
+          Done
+        </button>
+      </div>
+    </Dialog>
   );
 }
 
@@ -460,6 +544,7 @@ function AudienceDialog({
   current,
   inheritedFrom,
   label,
+  onUnlist,
   onClose,
 }: {
   hub: HubStatus;
@@ -467,6 +552,8 @@ function AudienceDialog({
   current: Audience | null;
   inheritedFrom: { audience: Audience; from: string | null };
   label: (a: Audience) => string;
+  /** For a share on one of several hubs: stop listing it on this hub at all. */
+  onUnlist?: () => Promise<unknown>;
   onClose: () => void;
 }) {
   const start = current ?? inheritedFrom.audience;
@@ -506,7 +593,7 @@ function AudienceDialog({
   return (
     <Dialog title={`Who can see “${baseName(path)}”`} onClose={onClose}>
       <p className="muted small">
-        On {hubName(hub.url)}.
+        On {hubName(hub)}.
         {folder && ' Everything inside follows this choice, unless you choose differently for it.'}
       </p>
       <div style={{ display: 'grid', gap: 10 }}>
@@ -558,7 +645,10 @@ function AudienceDialog({
                   checked={users.includes(c.user_id)}
                   onChange={(e) => toggle(users, setUsers, c.user_id, e.target.checked)}
                 />
-                <span>{c.display_name}</span>
+                <span>
+                  {c.display_name}
+                  <VerifiedMark on={c.verified} />
+                </span>
               </label>
             ))}
             {(groupList.data?.groups.length ?? 0) > 0 && (
@@ -586,7 +676,7 @@ function AudienceDialog({
         <label className="check">
           <input type="radio" checked={choice === 'hub'} onChange={() => setChoice('hub')} />
           <span>
-            <b>Everyone on {hubName(hub.url)}</b>
+            <b>Everyone on {hubName(hub)}</b>
             <br />
             <span className="muted small">
               Anyone signed in to this hub can find and download it.
@@ -596,6 +686,15 @@ function AudienceDialog({
       </div>
       <ErrorNote error={save.error} />
       <div className="dialog-actions">
+        {onUnlist && (
+          <button
+            className="btn quiet"
+            style={{ marginRight: 'auto' }}
+            onClick={() => void onUnlist().then(onClose)}
+          >
+            Don’t list it on {hubName(hub)}
+          </button>
+        )}
         <button className="btn" onClick={onClose}>
           Cancel
         </button>

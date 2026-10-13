@@ -15,7 +15,7 @@ export function useHubs(): { hubs: HubStatus[]; name: (id: string) => string } {
     hubs,
     name: (id) => {
       const h = hubs.find((x) => x.id === id);
-      return h ? hubName(h.url) : 'a hub you left';
+      return h ? hubName(h) : 'a hub you left';
     },
   };
 }
@@ -46,15 +46,26 @@ export function useNames() {
       })),
   });
   const users = new Map<string, string>();
-  const devices = new Map<string, { name: string; user: string }>();
+  const verified = new Set<string>();
+  const devices = new Map<string, { name: string; user: string; user_id: string }>();
   for (const q of people)
-    for (const c of q.data?.connections ?? []) users.set(c.user_id, c.display_name);
+    for (const c of q.data?.connections ?? []) {
+      users.set(c.user_id, c.display_name);
+      if (c.verified) verified.add(c.user_id);
+    }
   for (const d of data?.devices ?? []) {
     users.set(d.user.user_id, d.user.display_name);
-    devices.set(d.device_id, { name: d.device_name, user: d.user.display_name });
+    if (d.user.verified) verified.add(d.user.user_id);
+    devices.set(d.device_id, {
+      name: d.device_name,
+      user: d.user.display_name,
+      user_id: d.user.user_id,
+    });
   }
   return {
     user: (id: string) => users.get(id) ?? 'Someone',
+    /** Whether this user verified them by comparing safety codes. */
+    verified: (id: string) => verified.has(id),
     device: (id: string) => devices.get(id),
   };
 }

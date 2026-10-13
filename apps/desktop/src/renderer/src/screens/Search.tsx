@@ -4,7 +4,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { api, qs, type Hit, type Kind, type SearchResult } from '../api';
+import { api, qs, type Hit, type Kind, type SearchFrom, type SearchResult } from '../api';
 import { plural, seenLabel } from '../format';
 import { useNames } from '../hubs';
 import { useNav } from '../nav';
@@ -12,12 +12,14 @@ import {
   describe,
   FileArt,
   PreviewDialog,
+  DownloadButton,
   useDownload,
   useThumbs,
   type FileLike,
 } from '../ui/files';
 import { Icon } from '../ui/icons';
 import { Empty, ErrorNote } from '../ui/kit';
+import { VerifiedMark } from '../ui/VerifiedMark';
 
 const KINDS: { value: Kind | ''; label: string }[] = [
   { value: '', label: 'Any kind' },
@@ -30,6 +32,12 @@ const KINDS: { value: Kind | ''; label: string }[] = [
   { value: 'code', label: 'Code' },
   { value: 'disk_image', label: 'Disk images' },
   { value: 'other', label: 'Other' },
+];
+
+const FROM: { value: SearchFrom; label: string }[] = [
+  { value: 'anyone', label: 'From anyone' },
+  { value: 'connections', label: 'From my connections' },
+  { value: 'verified', label: 'From people I’ve verified' },
 ];
 
 const SIZES = [
@@ -53,10 +61,11 @@ export function Search({ initial }: { initial: string }) {
   const [kind, setKind] = useState<Kind | ''>('');
   const [minSize, setMinSize] = useState(0);
   const [availableOnly, setAvailableOnly] = useState(false);
+  const [from, setFrom] = useState<SearchFrom>('anyone');
   const q = useDebounced(text.trim(), 250);
   const filtered = !!kind || minSize > 0;
   const search = useInfiniteQuery({
-    queryKey: ['search', q, kind, minSize, availableOnly],
+    queryKey: ['search', q, kind, minSize, availableOnly, from],
     initialPageParam: undefined as Record<string, string> | undefined,
     queryFn: ({ pageParam }) =>
       api.get<SearchResult>(
@@ -65,6 +74,7 @@ export function Search({ initial }: { initial: string }) {
           kind: kind || undefined,
           min_size: minSize || undefined,
           available: availableOnly ? 'week' : undefined,
+          from: from === 'anyone' ? undefined : from,
           limit: 60,
           cursors: pageParam ? JSON.stringify(pageParam) : undefined,
         })}`,
@@ -85,6 +95,14 @@ export function Search({ initial }: { initial: string }) {
       .filter((h) => !seen.has(h.hash) && seen.add(h.hash));
   }, [search.data]);
   const down = search.data?.pages[0]?.hubs.filter((h) => !h.ok) ?? [];
+  // "From" is filtered here, not by the hubs, so a page can come back thin: fetch on until
+  // there's a screenful (or ten pages' worth of the hubs' results were looked at).
+  const pages = search.data?.pages.length ?? 0;
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = search;
+  useEffect(() => {
+    if (from !== 'anyone' && hits.length < 30 && pages > 0 && pages < 10 && hasNextPage)
+      if (!isFetchingNextPage) void fetchNextPage();
+  }, [from, hits.length, pages, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   return (
     <div className="page">
@@ -132,6 +150,19 @@ export function Search({ initial }: { initial: string }) {
             </option>
           ))}
         </select>
+        <select
+          className="input"
+          style={{ width: 'auto' }}
+          value={from}
+          onChange={(e) => setFrom(e.target.value as SearchFrom)}
+          aria-label="From"
+        >
+          {FROM.map((f) => (
+            <option key={f.value} value={f.value}>
+              {f.label}
+            </option>
+          ))}
+        </select>
         <label className="check" style={{ alignItems: 'center' }}>
           <input
             type="checkbox"
@@ -158,11 +189,13 @@ export function Search({ initial }: { initial: string }) {
           Type part of a name. Every word counts, so “beach 2019” finds “Beach trip (2019).mp4”.
         </Empty>
       )}
-      {search.data && hits.length === 0 && (
+      {search.data && hits.length === 0 && !search.isFetchingNextPage && (
         <Empty title="No matches">
           {availableOnly
             ? 'Nothing matching is on a computer that’s been around lately. Try turning off “Show only available files”.'
-            : 'Try fewer or shorter words, or a different kind.'}
+            : from !== 'anyone'
+              ? `Nothing matching comes from ${from === 'verified' ? 'people you’ve verified' : 'your connections'}. Try “From anyone”.`
+              : 'Try fewer or shorter words, or a different kind.'}
         </Empty>
       )}
       {hits.length > 0 && (
@@ -200,7 +233,7 @@ function HitRow({ hit }: { hit: Hit }) {
     hit.thumb ? [hit.hash] : [],
   );
   const file: FileLike = hit;
-  const owners = [...new Set(hit.sources.map((s) => names.user(s.owner)))];
+  const owners = [...new Set(hit.sources.map((s) => s.owner))];
   // Two copies on one computer are one source as far as anyone downloading is concerned.
   const computers = new Set(hit.sources.map((s) => s.device_id)).size;
   const online = new Set(hit.sources.filter((s) => s.online).map((s) => s.device_id)).size;
@@ -212,7 +245,14 @@ function HitRow({ hit }: { hit: Hit }) {
       <div className="grow">
         <div className="title">{hit.name}</div>
         <div className="sub">
-          {describe(hit.kind, hit.meta, hit.size)}. From {owners.slice(0, 3).join(', ')}
+          {describe(hit.kind, hit.meta, hit.size)}. From{' '}
+          {owners.slice(0, 3).map((o, i) => (
+            <span key={o}>
+              {i > 0 && ', '}
+              {names.user(o)}
+              <VerifiedMark on={names.verified(o)} />
+            </span>
+          ))}
           {owners.length > 3 ? ` and ${owners.length - 3} more` : ''}
         </div>
       </div>
@@ -247,15 +287,11 @@ function HitRow({ hit }: { hit: Hit }) {
             Preview
           </button>
         )}
-        <button
-          className="btn small quiet"
-          onClick={() => void download.run(hit.hash, hit.name, true)}
-        >
-          Save to…
-        </button>
-        <button className="btn small" onClick={() => void download.run(hit.hash, hit.name)}>
-          Download
-        </button>
+        <DownloadButton
+          small
+          onDownload={() => void download.run(hit.hash, hit.name)}
+          onSaveTo={() => void download.run(hit.hash, hit.name, true)}
+        />
       </div>
       {preview && best && (
         <PreviewDialog

@@ -8,6 +8,7 @@ import { useNames } from '../hubs';
 import { useApi } from '../query';
 import { FileIcon, iconForName } from '../ui/icons';
 import { Empty, ErrorNote, Progress, useAction } from '../ui/kit';
+import { VerifiedMark } from '../ui/VerifiedMark';
 
 const ACTIVE: Transfer['state'][] = ['active', 'queued', 'waiting'];
 
@@ -67,7 +68,9 @@ function TransferRow({ t, onCancel }: { t: Transfer; onCancel?: () => void }) {
   const sub = (() => {
     switch (t.state) {
       case 'queued':
-        return 'Starting…';
+        return t.error
+          ? 'Waiting its turn: the computer that has it is sending other files.'
+          : 'Starting…';
       case 'active':
         return total
           ? `${size(t.bytes_done)} of ${size(total)}${speed ? `, ${rate(speed)}` : ''}`
@@ -100,7 +103,8 @@ function TransferRow({ t, onCancel }: { t: Transfer; onCancel?: () => void }) {
               const d = names.device(s.device_id);
               return (
                 <span key={s.device_id}>
-                  {d ? computerName(d.user, d.name) : 'A computer'}: {rate(s.rate)}
+                  {d ? computerName(d.user, d.name) : 'A computer'}
+                  <VerifiedMark on={d && names.verified(d.user_id)} />: {rate(s.rate)}
                 </span>
               );
             })}

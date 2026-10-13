@@ -282,10 +282,13 @@ hub
   .description('list configured hubs')
   .action(async () => {
     if (await daemonRunning()) {
-      const { hubs } = await api().get<{ hubs: { id: string; url: string; ready: boolean }[] }>(
-        '/v1/hubs',
-      );
-      for (const h of hubs) console.log(`${h.id}  ${h.ready ? 'online ' : 'offline'}  ${h.url}`);
+      const { hubs } = await api().get<{
+        hubs: { id: string; url: string; name: string | null; ready: boolean }[];
+      }>('/v1/hubs');
+      for (const h of hubs)
+        console.log(
+          `${h.id}  ${h.ready ? 'online ' : 'offline'}  ${h.url}${h.name ? `  (${h.name})` : ''}`,
+        );
       if (hubs.length === 0)
         console.log('no hubs; add one with `communal hub add <url> --name <name>`');
       return;
@@ -294,7 +297,9 @@ hub
     if (hubs.length === 0)
       console.log('no hubs; add one with `communal hub add <url> --name <name>`');
     for (const h of hubs)
-      console.log(`${h.id}  ${h.state.registered ? 'joined ' : 'pending'}  ${h.url}`);
+      console.log(
+        `${h.id}  ${h.state.registered ? 'joined ' : 'pending'}  ${h.url}${h.state.name ? `  (${h.state.name})` : ''}`,
+      );
   });
 
 hub
@@ -382,6 +387,7 @@ program
   .option('--min-size <bytes>', 'smallest file size')
   .option('--online', 'only files with a source online now')
   .option('--seen <when>', 'only files with a source seen within: today, week, month')
+  .option('--from <who>', 'only files from: connections, verified (and you)')
   .option('--limit <n>', 'results per hub', '50')
   .option('--json', 'machine-readable output')
   .action(
@@ -392,12 +398,16 @@ program
         minSize?: string;
         online?: boolean;
         seen?: string;
+        from?: string;
         limit: string;
         json?: boolean;
       },
     ) =>
       viaDaemon(async (c) => {
         const p = new URLSearchParams({ q: words.join(' '), limit: opts.limit });
+        if (opts.from && !['connections', 'verified'].includes(opts.from))
+          throw new Error('--from must be connections or verified');
+        if (opts.from) p.set('from', opts.from);
         if (opts.kind) p.set('kind', opts.kind);
         if (opts.minSize) p.set('min_size', opts.minSize);
         if (opts.seen && !['today', 'week', 'month'].includes(opts.seen))

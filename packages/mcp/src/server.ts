@@ -130,12 +130,18 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
         .enum(['now', 'today', 'week', 'month'])
         .optional()
         .describe('Only files with a source seen at least this recently'),
+      from: z
+        .enum(['anyone', 'connections', 'verified'])
+        .optional()
+        .describe(
+          'Only files from my connections, or from people I verified by safety code (and me)',
+        ),
       limit: z.number().int().min(1).max(200).default(25),
     },
     READ,
     (c, a) =>
       c.get(
-        `/v1/search${q({ q: a.query, kind: a.kind, min_size: a.min_size, available: a.available, limit: a.limit })}`,
+        `/v1/search${q({ q: a.query, kind: a.kind, min_size: a.min_size, available: a.available, from: a.from, limit: a.limit })}`,
       ),
   );
   tool(

@@ -10,7 +10,7 @@ import { randomBytes } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { pino } from 'pino';
 import { generateKeyPair, signTransferToken, type KeyPair } from '@communal/crypto';
-import { CommunalCore, CHUNK_SIZE, type UploaderTestHooks } from '@communal/core';
+import { BUSY, CommunalCore, CHUNK_SIZE, type UploaderTestHooks } from '@communal/core';
 import { HubDb } from '@communal/hub';
 import { sleep, startTestHub, type TestHub } from '@communal/hub/testing';
 
@@ -44,6 +44,7 @@ async function core(
     device?: KeyPair;
     testHooks?: UploaderTestHooks;
     window?: number;
+    retryMs?: number;
     uploads?: { maxConcurrent?: number; bytesPerSecond?: number; lanOnly?: boolean };
   } = {},
 ) {
@@ -54,7 +55,7 @@ async function core(
     indexer: { flushMs: 100 },
     peer: { loopback: true },
     downloads: {
-      retryMs: 300,
+      retryMs: opts.retryMs ?? 300,
       chunkTimeoutMs: 5_000,
       ...(opts.window ? { window: opts.window } : {}),
     },
@@ -307,13 +308,18 @@ describe('M4: direct transfers', () => {
       const bob = await core('bob');
       await bob.addHub(h.url, acct('bob'));
       const t = bob.downloads.add({ hash: alice.hash, name: 'x' });
-      await until(() => bob.store.transfer(t.id)!.state === 'waiting', 10_000, 'busy → waiting');
+      await until(
+        () => bob.store.transfer(t.id)!.error === BUSY,
+        10_000,
+        'busy → queued for a slot',
+      );
+      expect(bob.store.transfer(t.id)!).toMatchObject({ state: 'queued', diagnosis: null });
 
       // Owner goes offline: the download keeps waiting…
       await alice.c.stop();
       alice.c.markStopped();
       await sleep(500);
-      expect(bob.store.transfer(t.id)!.state).toBe('waiting');
+      expect(bob.store.transfer(t.id)!.state).not.toMatch(/done|failed/);
       // …and completes when the owner comes back (with room to upload).
       const alice2 = await core('alice', { dataDir: aliceDir, device: aliceKey });
       void alice2;
@@ -321,4 +327,38 @@ describe('M4: direct transfers', () => {
       expect(readFileSync(done.final_path!).equals(alice.data)).toBe(true);
     },
   );
+
+  it('starts the next download as soon as a busy source frees a slot', async () => {
+    const h = await hub();
+    const alice = await core('alice', { uploads: { maxConcurrent: 2 } });
+    const hubId = (await alice.addHub(h.url, acct('alice'))).hub.id;
+    const root = tmp('communal-m4-share-alice-');
+    const files = Array.from({ length: 7 }, (_, i) => ({
+      name: `song${i}.mp3`,
+      data: randomBytes(CHUNK_SIZE + 1_000 * i),
+    }));
+    for (const f of files) writeFileSync(join(root, f.name), f.data);
+    await alice.addShare('Share', root);
+    await alice.setRule(hubId, 'Share/', 'hub');
+    await until(() => alice.store.counts().hashed === files.length, 10_000, 'hash');
+    await until(
+      async () => (await alice.sync.idle(), h.db.entryCount(alice.deviceId) === files.length),
+      10_000,
+      'sync',
+    );
+
+    // Retries are far off: only a freed slot can start the queued downloads in time.
+    const bob = await core('bob', { retryMs: 60_000 });
+    await bob.addHub(h.url, acct('bob'));
+    const started = Date.now();
+    const ids = files.map(
+      (f) => bob.downloads.add({ hash: alice.store.file('Share', f.name)!.hash!, name: f.name }).id,
+    );
+    for (const [i, id] of ids.entries()) {
+      const done = await finished(bob, id, 8_000);
+      expect(done.state).toBe('done');
+      expect(readFileSync(done.final_path!).equals(files[i]!.data)).toBe(true);
+    }
+    expect(Date.now() - started).toBeLessThan(8_000);
+  });
 });

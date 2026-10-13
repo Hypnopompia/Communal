@@ -670,6 +670,55 @@ textarea.input {
   flex-shrink: 0;
 }
 
+/* A button with a menu of alternatives (Download ▾ Save to…). */
+.split {
+  display: inline-flex;
+  position: relative;
+}
+.split > .btn:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.split > .btn + .btn {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  margin-left: -1px;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+.split > .btn.primary + .btn.primary {
+  border-left-color: color-mix(in srgb, var(--accent-ink) 35%, var(--accent));
+}
+.menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 5;
+  min-width: 150px;
+  display: grid;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-pop);
+}
+.menu button {
+  text-align: left;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.menu button:hover,
+.menu button:focus-visible {
+  background: var(--surface-2);
+  outline: none;
+}
+
 /* ── dialogs ───────────────────────────────────────────────────────────── */
 
 .scrim {

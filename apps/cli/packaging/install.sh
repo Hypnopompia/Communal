@@ -24,7 +24,9 @@ ln -sf /opt/communal/bin/communal /usr/local/bin/communal
 [ -f /etc/communal/communal.env ] || cp "$here/communal.env.example" /etc/communal/communal.env
 cp "$here/communal.service" /etc/systemd/system/communal.service
 systemctl daemon-reload
-systemctl enable --now communal
+systemctl enable communal
+# restart, not start: on an upgrade the old version is still running.
+systemctl restart communal
 
 cat <<MSG
 Communal is running. Next:

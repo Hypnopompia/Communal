@@ -9,6 +9,7 @@ import { CoreError } from './errors.js';
 import { HubError } from './hub-client.js';
 import type { HubManager } from './hub-manager.js';
 import { hashFile } from './index/hasher.js';
+import { SYNC_MARKER } from './index/indexer.js';
 import type { IndexStore, LocalStamp, SubFileRow, SubscriptionRow } from './index/store.js';
 import { safeName, uniquePath, type Downloads } from './transfer/downloader.js';
 
@@ -271,12 +272,15 @@ export class Subscriptions {
     // every file going away. That must not empty the others' folders (ADR 0019).
     const removed =
       sub.sync && ev.removed.length && !(await this.stillShared(sub)) ? [] : ev.removed;
+    // Every synced folder writes its own marker; trading copies of it would only add noise.
+    const marker = (p: string) => sub.sync && p === `${sub.path}${SYNC_MARKER}`;
     for (const p of removed) {
+      if (marker(p)) continue;
       const f = this.o.store.subFile(id, p);
       if (f) leaving.set(p, f);
     }
     for (const e of ev.added) {
-      if (!e.hash || !e.path.startsWith(sub.path)) continue;
+      if (!e.hash || !e.path.startsWith(sub.path) || marker(e.path)) continue;
       const step = sub.sync
         ? this.addedSync(sub, e as Entry, leaving)
         : this.added(sub, e as Entry, leaving);

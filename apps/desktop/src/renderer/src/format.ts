@@ -49,12 +49,13 @@ export function seenLabel(seen: Seen): string {
   }[seen];
 }
 
-/** A hub as people know it: its host name. */
-export function hubName(url: string): string {
+/** What to call a hub: the name its admin gave it, else its host name. */
+export function hubName(hub: { url: string; name?: string | null }): string {
+  if (hub.name) return hub.name;
   try {
-    return new URL(url).hostname;
+    return new URL(hub.url).hostname;
   } catch {
-    return url;
+    return hub.url;
   }
 }
 

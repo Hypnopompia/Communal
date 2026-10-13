@@ -229,6 +229,8 @@ export const hubBodies = {
     nonce: B64.length(43),
     hub_id: z.string().max(64),
     hub_pubkey: PublicKey,
+    /** What the hub's admin calls it, for people to read (older hubs leave it out). */
+    name: z.string().trim().min(1).max(64).optional(),
   }),
   welcome: z.object({
     session: z.string().max(64),
@@ -284,6 +286,9 @@ export const hubBodies = {
         user: UserSummary,
         state: z.enum(['accepted', 'pending_in', 'pending_out']),
         since: UnixSeconds,
+        /** Accepted connections only: whether any of their computers is online, else when last. */
+        online: z.boolean().optional(),
+        seen: Seen.optional(),
       }),
     ),
   }),

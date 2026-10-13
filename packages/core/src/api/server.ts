@@ -503,6 +503,7 @@ export class LocalApi {
           kind: Kind.optional(),
           min_size: z.coerce.number().int().nonnegative().optional(),
           available: Seen.exclude(['older']).optional(),
+          from: z.enum(['anyone', 'connections', 'verified']).default('anyone'),
           limit: z.coerce.number().int().min(1).max(500).default(50),
           cursors: z
             .string()
@@ -510,8 +511,8 @@ export class LocalApi {
             .transform((s) => (s ? (JSON.parse(s) as Record<string, string>) : undefined)),
         })
         .parse(Object.fromEntries(q));
-      const { cursors, ...query } = parsed;
-      const r = await this.core.search(query, cursors);
+      const { cursors, from, ...query } = parsed;
+      const r = await this.core.search(query, cursors, from);
       return { ...r, hits: r.hits.map((h) => withIcon(h, h.name)) };
     });
     route('GET', '/v1/browse', async (_req, url) => {
@@ -666,7 +667,7 @@ export class LocalApi {
     const c = this.core;
     on(c.hubs, ['ready', 'disconnected', 'fatal', 'pending_approval', 'enrolled'], 'hubs');
     on(c.hubs, ['presence'], 'presence');
-    on(c.downloads, ['progress', 'done', 'waiting', 'failed'], 'transfers');
+    on(c.downloads, ['progress', 'done', 'waiting', 'queued', 'failed'], 'transfers');
     on(c.indexer, ['changed', 'scanned'], 'index');
     on(c.media, ['changed'], 'index');
     const hubEvent = ({ msg }: { msg: { t: string } }) => {

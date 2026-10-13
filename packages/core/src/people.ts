@@ -110,7 +110,13 @@ export class People {
     const r = await this.ask(hub, 'connection.list', {}, 'connection.listing');
     return r.connections
       .filter((c) => checkSummary(c.user))
-      .map((c) => ({ ...this.person(c.user), state: c.state, since: c.since }));
+      .map((c) => ({
+        ...this.person(c.user),
+        state: c.state,
+        since: c.since,
+        ...(c.online !== undefined ? { online: c.online } : {}),
+        ...(c.seen ? { seen: c.seen } : {}),
+      }));
   }
 
   async request(hub: string, user: string) {

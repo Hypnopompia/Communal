@@ -4,12 +4,13 @@
  */
 import { useState } from 'react';
 import { api, qs, type Connection, type Group, type HubStatus, type Person } from '../api';
-import { ago, hubName, plural } from '../format';
+import { ago, hubName, plural, seenLabel } from '../format';
 import { useHubs } from '../hubs';
 import { useApi } from '../query';
 import { Disc } from '../ui/Disc';
 import { Icon } from '../ui/icons';
 import { Dialog, Empty, ErrorNote, useAction } from '../ui/kit';
+import { VerifiedMark } from '../ui/VerifiedMark';
 
 export function People() {
   const { hubs } = useHubs();
@@ -30,7 +31,7 @@ export function People() {
             <div className="segmented" role="group" aria-label="Hub">
               {hubs.map((h) => (
                 <button key={h.id} aria-pressed={h.id === hub?.id} onClick={() => setHubId(h.id)}>
-                  {hubName(h.url)}
+                  {hubName(h)}
                 </button>
               ))}
             </div>
@@ -38,7 +39,7 @@ export function People() {
         )}
       </div>
       {!hub ? null : !hub.ready ? (
-        <div className="notice warn">{hubName(hub.url)} isn’t reachable right now.</div>
+        <div className="notice warn">{hubName(hub)} isn’t reachable right now.</div>
       ) : (
         <HubPeople key={hub.id} hub={hub} />
       )}
@@ -48,7 +49,7 @@ export function People() {
 
 function HubPeople({ hub }: { hub: HubStatus }) {
   const conns = useApi<{ connections: Connection[] }>(
-    ['people'],
+    ['people', 'presence'],
     `/v1/people${qs({ hub: hub.id })}`,
   );
   const [verifying, setVerifying] = useState<Connection | null>(null);
@@ -57,6 +58,7 @@ function HubPeople({ hub }: { hub: HubStatus }) {
       api.post(`/v1/people/${action}`, { hub: hub.id, user_id }),
     { topics: ['people', 'presence'] },
   );
+  // Presence changes come as `presence` hints: they move connections' online state.
   const all = conns.data?.connections ?? [];
   const incoming = all.filter((c) => c.state === 'pending_in');
   const accepted = all.filter((c) => c.state === 'accepted');
@@ -99,7 +101,7 @@ function HubPeople({ hub }: { hub: HubStatus }) {
       <section className="section">
         <div className="section-head">
           <h2>Connections</h2>
-          {many && <span className="hint">on {hubName(hub.url)}</span>}
+          {many && <span className="hint">on {hubName(hub)}</span>}
         </div>
         {conns.data && accepted.length === 0 ? (
           <Empty title="No connections yet">
@@ -112,7 +114,12 @@ function HubPeople({ hub }: { hub: HubStatus }) {
               <PersonRow
                 key={c.user_id}
                 p={c}
-                sub={c.verified ? 'Verified' : `Connected ${ago(c.since)}`}
+                online={c.online}
+                sub={
+                  c.seen
+                    ? `${seenLabel(c.seen)} · connected ${ago(c.since)}`
+                    : `Connected ${ago(c.since)}`
+                }
               >
                 <button className="btn small quiet" onClick={() => setVerifying(c)}>
                   {c.verified ? 'Safety code' : 'Verify'}
@@ -150,21 +157,24 @@ function HubPeople({ hub }: { hub: HubStatus }) {
   );
 }
 
-function PersonRow({ p, sub, children }: { p: Person; sub: string; children?: React.ReactNode }) {
+function PersonRow({
+  p,
+  sub,
+  online,
+  children,
+}: {
+  p: Person;
+  sub: string;
+  online?: boolean;
+  children?: React.ReactNode;
+}) {
   return (
     <div className="row">
-      <Disc name={p.display_name} seed={p.fingerprint} />
+      <Disc name={p.display_name} seed={p.fingerprint} online={online} />
       <div className="grow">
         <div className="title">
-          {p.display_name}{' '}
-          {p.verified && (
-            <Icon
-              name="shield"
-              size={14}
-              style={{ color: 'var(--online)', verticalAlign: '-2px' }}
-              aria-label="Verified"
-            />
-          )}
+          {p.display_name}
+          <VerifiedMark on={p.verified} />
         </div>
         <div className="sub">{sub}</div>
       </div>
@@ -235,7 +245,7 @@ function FindPeople({
       {q.trim() &&
         results.data &&
         (results.data.users.length === 0 ? (
-          <p className="muted">Nobody on {hubName(hub.url)} goes by that name.</p>
+          <p className="muted">Nobody on {hubName(hub)} goes by that name.</p>
         ) : (
           <div className="panel rows">
             {results.data.users.map((u) => (
@@ -427,7 +437,10 @@ function GroupDialog({
                   )
                 }
               />
-              <span>{c.display_name}</span>
+              <span>
+                {c.display_name}
+                <VerifiedMark on={c.verified} />
+              </span>
             </label>
           ))}
         </div>

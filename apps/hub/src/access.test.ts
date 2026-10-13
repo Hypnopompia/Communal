@@ -309,6 +309,43 @@ describe('connections', () => {
     ).toEqual([]);
   });
 
+  it('says whether accepted connections are online, and nothing about pending ones', async () => {
+    // A short silence window, so Bob counts as offline soon after he leaves.
+    const h = await startTestHub({ silenceMs: 300 });
+    const alice = await signUp(h.url, 'alice');
+    alice.c.keepAlive();
+    const bob = await signUp(h.url, 'bob');
+    const carol = await signUp(h.url, 'carol');
+    carol.c.keepAlive();
+    h.db.putConnection(alice.userId, bob.userId, 'accepted', alice.userId);
+    await carol.c.request('connection.request', { user_id: alice.userId });
+    type Listing = {
+      connections: { user: { user_id: string }; online?: boolean; seen?: string }[];
+    };
+    const list = async () =>
+      new Map(
+        body<Listing>(await alice.c.request('connection.list', {})).connections.map((c) => [
+          c.user.user_id,
+          c,
+        ]),
+      );
+    let l = await list();
+    expect(l.get(bob.userId)).toMatchObject({ online: true, seen: 'now' });
+    // A pending request reveals nothing about presence, either way.
+    expect(l.get(carol.userId)).not.toHaveProperty('online');
+    expect(l.get(carol.userId)).not.toHaveProperty('seen');
+    expect(
+      body<Listing>(await carol.c.request('connection.list', {})).connections[0],
+    ).not.toHaveProperty('online');
+
+    // Bob goes away: offline once his grace period ends, seen within the day.
+    bob.c.close();
+    for (let i = 0; i < 100 && (l = await list()).get(bob.userId)?.online; i++)
+      await new Promise((r) => setTimeout(r, 50));
+    expect(l.get(bob.userId)).toMatchObject({ online: false, seen: 'today' });
+    await h.close();
+  });
+
   it('treats crossing requests as acceptance', async () => {
     const alice = await signUp(t.url, 'alice');
     const bob = await signUp(t.url, 'bob');

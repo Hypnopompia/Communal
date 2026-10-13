@@ -42,7 +42,7 @@ import { Previews } from './media/previews.js';
 import { PEEK_BYTES } from './transfer/uploader.js';
 import type { ThumbSize } from './media/analyze.js';
 import { IndexSync } from './index/sync.js';
-import { searchAll, type MergedSearch } from './search.js';
+import { searchAll, type MergedSearch, type SearchFrom } from './search.js';
 import type { Enrollment } from './hub-client.js';
 import { CoreError } from './errors.js';
 import {
@@ -809,11 +809,41 @@ export class CommunalCore {
 
   // ── search & browse ───────────────────────────────────────────────────────
 
-  search(
+  /**
+   * Searches every hub. `from` keeps only files held by your connections or by people you've
+   * verified (and yourself). It's applied here, not by the hubs: who you've verified never
+   * leaves this device.
+   */
+  async search(
     q: Omit<ClientBody<'search'>, 'cursor'>,
     cursors?: Record<string, string>,
+    from: SearchFrom = 'anyone',
   ): Promise<MergedSearch> {
-    return searchAll(this.hubs, q, cursors);
+    const [r, people] = await Promise.all([
+      searchAll(this.hubs, q, cursors),
+      from === 'anyone' ? undefined : this.trusted(from),
+    ]);
+    if (!people) return r;
+    const hits = r.hits
+      .map((h) => ({ ...h, sources: h.sources.filter((s) => people.has(s.owner)) }))
+      .filter((h) => h.sources.length > 0);
+    return { ...r, hits };
+  }
+
+  /** You, plus your accepted connections on any hub, or the people you've verified. */
+  private async trusted(from: Exclude<SearchFrom, 'anyone'>): Promise<Set<string>> {
+    const people = from === 'verified' ? this.store.verifiedUsers() : new Set<string>();
+    if (from === 'connections') {
+      const lists = await Promise.all(
+        this.hubs
+          .list()
+          .filter((h) => h.ready)
+          .map((h) => this.people.connections(h.id).catch(() => [])),
+      );
+      for (const c of lists.flat()) if (c.state === 'accepted') people.add(c.user_id);
+    }
+    if (this.accountId) people.add(this.accountId.user_id);
+    return people;
   }
 
   async browse(hub: string, device: string, path: string): Promise<HubBody<'browse.listing'>> {
@@ -886,6 +916,7 @@ export class CommunalCore {
       hubs: this.hubs.list().map((h) => ({
         id: h.id,
         url: h.url,
+        name: h.state.name ?? null,
         ready: h.ready,
         problem: h.problem,
         registered: h.state.registered,

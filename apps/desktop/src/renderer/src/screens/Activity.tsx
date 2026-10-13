@@ -8,6 +8,7 @@ import { ago, size } from '../format';
 import { useNames } from '../hubs';
 import { useApi } from '../query';
 import { Empty, ErrorNote } from '../ui/kit';
+import { VerifiedMark } from '../ui/VerifiedMark';
 
 const STATUS: Record<UploadLogRow['status'], string> = {
   completed: 'Downloaded',
@@ -60,6 +61,7 @@ export function Activity() {
                 <div className="title">{r.path}</div>
                 <div className="sub">
                   {names.user(r.requester_user)}
+                  <VerifiedMark on={names.verified(r.requester_user)} />
                   {r.kind === 'thumbnail' ? ' looked at a preview' : ''}, {size(r.bytes)}
                 </div>
               </div>

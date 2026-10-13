@@ -937,6 +937,11 @@ export class IndexStore {
       .get(userId) as string | undefined;
   }
 
+  /** Everyone this user has verified. */
+  verifiedUsers(): Set<string> {
+    return new Set(this.raw.prepare('SELECT user_id FROM verified').pluck().all() as string[]);
+  }
+
   setVerified(userId: string, fingerprint: string | null) {
     if (fingerprint === null)
       this.raw.prepare('DELETE FROM verified WHERE user_id = ?').run(userId);

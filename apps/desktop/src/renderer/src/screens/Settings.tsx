@@ -432,7 +432,7 @@ function Hubs() {
           <div key={h.id} className="row" style={{ alignItems: 'flex-start' }}>
             <Icon name="globe" size={22} />
             <div className="grow" style={{ display: 'grid', gap: 4 }}>
-              <div className="title">{hubName(h.url)}</div>
+              <div className="title">{hubName(h)}</div>
               <div className="sub">{h.url}</div>
               {h.problem && (
                 <div className="notice warn small">
@@ -468,7 +468,7 @@ function Hubs() {
       )}
       {leaving && (
         <Dialog
-          title={`Leave ${hubName(hubs.find((h) => h.id === leaving)?.url ?? '')}?`}
+          title={`Leave ${hubName(hubs.find((h) => h.id === leaving) ?? { url: '' })}?`}
           onClose={() => setLeaving(null)}
         >
           <p className="muted">
@@ -784,7 +784,8 @@ function Downloads() {
     <div className="panel panel-pad section" style={{ maxWidth: 560 }}>
       <h2>Where downloads go</h2>
       <p className="muted">
-        Download saves files here. To put one somewhere else, use Save to… instead.
+        Download saves files here. To put one somewhere else, choose Save to… from the arrow next to
+        Download.
       </p>
       <div className="field">
         <span>Downloads folder</span>

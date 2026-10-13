@@ -7,6 +7,7 @@ import { useNav } from '../nav';
 import { useApi } from '../query';
 import { FolderIcon } from '../ui/icons';
 import { Dialog, Empty, ErrorNote, useAction } from '../ui/kit';
+import { VerifiedMark } from '../ui/VerifiedMark';
 
 export function Subscriptions() {
   const list = useApi<{ subscriptions: Subscription[] }>(
@@ -74,7 +75,8 @@ function SubRow({ s }: { s: Subscription }) {
         <div className="title">{baseName(s.path)}</div>
         <div className="sub">
           From {d ? computerName(d.user, d.name) : 'another computer'}
-          {hubs.length > 1 && hub ? ` on ${hubName(hub.url)}` : ''}. Saved in{' '}
+          <VerifiedMark on={d && names.verified(d.user_id)} />
+          {hubs.length > 1 && hub ? ` on ${hubName(hub)}` : ''}. Saved in{' '}
           <a
             href="#"
             title={s.dest_dir}

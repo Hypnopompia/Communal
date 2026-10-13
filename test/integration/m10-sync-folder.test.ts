@@ -4,7 +4,7 @@
  * conflicting edits kept side by side under the same name everywhere.
  */
 import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
-import { mkdir, rename, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -242,6 +242,25 @@ describe('the synced folder', () => {
       .get();
     expect(staged).toBe(0);
   }, 60_000);
+
+  it('never fetches another computer’s marker file', async () => {
+    const h = await hub();
+    const { cores } = await account(h, ['desk', 'laptop']);
+    const [desk, laptop] = cores as [Core, Core];
+    const deskRoot = join(tmp('communal-sync-home-'), 'Communal');
+    const laptopRoot = join(tmp('communal-sync-home-'), 'Communal');
+    await laptop.syncFolder.enable(laptopRoot);
+    // Markers can differ (another version's text, or edited): still nothing to trade.
+    await writeFile(join(laptopRoot, SYNC_MARKER), 'an older marker');
+    await writeFile(join(laptopRoot, 'a.txt'), 'a');
+    await desk.syncFolder.enable(deskRoot);
+    await meshed([desk, laptop]);
+    await allHold([desk, laptop], { 'a.txt': 'a' });
+    expect(desk.store.transfers().filter((t) => t.name === SYNC_MARKER)).toEqual([]);
+    expect(laptop.store.transfers().filter((t) => t.name === SYNC_MARKER)).toEqual([]);
+    expect(await readFile(join(laptopRoot, SYNC_MARKER), 'utf8')).toBe('an older marker');
+    expect(readdirSync(deskRoot).filter((n) => n.includes('conflicted'))).toEqual([]);
+  });
 
   it('keeps both versions of a file edited on two computers, named alike on both', async () => {
     const h = await hub();

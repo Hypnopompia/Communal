@@ -33,6 +33,13 @@ export class PathError extends Error {
   }
 }
 
+/** The uploader is serving as many downloads as it allows; try again once one ends. */
+export class BusyError extends Error {
+  constructor(readonly retryAfterMs: number) {
+    super('source busy');
+  }
+}
+
 /** Failures worth diagnosing: nothing (or nothing usable) got through. */
 const unreachable = (err: unknown): err is ConnectError =>
   err instanceof ConnectError && (err.reason === 'no_path' || err.reason === 'handshake_failed');
@@ -152,7 +159,7 @@ export class PeerBroker {
   /**
    * `open`, then `hello` with the token, and the uploader's verdict. `file` sessions fetch the
    * token's file; `preview` sessions ask for thumbnails and peeks (M6). Rejects when the
-   * uploader is busy or refuses (with `denied (<reason>)`).
+   * uploader is busy (`BusyError`) or refuses (with `denied (<reason>)`).
    */
   async session(
     hub: string,
@@ -174,11 +181,8 @@ export class PeerBroker {
       });
     if (reply.header.t !== 'hello.ok') {
       channel.close();
-      throw new Error(
-        reply.header.t === 'busy'
-          ? 'source busy'
-          : `denied (${reply.header.t === 'denied' ? reply.header.reason : ''})`,
-      );
+      if (reply.header.t === 'busy') throw new BusyError(reply.header.retry_after_s * 1000);
+      throw new Error(`denied (${reply.header.t === 'denied' ? reply.header.reason : ''})`);
     }
     return channel;
   }

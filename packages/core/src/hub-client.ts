@@ -26,6 +26,8 @@ import {
 export interface HubClientState {
   /** Hub key pinned on first contact; any later mismatch is fatal (HANDOFF §4). */
   hubPubkey?: string;
+  /** The hub's readable name, as it last said (after its key checked out). */
+  name?: string;
   registered: boolean;
   userId?: string;
   deviceId?: string;
@@ -374,6 +376,7 @@ export class HubClient extends EventEmitter<HubClientEvents> {
       );
     }
     if (!st.hubPubkey) await this.save({ hubPubkey: ch.hub_pubkey });
+    if (ch.name && ch.name !== st.name) await this.save({ name: ch.name });
 
     const sig = toB64(
       sign('communal/auth/v1', authPayload(fromB64(ch.nonce), ch.hub_id), this.o.device.secretKey),

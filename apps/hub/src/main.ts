@@ -133,10 +133,15 @@ program
 
 program
   .command('set <key> <value>')
-  .description('change a hub setting (join_mode open|approval)')
-  .action((key: string, value: string) => {
-    if (key !== 'join_mode' || (value !== 'open' && value !== 'approval')) {
-      console.error('supported: set join_mode open|approval');
+  .description('change a hub setting: join_mode open|approval, or name "<what people see>"')
+  .action((key: string, raw: string) => {
+    const value = raw.trim();
+    const ok =
+      key === 'join_mode'
+        ? value === 'open' || value === 'approval'
+        : key === 'name' && value.length >= 1 && value.length <= 64;
+    if (!ok) {
+      console.error('supported: set join_mode open|approval, set name "<1 to 64 characters>"');
       process.exitCode = 2;
       return;
     }
@@ -152,7 +157,10 @@ program
   .action((key?: string) => {
     const db = openDb();
     if (key) console.log(db.getSetting(key) ?? '(unset)');
-    else console.log(`join_mode = ${db.joinMode}`);
+    else {
+      console.log(`join_mode = ${db.joinMode}`);
+      console.log(`name = ${db.hubName ?? '(unset: clients show the host name)'}`);
+    }
     db.close();
   });
 

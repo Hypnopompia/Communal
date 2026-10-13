@@ -118,7 +118,12 @@ export const clientFixtures: { [T in ClientType]: ClientBody<T> } = {
 };
 
 export const hubFixtures: { [T in HubType]: HubBody<T> } = {
-  challenge: { nonce: 'n'.repeat(43), hub_id: 'hub.example', hub_pubkey: pk },
+  challenge: {
+    nonce: 'n'.repeat(43),
+    hub_id: 'hub.example',
+    hub_pubkey: pk,
+    name: 'Hunter family',
+  },
   welcome: {
     session: 's_1',
     user_id: uid,
@@ -150,7 +155,12 @@ export const hubFixtures: { [T in HubType]: HubBody<T> } = {
   'connection.request': { user },
   'connection.accept': { user },
   'connection.remove': { user_id: uid2 },
-  'connection.listing': { connections: [{ user, state: 'pending_in', since: 1_700_000_000 }] },
+  'connection.listing': {
+    connections: [
+      { user, state: 'pending_in', since: 1_700_000_000 },
+      { user, state: 'accepted', since: 1_700_000_000, online: false, seen: 'week' },
+    ],
+  },
   'group.listing': { groups: [{ group_id: gid, name: 'Family', members: [uid2] }] },
   'index.ack': { rev: 4 },
   'index.resync': { reason: 'rev_mismatch' },

@@ -35,6 +35,16 @@ describe('session', () => {
     c.close();
   });
 
+  it('names itself in the challenge once its admin gives it a name', async () => {
+    const before = await RawClient.connect(t.url);
+    expect((await before.next('challenge')).body).not.toHaveProperty('name');
+    before.close();
+    t.db.setSetting('name', 'Hunter family');
+    const after = await RawClient.connect(t.url);
+    expect((await after.next('challenge')).body).toMatchObject({ name: 'Hunter family' });
+    after.close();
+  });
+
   it('answers ping before and after sign-in', async () => {
     const c = await RawClient.connect(t.url);
     expect((await c.request('ping', {})).t).toBe('pong');

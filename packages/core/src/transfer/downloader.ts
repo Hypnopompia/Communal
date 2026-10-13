@@ -10,7 +10,7 @@ import { CHUNK_SIZE, type AnyPeerHeader, type PeerHeader } from '@communal/proto
 import type { HubManager } from '../hub-manager.js';
 import type { IndexStore, TransferRow } from '../index/store.js';
 import type { PeerChannel } from '../peer/transport.js';
-import { PathError, type PeerBroker } from './broker.js';
+import { BusyError, PathError, type PeerBroker } from './broker.js';
 import { mostUseful, type TransferDiagnosis } from './diagnosis.js';
 
 export interface DownloadOptions {
@@ -38,6 +38,8 @@ export interface DownloadEvents {
   done: [{ id: string; path: string }];
   failed: [{ id: string; error: string }];
   waiting: [{ id: string; reason: string; diagnosis?: TransferDiagnosis }];
+  /** Back in line: every source it reached is busy with other downloads. */
+  queued: [{ id: string }];
 }
 
 type Source = { hub: string; device: string };
@@ -64,6 +66,16 @@ interface SourceStat extends LiveSource {
   mark: { at: number; bytes: number };
 }
 
+/** Every source we reached is serving as many downloads as it allows. */
+class Busy extends Error {
+  constructor(
+    readonly devices: Set<string>,
+    readonly retryAfterMs: number,
+  ) {
+    super(BUSY);
+  }
+}
+
 class Retryable extends Error {
   constructor(
     message: string,
@@ -76,6 +88,9 @@ class Retryable extends Error {
 
 /** The error of a download whose file no hub offers us any more. */
 export const GONE = 'no longer available (deleted, changed, or not shared with you any more)';
+
+/** The error of a download queued behind others on the computers that have it. */
+export const BUSY = 'waiting for a free upload slot';
 
 const NOTHING_KNOWN = { nat: 'unknown', upnp: false, ipv6: false, cgnat: false } as const;
 
@@ -103,6 +118,11 @@ export class Downloads extends EventEmitter<DownloadEvents> {
   private readonly running = new Map<string, AbortController>();
   private readonly retryTimers = new Map<string, NodeJS.Timeout>();
   private readonly live = new Map<string, Map<string, SourceStat>>();
+  /**
+   * Downloads turned away by busy sources, oldest first, with those sources. When a download
+   * from one of them ends, the next in line starts at once instead of waiting for its retry.
+   */
+  private readonly busy = new Map<string, Set<string>>();
   private stopped = false;
 
   constructor(opts: DownloadOptions) {
@@ -116,10 +136,12 @@ export class Downloads extends EventEmitter<DownloadEvents> {
       ...opts,
     };
     this.log = opts.log ?? pino({ name: 'downloads' });
-    // A source coming online is a good moment to retry waiting downloads.
+    // A source coming online is a good moment to retry waiting downloads (and busy ones: it may
+    // have room).
     opts.hubs.on('presence', ({ presence }) => {
-      if (presence.online)
-        for (const t of this.o.store.transfers(['waiting'])) this.schedule(t.id, 0);
+      if (!presence.online) return;
+      for (const t of this.o.store.transfers(['waiting'])) this.schedule(t.id, 0);
+      for (const id of this.busy.keys()) this.schedule(id, 0);
     });
   }
 
@@ -157,6 +179,7 @@ export class Downloads extends EventEmitter<DownloadEvents> {
     if (!t || t.state === 'done') return false;
     this.running.get(id)?.abort();
     clearTimeout(this.retryTimers.get(id));
+    this.busy.delete(id);
     this.o.store.updateTransfer(id, { state: 'cancelled' });
     const part = join(t.dest_dir, `${t.name}.part`);
     void rm(part, { force: true });
@@ -196,9 +219,11 @@ export class Downloads extends EventEmitter<DownloadEvents> {
     const abort = new AbortController();
     this.running.set(id, abort);
     this.o.store.updateTransfer(id, { state: 'active', error: null });
-    let retry = false;
+    this.busy.delete(id);
+    let retry = this.o.retryMs;
+    let used = new Set<string>();
     try {
-      const path = await this.download(t, abort.signal);
+      const path = await this.download(t, abort.signal, (d) => (used = d));
       const size = this.o.store.transfer(id)?.size ?? 0;
       this.o.store.updateTransfer(id, {
         state: 'done',
@@ -212,6 +237,12 @@ export class Downloads extends EventEmitter<DownloadEvents> {
       if (abort.signal.aborted && this.o.store.transfer(id)?.state === 'cancelled') return;
       if (this.stopped) {
         this.o.store.updateTransfer(id, { state: 'queued' });
+      } else if (err instanceof Busy) {
+        // Not a problem to diagnose: it just waits its turn.
+        this.o.store.updateTransfer(id, { state: 'queued', error: err.message });
+        this.busy.set(id, err.devices);
+        retry = Math.max(err.retryAfterMs, this.o.retryMs);
+        this.emit('queued', { id });
       } else if (err instanceof Retryable) {
         // A diagnosis stays until the download completes or a newer one replaces it.
         this.o.store.updateTransfer(id, {
@@ -224,7 +255,6 @@ export class Downloads extends EventEmitter<DownloadEvents> {
           reason: err.message,
           ...(err.diagnosis ? { diagnosis: err.diagnosis } : {}),
         });
-        retry = true;
       } else {
         this.o.store.updateTransfer(id, { state: 'failed', error: (err as Error).message });
         this.log.warn({ transfer_id: id, err: (err as Error).message }, 'download failed');
@@ -234,7 +264,20 @@ export class Downloads extends EventEmitter<DownloadEvents> {
       this.running.delete(id);
     }
     // After `running` is cleared, or schedule() would think we're still going.
-    if (retry) this.schedule(id, this.o.retryMs);
+    const t2 = this.o.store.transfer(id);
+    if (t2?.state === 'waiting' || (t2?.state === 'queued' && this.busy.has(id)))
+      this.schedule(id, retry);
+    for (const device of used) this.freed(device);
+  }
+
+  /** A download from `device` ended, freeing one of its upload slots: hand it to the next in line. */
+  private freed(device: string) {
+    for (const [id, devices] of this.busy) {
+      if (!devices.has(device)) continue;
+      this.busy.delete(id);
+      this.schedule(id, 0);
+      return;
+    }
   }
 
   /**
@@ -271,7 +314,12 @@ export class Downloads extends EventEmitter<DownloadEvents> {
     return fetchManifest(ch, hash);
   }
 
-  private async download(t: TransferRow, signal: AbortSignal): Promise<string> {
+  /** `connected` learns which devices the download got a session with (their slots it holds). */
+  private async download(
+    t: TransferRow,
+    signal: AbortSignal,
+    connected: (devices: Set<string>) => void,
+  ): Promise<string> {
     const { online: sources, gone } = await this.sources(t.hash);
     if (gone) throw new Error(GONE);
     if (sources.length === 0) {
@@ -285,6 +333,8 @@ export class Downloads extends EventEmitter<DownloadEvents> {
       });
     }
     const diagnoses: TransferDiagnosis[] = [];
+    const busy = new Set<string>();
+    let busyMs = 0;
 
     // Connect to several sources at once; the first manifest that checks out wins.
     const peers: Peer[] = [];
@@ -296,6 +346,10 @@ export class Downloads extends EventEmitter<DownloadEvents> {
           if (!manifest) manifest = await this.manifest(channel, t.hash);
           peers.push({ key: source.device, source, channel, inflight: new Set(), strikes: 0 });
         } catch (err) {
+          if (err instanceof BusyError) {
+            busy.add(source.device);
+            busyMs = Math.max(busyMs, err.retryAfterMs);
+          }
           if (err instanceof PathError) {
             const { session_id: _s, ...d } = err.diagnosis;
             diagnoses.push({
@@ -317,8 +371,10 @@ export class Downloads extends EventEmitter<DownloadEvents> {
         }
       }),
     );
+    connected(new Set(peers.map((p) => p.source.device)));
     if (!manifest || peers.length === 0) {
       for (const p of [...peers]) p.channel.close();
+      if (busy.size > 0) throw new Busy(busy, busyMs);
       const diagnosis = mostUseful(diagnoses);
       throw new Retryable(
         diagnosis ? `could not connect (${diagnosis.cause})` : 'could not connect to any source',

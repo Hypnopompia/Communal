@@ -456,6 +456,19 @@ export class HubDb {
     ).map((r) => r.id);
   }
 
+  /** When any of the account's devices last signed in (null: never). */
+  lastSeenOf(userId: string): number | null {
+    return this.raw
+      .prepare('SELECT max(last_seen) FROM devices WHERE user_id = ? AND revoked_at IS NULL')
+      .pluck()
+      .get(userId) as number | null;
+  }
+
+  /** The hub's readable name, set by its admin (`communal-hub set name`). */
+  get hubName(): string | undefined {
+    return this.getSetting('name');
+  }
+
   /** Every device of the account, revoked ones included (oldest first). */
   listDevices(userId: string): DeviceRow[] {
     return (

@@ -37,6 +37,7 @@ These came from the owner during development. Don't revert them to the spec's wo
   - `COMMUNAL_USER_DATA` gives a separate profile, so two instances can run side by side. `COMMUNAL_DOWNLOADS` keeps test downloads out of `~/Downloads`.
   - `pnpm --filter @communal/desktop smoke` starts it with no window and checks the core.
   - `pnpm --filter @communal/desktop package` builds installers and smoke-tests them. Use `-- --dir` for the unpacked app only. `CSC_IDENTITY_AUTO_DISCOVERY=false` keeps a local signing identity out of the build.
+- Linux installer: `site/install.sh` (published at https://hypnopompia.github.io/Communal/install.sh) installs or upgrades `desktop` (.deb or AppImage), `headless` or `hub` from the latest GitHub release, and backs up hub data before an upgrade.
 - Headless release: `pnpm --filter @communal/cli package` (a tarball with `install.sh` and `communal.service`). `communal check` runs the install self-check. Hub: `pnpm --filter @communal/hub package`.
 - Desktop packaging per CPU: `pnpm --filter @communal/desktop package -- --arch x64|arm64 [--dir]`. Output goes to `apps/desktop/release/<arch>/`.
 - **Releases: `pnpm release`** (scripts/release.mjs). The steps:
@@ -47,7 +48,7 @@ These came from the owner during development. Don't revert them to the spec's wo
   - It signs and notarizes both Mac apps locally. GitHub Actions (`release.yml`) adds Windows, Linux and the tarballs to the draft, then the script publishes.
 - AI agents: `communal mcp` (stdio MCP server). The desktop app serves its local socket only while Settings › AI agents allows it.
 - Site: `site/` (static HTML, deployed by `.github/workflows/pages.yml` to https://hypnopompia.github.io/Communal/). Screenshots in `site/screenshots/` come from two app profiles with generated demo data, never real files.
-- Hub admin: `communal-hub users | approve <user_id> | ban <user_id> [--reason] | unban <user_id> | set join_mode open|approval`. These commands work directly on the SQLite database, so they run alongside a live hub.
+- Hub admin: `communal-hub users | approve <user_id> | ban <user_id> [--reason] | unban <user_id> | set join_mode open|approval | set name "<readable name>"`. These commands work directly on the SQLite database, so they run alongside a live hub.
 
 Shell notes for this machine:
 
