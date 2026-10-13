@@ -24,7 +24,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
-        with: { node-version-file: .nvmrc }
+        # pnpm comes from corepack below: no package-manager cache before it exists.
+        with: { node-version-file: .nvmrc, package-manager-cache: false }
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - name: 'Package (unsigned, no Windows code-signing certificate yet)'
@@ -56,7 +57,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
-        with: { node-version-file: .nvmrc }
+        # pnpm comes from corepack below: no package-manager cache before it exists.
+        with: { node-version-file: .nvmrc, package-manager-cache: false }
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @communal/cli package

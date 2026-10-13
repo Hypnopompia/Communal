@@ -14,7 +14,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
-        with: { node-version-file: .nvmrc }
+        # pnpm comes from corepack below: no package-manager cache before it exists.
+        with: { node-version-file: .nvmrc, package-manager-cache: false }
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
@@ -34,7 +35,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
-        with: { node-version-file: .nvmrc }
+        # pnpm comes from corepack below: no package-manager cache before it exists.
+        with: { node-version-file: .nvmrc, package-manager-cache: false }
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @communal/desktop... run build
@@ -61,8 +63,8 @@ jobs:
       - name: Transport spike between containers (1 GiB)
         run: |
           F=docker/compose.dev.yml
-          docker compose -f $F exec -T node-a communal-spike peer --me alice --peer bob --role up --port 41641 --peer-addr node-b:41642 --bytes 1G &
-          docker compose -f $F exec -T node-b communal-spike peer --me bob --peer alice --role down --port 41642 --peer-addr node-a:41641 --bytes 1G
+          docker compose -f $F exec -T node-a communal-spike peer --me alice --peer bob --role up --port 41701 --peer-addr node-b:41702 --bytes 1G &
+          docker compose -f $F exec -T node-b communal-spike peer --me bob --peer alice --role down --port 41702 --peer-addr node-a:41701 --bytes 1G
           wait
       - if: always()
         run: docker compose -f docker/compose.dev.yml logs --no-color | tail -100
