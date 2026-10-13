@@ -877,6 +877,10 @@ textarea.input {
   max-width: 1080px;
   padding: 20px 40px 0;
 }
+/* Only rows that have something to say render; an empty strip takes no room. */
+.attention:empty {
+  display: none;
+}
 .attention-row {
   display: flex;
   align-items: center;

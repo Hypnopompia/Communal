@@ -127,6 +127,11 @@ export const UiRoute = z.discriminatedUnion('screen', [
     screen: z.enum(['shares', 'people', 'transfers', 'subscriptions', 'activity']),
   }),
   z.object({
+    screen: z.literal('manage'),
+    hub: z.string().max(64),
+    tab: z.enum(['people', 'connections', 'log', 'settings']).optional(),
+  }),
+  z.object({
     screen: z.literal('settings'),
     tab: z
       .enum([

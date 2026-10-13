@@ -16,6 +16,7 @@ import { Transfers } from './screens/Transfers';
 import { Subscriptions } from './screens/Subscriptions';
 import { Activity } from './screens/Activity';
 import { Settings } from './screens/Settings';
+import { ManageHub, useAdminUsers } from './screens/ManageHub';
 import { JoinHub, problemText } from './screens/Settings';
 import { Welcome } from './screens/Welcome';
 
@@ -111,6 +112,8 @@ function Screen({ route }: { route: Route }) {
       return <Activity />;
     case 'settings':
       return <Settings tab={route.tab ?? 'account'} />;
+    case 'manage':
+      return <ManageHub key={route.hub} hub={route.hub} tab={route.tab ?? 'people'} />;
   }
 }
 
@@ -141,7 +144,11 @@ function Sidebar({ route, go }: { route: Route; go: (r: Route) => void }) {
         <button
           key={n.screen}
           className="nav-item"
-          aria-current={route.screen === n.screen ? 'page' : undefined}
+          aria-current={
+            route.screen === n.screen || (route.screen === 'manage' && n.screen === 'settings')
+              ? 'page'
+              : undefined
+          }
           onClick={() => go({ screen: n.screen } as Route)}
           title={n.label}
         >
@@ -223,9 +230,13 @@ function HubAttention({
   const refused = hubs.filter((h) => h.problem && h.problem.reason !== 'pending_approval');
   const onDevices = route.screen === 'settings' && route.tab === 'devices';
   const onHubs = route.screen === 'settings' && route.tab === 'hubs';
-  if (!requests.length && !waiting.length && !refused.length) return null;
+  const managed = hubs.filter((h) => h.admin && h.ready);
+  if (!requests.length && !waiting.length && !refused.length && !managed.length) return null;
   return (
     <div className="attention">
+      {managed.map((h) => (
+        <JoinRequests key={h.id} hub={h} route={route} go={go} />
+      ))}
       {!onDevices &&
         requests.map((r) => (
           <div key={r.request_id} className="notice attention-row">
@@ -262,6 +273,43 @@ function HubAttention({
             </button>
           </div>
         ))}
+    </div>
+  );
+}
+
+/** People waiting to join a hub this account administers (ADR 0020). */
+function JoinRequests({
+  hub,
+  route,
+  go,
+}: {
+  hub: HubStatus;
+  route: Route;
+  go: (r: Route) => void;
+}) {
+  const users = useAdminUsers(hub.id);
+  const waiting = users.data?.users.filter((u) => u.status === 'pending' && !u.banned_at) ?? [];
+  if (waiting.length === 0 || (route.screen === 'manage' && route.hub === hub.id)) return null;
+  return (
+    <div className="notice attention-row">
+      <span>
+        {waiting.length === 1 ? (
+          <>
+            <b>{waiting[0]!.display_name}</b> is
+          </>
+        ) : (
+          <>
+            <b>{waiting.length} people</b> are
+          </>
+        )}{' '}
+        waiting to join <b>{hubName(hub)}</b>.
+      </span>
+      <button
+        className="btn small primary"
+        onClick={() => go({ screen: 'manage', hub: hub.id, tab: 'people' })}
+      >
+        Review
+      </button>
     </div>
   );
 }

@@ -133,6 +133,7 @@ sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr
 sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub admin add &lt;user_id&gt;
 sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub log</code></pre>
         <p>
+          Admins can do all of this in the app as well: Settings › Hubs › <b>Manage</b>.
           <code>admin list|add|remove</code> chooses who administers the hub. Only these commands
           can make or remove admins. If someone else joined first, add yourself and remove them.
           <code>log</code> shows every admin action, from the command line or an admin’s app.

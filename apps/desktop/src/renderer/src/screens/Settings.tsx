@@ -412,6 +412,7 @@ function LinkCode({
 // ── hubs ──
 
 function Hubs() {
+  const go = useNav();
   const { hubs } = useHubs();
   const status = useStatus().data;
   const [adding, setAdding] = useState(false);
@@ -432,7 +433,14 @@ function Hubs() {
           <div key={h.id} className="row" style={{ alignItems: 'flex-start' }}>
             <Icon name="globe" size={22} />
             <div className="grow" style={{ display: 'grid', gap: 4 }}>
-              <div className="title">{hubName(h)}</div>
+              <div className="title">
+                {hubName(h)}
+                {h.admin && (
+                  <span className="tag accent" style={{ marginLeft: 8 }}>
+                    You’re an admin
+                  </span>
+                )}
+              </div>
               <div className="sub">{h.url}</div>
               {h.problem && (
                 <div className="notice warn small">
@@ -450,6 +458,14 @@ function Hubs() {
                       ? 'Not connected'
                       : 'Connecting…'}
               </span>
+              {h.admin && (
+                <button
+                  className="btn small"
+                  onClick={() => go({ screen: 'manage', hub: h.id, tab: 'people' })}
+                >
+                  Manage
+                </button>
+              )}
               <button className="btn small quiet" onClick={() => setLeaving(h.id)}>
                 Leave
               </button>
