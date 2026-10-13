@@ -1,14 +1,85 @@
 # Progress
 
-## Next up
+## Backlog
 
-- **Feedback on downloads** (ADR 0018): rules by kind, a re-share warning and transfer groups wait for what people ask for. The plan is in `docs/handoff-downloads.md`.
-- **The synced folder on real machines** (ADR 0019): two or three computers over a few days, including one that's often asleep.
-- **The Windows build** has never run on Windows.
-- **Hands-on test of the M9 done criterion** by a non-technical person, with the release build.
-- **The 1 GiB transfer between two physical machines on a LAN** (open since M0).
-- Windows code signing; an in-app "What's new" from `apps/desktop/changelog.json`.
-- After v1: the hub web admin UI (`docs/questions.md`) and a retention setting for long-unseen devices (ADR 0015).
+This is the one list of open work. Each item points to where its detail lives. When an item is done, remove it here and log it in a dated section below. The milestone sections further down are history: their "Carried forward" lists were folded in here on 2026-10-13, so add new work here, not there.
+
+`docs/questions.md` holds the reasoning for items that need an owner decision. `docs/handoff-downloads.md` is the parked plan for the rest of downloads.
+
+### Try it on real machines
+
+These need a person or hardware that CI doesn't have.
+
+- **A non-technical person installs, joins, shares a folder and downloads a file** with the release build, without reading docs. This is the only unchecked M9 done criterion.
+- **The synced folder over a few days** (ADR 0019): two or three computers, including one that's often asleep.
+- **The Windows build** has only been smoke-tested in CI and has never run on a Windows machine.
+- **1 GiB between two physical machines on a LAN** (open since M0).
+- **The headless tarball on a real systemd host.** Only `systemd-analyze verify` and `sh -n` have checked it so far (M9).
+- **A real UPnP/NAT-PMP mapping.** The NAT lab has no UPnP router, so it stops at "no gateway found". A miniupnpd router container could cover this (M5).
+
+### Before a hub is open to strangers
+
+- **Rate-limit account creation** per IP, and requests in general. Today only link codes and subscriptions are limited (M1, `docs/questions.md` "Ban evasion").
+- **A limit on index entries per device** (M2).
+
+### App and release polish
+
+- **Windows code signing** (no certificate yet, ADR 0016).
+- **An in-app "What's new"** from `apps/desktop/changelog.json` (ADR 0016).
+- **A message to send to the person with the easier fix.** Transfers shows who can fix a failed connection, but there's no ready-made note to send them (M5, HANDOFF §8).
+
+### Waiting for user feedback
+
+The plan is in `docs/handoff-downloads.md`, and the open choices are in `docs/questions.md`.
+
+- **Download rules by kind** (audio → Music, video → Movies), unless Save to… turns out to be enough.
+- **Re-sharing:** warn, or narrow the audience, when a download lands in a shared folder (owner decision).
+- **Transfers grouped by folder**, with one progress bar per folder download.
+- **New sources during a download.** Re-query sources every ~30 s so a copy that appears mid-download gets used.
+
+### Needs an owner decision first
+
+These are in `docs/questions.md`.
+
+- **Losing the first device:** accept it for v1, rotate the account key, or keep a separate root key.
+- **Multi-hub people:** merge one person seen on several hubs, choose which display name to show, and maybe add per-hub identities later.
+- **Expanding what AI agents can do (MCP):** choose which ideas to do first. Suggested: thumbnails as image content, plus an access dry run before `set_access`/`share_folder`. Also open: whether a dry run counts as confirmation, and how much file content may leave the owner's device for content search.
+
+### Known limitations
+
+These are fine for now. Fix them if they start to bite.
+
+- **Devices** (ADR 0014):
+  - You can't set rules for another of your own devices (a NAS from a laptop). It needs a signed device-to-device channel.
+  - Hubs joined later aren't pushed to existing devices.
+  - A revocation proof signed by a device that was itself revoked later is refused by a peer that learned the later revocation first.
+  - Peer sessions that are already open aren't closed when a device is revoked.
+- **Subscriptions** (ADR 0013):
+  - Making a folder public reveals the paths, never the content, of files deleted from it earlier.
+  - Hubs forget deletions after 180 days.
+  - A live rename keeps its hash only when both events land in the same 2 s watcher batch.
+  - A visibility change re-announces the whole folder, which could cost too much for very large folders.
+- **Media** (ADR 0012):
+  - HEIC and RAW get thumbnails only from their embedded preview.
+  - A stream uses a single source.
+- **Network** (ADR 0001, ADR 0011):
+  - CGNAT is detected only through a UPnP router or a 100.64/10 address.
+  - Throughput on macOS loopback is bound by the CPU cost of UDP syscalls. Batched sends would help.
+- **Size:** the headless image's app layer is 222 MB, and pdf.js ships builds we could prune (ADR 0012).
+
+### After v1
+
+- **The hub web admin UI** (`docs/questions.md`): settings, approvals, bans and the social graph. It includes retention for long-unseen devices (ADR 0015).
+- **From HANDOFF §15:** hubs caching thumbnails of hub-wide files, and mobile clients.
+
+## People, shares and a Linux installer (0.1.5, 2026-10-13)
+
+- **Downloads:** an uploader at its limit answers `busy`. The download is queued and starts as soon as a download from that computer ends, instead of retrying every 30 s.
+- **My shares:** one card per folder shows who can see it on each hub, and a "Files inside…" window holds per-file settings. The synced folder is no longer listed among the shares.
+- **People:** accepted connections show whether they're online (`connection.listing` carries `online`/`seen` for accepted connections only). The verified shield follows a person's name everywhere.
+- **Search:** a "From" filter (anyone, my connections, people I've verified). The core applies it, so the hub never learns who you verified. It's also in `communal search --from` and the agent search tool.
+- **Hub names:** `communal-hub set name "…"`. The name travels in `challenge` and replaces the address throughout the app.
+- **Installer:** `site/install.sh` installs or upgrades the desktop app, headless service or hub from the latest release, and backs up hub data first.
 
 ## Synced folder and downloads (2026-10-13)
 

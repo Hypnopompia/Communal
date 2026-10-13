@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Communal is a private, Napster-style file-sharing app: a self-hosted **hub** keeps the directory and index, and files move **directly between peers**. The authoritative spec is [HANDOFF.md](HANDOFF.md). Read the relevant section of it before working on any feature. Milestone status and known gaps are in [docs/progress.md](docs/progress.md), and decisions are in `docs/adr/`. Check both before starting a milestone.
+Communal is a private, Napster-style file-sharing app: a self-hosted **hub** keeps the directory and index, and files move **directly between peers**. The authoritative spec is [HANDOFF.md](HANDOFF.md). Read the relevant section of it before working on any feature. Open work lives in one place: the **Backlog** at the top of [docs/progress.md](docs/progress.md). Add new to-dos there, not in milestone sections or ADRs. Below the backlog, progress.md logs what was done. Decisions are in `docs/adr/`, and questions waiting on the owner are in `docs/questions.md`. Check the backlog and the ADRs before starting work.
 
 ## Owner decisions that override HANDOFF
 

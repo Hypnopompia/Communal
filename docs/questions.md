@@ -66,3 +66,42 @@ Still open:
    - re-shared files start as "only me";
    - they take the narrower of the two audiences.
 3. **Transfers grouped by folder**, with one progress bar for a folder download.
+
+## Expanding what AI agents can do (MCP)
+
+**Status:** ideas (owner request, 2026-10-13). Not scheduled. Suggested first step: tier 1 thumbnails plus the tier 2 access dry run.
+
+ADR 0017's MCP server covers search, browse, downloads, shares, access, people, subscriptions and diagnostics. The ideas below would let an agent see what's in files, react to changes, and change access more safely. They're grouped by cost.
+
+### Tier 1: the local API has it; MCP doesn't expose it
+
+1. **Thumbnails as image content** (`/v1/thumbs`, `/v1/thumbs/:hash`). Agents read images, so returning thumbnails as MCP image content lets them sort photos, scans and video by what's in them, not just by name.
+2. **Ranged reads** (`/v1/stream/:hash`). A "read part of a file" tool, for a PDF's first pages, a CSV header or a log tail, without downloading the whole file. It needs a size cap per call, and the same uploader checks as streaming.
+3. **Events** (`/v1/events`). A "wait for event" or "changes since cursor" tool, so agents react ("tell me when this download finishes") instead of polling.
+
+### Tier 2: small features in core or the hub
+
+1. **Access dry run.** Given a proposed `acl` change, return which files become visible or hidden and to how many people, on which hub. It makes confirming `set_access` / `share_folder` meaningful, and the desktop UI could show the same preview. Must not reveal anything the owner couldn't already see.
+2. **Explain one file's access.** For a path and hub: the rule in force, where it's inherited from (`rule_path`), and who it currently includes.
+3. **Duplicate and gap reports.** Compare by hash across the library, this account's devices, and connections' visible shares: duplicates, files held in only one place, files someone has that this device doesn't.
+4. **Search filters** on `files.meta`: kind, size, duration, date taken, artist/album/author. The data is already extracted, but search only matches text.
+5. **Requests between people.** Ask for a file ("anyone have the 1998 recital video?"), watch for answers, download one when it appears. Needs a new hub message (ADR 0004) and the same visibility rules as search.
+6. **Batch actions with a plan step.** Download, subscribe or set access on many items with one preview and one confirmation, instead of one per item.
+
+### Tier 3: bigger features
+
+1. **Search by content, on the device.** Extract text locally (pdf.js today, plus OCR or transcripts later) into a local full-text or embedding index. Content and embeddings never go to the hub.
+2. **Asking questions across friends' shares.** A peer `hello.purpose` like `preview`: the owner's device runs the query and returns snippets, and the uploader checks access for every hash. Snippets reveal content, so this needs its own ADR. Should owners opt in per share?
+3. **Agent-written metadata.** Tags, descriptions and captions stored locally, and optionally published with the index. Who can edit them, and do they follow the file's access rule?
+4. **Saved automations.** Rules the core runs itself ("when something lands in Alice/Recipes, copy it to Notes"; a weekly summary of new files from connections), so an agent doesn't need to stay running.
+5. **Audit log of agent actions.** A local record of every change made through MCP (access, shares, subscriptions, hubs), with undo where possible. Shown in the desktop app.
+
+### Stays out of MCP
+
+Per ADR 0017: the recovery key, device linking and revoking, and verifying people. If hub admin actions get a second front end (see "Web admin UI"), approvals and bans stay out too. Anything that widens an audience should go through the dry run or an explicit user confirmation.
+
+### Needs deciding
+
+1. Which tier-1 and tier-2 items to do, and in what order.
+2. Does a dry-run result count as confirmation, or must the agent still ask the user every time an audience widens?
+3. For content search and peer queries, how much content may leave the owner's device (none, snippets, or full text), and is it opt-in per share?
