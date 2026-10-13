@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import type { HostState, UpdateState } from '../../shared/bridge';
 import { api, type Connection, type LinkRequest, type Transfer } from './api';
+import { hubName } from './format';
 import { useHubs, useStatus } from './hubs';
+import { problemText } from './screens/Settings';
 import { NavCtx, type Route } from './nav';
 import { useApi } from './query';
 import { Icon, Mark, type IconName } from './ui/icons';
@@ -57,9 +59,16 @@ function Ready() {
   const [route, setRoute] = useState<Route>({ screen: 'library' });
   // An AI agent asked to show a screen (`show_in_app`, ADR 0017).
   useEffect(() => window.communal.onNavigate((r) => setRoute(r as Route)), []);
+  // Setting up stays on screen until it's done: joining adds the hub before the account
+  // exists, and a link waits for the other computer, so neither can end it by itself.
+  const noAccount = !!status.data && !status.data.account.user_id;
+  const [settingUp, setSettingUp] = useState(false);
+  useEffect(() => {
+    if (noAccount) setSettingUp(true);
+  }, [noAccount]);
   if (!status.data) return status.error ? <Centered>{status.error.message}</Centered> : null;
-  if (status.data.hubs.length === 0 && !status.data.account.user_id)
-    return <Welcome deviceId={status.data.device_id} />;
+  if (noAccount || settingUp)
+    return <Welcome deviceId={status.data.device_id} onDone={() => setSettingUp(false)} />;
   return (
     <NavCtx.Provider value={setRoute}>
       {/* macOS draws the window with no title bar: this strip is where it can be dragged. */}
@@ -67,6 +76,7 @@ function Ready() {
       <div className="shell">
         <Sidebar route={route} go={setRoute} />
         <main className="main">
+          <Attention route={route} go={setRoute} />
           <Screen route={route} />
         </main>
       </div>
@@ -165,6 +175,64 @@ function Sidebar({ route, go }: { route: Route; go: (r: Route) => void }) {
           ))}
       </div>
     </nav>
+  );
+}
+
+/**
+ * Things that stop Communal from working until someone acts, shown above every screen: a hub
+ * whose admin hasn't let us in (or that refuses us), and computers waiting for this one to
+ * approve them joining the account.
+ */
+function Attention({ route, go }: { route: Route; go: (r: Route) => void }) {
+  const { hubs } = useHubs();
+  const links = useApi<{ requests: LinkRequest[] }>(['devices'], '/v1/link/requests', {
+    refetchInterval: 15_000,
+  });
+  const requests = links.data?.requests ?? [];
+  const waiting = hubs.filter((h) => h.problem?.reason === 'pending_approval');
+  const refused = hubs.filter((h) => h.problem && h.problem.reason !== 'pending_approval');
+  const onDevices = route.screen === 'settings' && route.tab === 'devices';
+  const onHubs = route.screen === 'settings' && route.tab === 'hubs';
+  if (!requests.length && !waiting.length && !refused.length) return null;
+  return (
+    <div className="attention">
+      {!onDevices &&
+        requests.map((r) => (
+          <div key={r.request_id} className="notice attention-row">
+            <span>
+              <b>{r.device_name}</b> wants to join your account. Approve it here to finish adding
+              that computer.
+            </span>
+            <button
+              className="btn small primary"
+              onClick={() => go({ screen: 'settings', tab: 'devices' })}
+            >
+              Review
+            </button>
+          </div>
+        ))}
+      {!onHubs &&
+        waiting.map((h) => (
+          <div key={h.id} className="notice warn attention-row">
+            <span>
+              <b>{hubName(h.url)}</b> lets people in by hand, and its admin hasn’t approved you yet.
+              Until then you can’t search or see people there. Communal checks again by itself.
+            </span>
+          </div>
+        ))}
+      {!onHubs &&
+        refused.map((h) => (
+          <div key={h.id} className="notice bad attention-row">
+            <span>
+              Can’t connect to <b>{hubName(h.url)}</b>:{' '}
+              {problemText(h.problem!.reason, h.problem!.message)}
+            </span>
+            <button className="btn small" onClick={() => go({ screen: 'settings', tab: 'hubs' })}>
+              Details
+            </button>
+          </div>
+        ))}
+    </div>
   );
 }
 

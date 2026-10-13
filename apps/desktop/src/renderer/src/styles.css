@@ -819,3 +819,20 @@ textarea.input {
     padding: 28px 20px 48px;
   }
 }
+
+/* ── things that need the person, above every screen ─────────────────── */
+
+.attention {
+  display: grid;
+  gap: 8px;
+  max-width: 1080px;
+  padding: 20px 40px 0;
+}
+.attention-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.attention-row > span {
+  flex: 1;
+}

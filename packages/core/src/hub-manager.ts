@@ -64,7 +64,10 @@ export class HubManager extends EventEmitter<HubManagerEvents> {
 
   constructor(private readonly opts: HubManagerOptions) {
     super();
-    for (const entry of opts.hubs) this.attach(entry);
+    // A hub we never finished joining (the app quit while a link waited for approval, say)
+    // can't sign in: how to enroll isn't kept. Dropping it lets the person start over.
+    for (const entry of opts.hubs) if (entry.state.registered) this.attach(entry);
+    if (this.hubs.size < opts.hubs.length) void Promise.resolve(this.persist()).catch(() => {});
   }
 
   /**

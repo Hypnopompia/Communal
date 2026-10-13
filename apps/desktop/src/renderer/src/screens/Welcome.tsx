@@ -11,7 +11,7 @@ import { ErrorNote, useAction } from '../ui/kit';
 
 type Mode = 'choose' | 'new' | 'link' | 'restore';
 
-export function Welcome({ deviceId }: { deviceId: string }) {
+export function Welcome({ deviceId, onDone }: { deviceId: string; onDone: () => void }) {
   const [mode, setMode] = useState<Mode>('choose');
   const [deviceName, setDeviceName] = useState('');
   useEffect(() => {
@@ -48,7 +48,12 @@ export function Welcome({ deviceId }: { deviceId: string }) {
           </>
         )}
         {mode === 'new' && (
-          <NewAccount deviceName={deviceName} setDeviceName={setDeviceName} back={back} />
+          <NewAccount
+            deviceName={deviceName}
+            setDeviceName={setDeviceName}
+            back={back}
+            onDone={onDone}
+          />
         )}
         {mode === 'link' && (
           <LinkDevice
@@ -56,10 +61,16 @@ export function Welcome({ deviceId }: { deviceId: string }) {
             setDeviceName={setDeviceName}
             deviceId={deviceId}
             back={back}
+            onDone={onDone}
           />
         )}
         {mode === 'restore' && (
-          <Restore deviceName={deviceName} setDeviceName={setDeviceName} back={back} />
+          <Restore
+            deviceName={deviceName}
+            setDeviceName={setDeviceName}
+            back={back}
+            onDone={onDone}
+          />
         )}
       </div>
     </div>
@@ -70,6 +81,8 @@ interface StepProps {
   deviceName: string;
   setDeviceName: (s: string) => void;
   back: () => void;
+  /** Setting up is finished: show the app. */
+  onDone: () => void;
 }
 
 function Step({
@@ -133,9 +146,9 @@ function DeviceField({ value, onChange }: { value: string; onChange: (s: string)
   );
 }
 
-const done = () => invalidate(['hubs', 'devices', 'people', 'presence']);
+const refresh = () => invalidate(['hubs', 'devices', 'people', 'presence']);
 
-function NewAccount({ deviceName, setDeviceName, back }: StepProps) {
+function NewAccount({ deviceName, setDeviceName, back, onDone }: StepProps) {
   const [name, setName] = useState('');
   const [hub, setHub] = useState('');
   const [pending, setPending] = useState(false);
@@ -145,17 +158,19 @@ function NewAccount({ deviceName, setDeviceName, back }: StepProps) {
       display_name: name.trim(),
       device_name: deviceName.trim(),
     });
+    refresh();
     if (r.status === 'pending_approval') setPending(true);
-    else done();
+    else onDone();
   });
   if (pending)
     return (
-      <Step title="Almost there" lede="This hub’s admin approves new people by hand." back={done}>
+      <Step title="Almost there" lede="This hub’s admin approves new people by hand." back={onDone}>
         <div className="notice">
-          You’ll be able to search and share as soon as they let you in. You can set up your shared
-          folders in the meantime.
+          Until they let you in, Communal can’t connect to the hub, so you can’t search or see
+          people yet. Let the admin know you’ve asked to join. Communal keeps trying and connects by
+          itself once you’re approved. You can set up your shared folders in the meantime.
         </div>
-        <button className="btn primary big" onClick={done}>
+        <button className="btn primary big" onClick={onDone}>
           Continue
         </button>
       </Step>
@@ -200,6 +215,7 @@ function LinkDevice({
   setDeviceName,
   deviceId,
   back,
+  onDone,
 }: StepProps & { deviceId: string }) {
   const [hub, setHub] = useState('');
   const [code, setCode] = useState('');
@@ -210,7 +226,12 @@ function LinkDevice({
         code: code.trim(),
         device_name: deviceName.trim(),
       }),
-    { onDone: done },
+    {
+      onDone: () => {
+        refresh();
+        onDone();
+      },
+    },
   );
   return (
     <Step
@@ -247,11 +268,17 @@ function LinkDevice({
         <ErrorNote error={link.error} />
         {link.busy ? (
           <div className="notice">
-            <strong>Approve this computer on your other one.</strong>
+            <strong>Now approve this computer on your other one</strong>
             <span>
-              Check that the request it shows comes from <b>{deviceName}</b> with this device ID:
+              The code was accepted. Nothing more happens until you approve the request: open
+              Communal on the computer that gave you the code. It shows <b>{deviceName}</b> asking
+              to join (also under <b>Settings → Devices</b>). Check that the device ID matches this
+              one, then choose <b>Approve</b>:
             </span>
             <span className="mono">{deviceId}</span>
+            <span className="muted small">
+              This page waits up to 10 minutes. After that, make a new code and try again.
+            </span>
           </div>
         ) : (
           <div>
@@ -263,7 +290,7 @@ function LinkDevice({
   );
 }
 
-function Restore({ deviceName, setDeviceName, back }: StepProps) {
+function Restore({ deviceName, setDeviceName, back, onDone }: StepProps) {
   const [how, setHow] = useState<'file' | 'words'>('file');
   const [file, setFile] = useState<unknown>(null);
   const [passphrase, setPassphrase] = useState('');
@@ -277,7 +304,12 @@ function Restore({ deviceName, setDeviceName, back }: StepProps) {
         ...(hub.trim() ? { hubs: [{ url: hubUrl(hub) }] } : {}),
         device_name: deviceName.trim(),
       }),
-    { onDone: done },
+    {
+      onDone: () => {
+        refresh();
+        onDone();
+      },
+    },
   );
   const pick = async () => {
     setFileError(null);

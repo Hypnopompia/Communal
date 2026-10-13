@@ -466,7 +466,7 @@ function Hubs() {
   );
 }
 
-function problemText(reason: string, message: string): string {
+export function problemText(reason: string, message: string): string {
   switch (reason) {
     case 'pending_approval':
       return 'The hub’s admin hasn’t let you in yet.';
@@ -476,6 +476,8 @@ function problemText(reason: string, message: string): string {
       return 'This hub’s identity has changed since you joined. It may have been replaced by an impostor, so Communal won’t connect. Ask the hub’s admin.';
     case 'link_denied':
       return 'The request to add this computer was denied.';
+    case 'rejected':
+      return `The hub refused this computer (${message}).`;
     default:
       return message;
   }

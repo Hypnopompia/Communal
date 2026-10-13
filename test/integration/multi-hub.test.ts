@@ -145,4 +145,16 @@ describe('multi-hub client', () => {
     expect(second.list().map((h) => h.id)).toEqual([ea.id]);
     expect(await second.add(a.url).catch((e: Error) => e.message)).toMatch(/already configured/);
   });
+
+  it('forgets a hub it never finished joining, so joining can start over', async () => {
+    const saved = {
+      hubs: [
+        { id: 'h_done', url: 'wss://a.example/v1', state: { registered: true } },
+        { id: 'h_half', url: 'wss://b.example/v1', state: { registered: false } },
+      ] as HubEntry[],
+    };
+    const m = makeManager(saved);
+    expect(m.list().map((h) => h.id)).toEqual(['h_done']);
+    expect(saved.hubs.map((h) => h.id)).toEqual(['h_done']);
+  });
 });
