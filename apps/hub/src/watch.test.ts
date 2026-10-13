@@ -329,3 +329,239 @@ describe('watch: catch-up and live events', () => {
     expect(paths(ev)).toEqual(['S/pub/z.txt']);
   });
 });
+
+describe('browse.follow: live browsing hints', () => {
+  const follow = (c: Client, device: string | null) =>
+    c.request('browse.follow', { device_id: device });
+  const nextHint = async (c: Client) => (await c.next('browse.changed')).body;
+  async function noHint(c: Client, ms = 150) {
+    await sleep(ms);
+    expect(c.backlog().filter((m: HubMessage) => m.t === 'browse.changed')).toEqual([]);
+  }
+
+  it('needs a session', async () => {
+    const { alice } = await world();
+    const c = await RawClient.connect(t.url);
+    await c.next('challenge');
+    const r = await follow(c, alice.deviceId);
+    expect(r).toMatchObject({ t: 'error', body: { code: 'unauthenticated' } });
+    c.close();
+  });
+
+  it('refuses devices you cannot see into exactly like ones that do not exist', async () => {
+    const { alice, bob } = await world();
+    const carol = await signUp(t.url, 'carol');
+    // Carol has a private file only: bob can't browse her device.
+    await carol.c.request('index.snapshot', {
+      rev: 1,
+      page: 0,
+      last: true,
+      entries: [entry('C/x.txt')],
+    });
+    const refused = [
+      await follow(bob.c, carol.deviceId),
+      await follow(bob.c, deviceId(generateKeyPair().publicKey)),
+    ];
+    for (const r of refused) expect(r).toMatchObject({ t: 'error', body: { code: 'not_found' } });
+    expect(new Set(refused.map((r) => JSON.stringify(r.body))).size).toBe(1);
+    expect((await follow(bob.c, alice.deviceId)).t).toBe('ok');
+    carol.c.close();
+  });
+
+  it('hints when something the viewer can see is added or removed', async () => {
+    const { alice, bob, rev } = await world();
+    expect((await follow(bob.c, alice.deviceId)).t).toBe('ok');
+    const r2 = await delta(alice.c, rev, [entry('S/pub/new.txt')]);
+    expect(await nextHint(bob.c)).toEqual({ device_id: alice.deviceId });
+    await delta(alice.c, r2, [], ['S/pub/a.txt']);
+    expect(await nextHint(bob.c)).toEqual({ device_id: alice.deviceId });
+  });
+
+  it('says nothing about changes to files the viewer cannot see', async () => {
+    const { alice, bob, rev } = await world();
+    expect((await follow(bob.c, alice.deviceId)).t).toBe('ok');
+    let r = await delta(alice.c, rev, [entry('S/priv/new.txt')]);
+    r = await delta(alice.c, r, [entry('S/pub/secret.txt', { hash: hashOf('changed') })]);
+    await delta(alice.c, r, [], ['S/priv/p.txt']);
+    await noHint(bob.c);
+  });
+
+  it('tells your other devices about private changes too', async () => {
+    const { alice, rev } = await world();
+    const laptop = generateKeyPair();
+    t.db.addDevice({
+      id: deviceId(laptop.publicKey),
+      user_id: alice.userId,
+      pubkey: toB64(laptop.publicKey),
+      chain: [issueDeviceCert(alice.key, alice.userId, laptop.publicKey)],
+      name: 'laptop',
+      platform: 'darwin',
+    });
+    const own = await signIn(t.url, laptop, deviceId(laptop.publicKey));
+    expect((await follow(own.c, alice.deviceId)).t).toBe('ok');
+    await delta(alice.c, rev, [entry('NewShare/x.txt')]);
+    expect(await nextHint(own.c)).toEqual({ device_id: alice.deviceId });
+    own.c.close();
+  });
+
+  it('hints when a rule change shows (or hides) files, and stops after unfollowing', async () => {
+    const { alice, bob } = await world();
+    expect((await follow(bob.c, alice.deviceId)).t).toBe('ok');
+    const share = (rules: { path: string; audience: 'hub' }[]) =>
+      alice.c.request('acl.replace', { device_id: alice.deviceId, rules });
+    await share([{ path: 'S/', audience: 'hub' }]);
+    expect(await nextHint(bob.c)).toEqual({ device_id: alice.deviceId });
+    // The same rules again (as on every sign-in) change nothing.
+    await share([{ path: 'S/', audience: 'hub' }]);
+    await noHint(bob.c);
+    expect((await follow(bob.c, null)).t).toBe('ok');
+    await share([{ path: 'S/pub/', audience: 'hub' }]);
+    await noHint(bob.c);
+  });
+
+  it('hints when a visible file only gains a thumbnail or new metadata', async () => {
+    const { alice, bob, rev } = await world();
+    expect((await follow(bob.c, alice.deviceId)).t).toBe('ok');
+    let r = await delta(alice.c, rev, [entry('S/pub/a.txt', { thumb: true })]);
+    expect(await nextHint(bob.c)).toEqual({ device_id: alice.deviceId });
+    r = await delta(alice.c, r, [entry('S/pub/a.txt', { thumb: true, meta: { width: 10 } })]);
+    expect(await nextHint(bob.c)).toEqual({ device_id: alice.deviceId });
+    // ...but not for hidden files, and not when a snapshot changes nothing.
+    await delta(alice.c, r, [entry('S/pub/secret.txt', { thumb: true })]);
+    await alice.c.request('index.snapshot', {
+      rev: r + 2,
+      page: 0,
+      last: true,
+      entries: [
+        entry('S/pub/a.txt', { thumb: true, meta: { width: 10 } }),
+        entry('S/pub/sub/b.txt'),
+        entry('S/pub/secret.txt', { thumb: true }),
+        entry('S/pub/unhashed.txt', { hash: null }),
+        entry('S/priv/p.txt'),
+      ],
+    });
+    await noHint(bob.c);
+    // A snapshot that adds a thumbnail is a change.
+    await alice.c.request('index.snapshot', {
+      rev: r + 3,
+      page: 0,
+      last: true,
+      entries: [
+        entry('S/pub/a.txt', { thumb: true, meta: { width: 10 } }),
+        entry('S/pub/sub/b.txt', { thumb: true }),
+        entry('S/pub/secret.txt', { thumb: true }),
+        entry('S/pub/unhashed.txt', { hash: null }),
+        entry('S/priv/p.txt'),
+      ],
+    });
+    expect(await nextHint(bob.c)).toEqual({ device_id: alice.deviceId });
+  });
+
+  it('only follows one device per session', async () => {
+    const { alice, bob, rev } = await world();
+    const carol = await signUp(t.url, 'carol');
+    await carol.c.request('index.snapshot', {
+      rev: 1,
+      page: 0,
+      last: true,
+      entries: [entry('C/x.txt')],
+    });
+    await carol.c.request('acl.replace', {
+      device_id: carol.deviceId,
+      rules: [{ path: 'C/', audience: 'hub' }],
+    });
+    expect((await follow(bob.c, alice.deviceId)).t).toBe('ok');
+    expect((await follow(bob.c, carol.deviceId)).t).toBe('ok');
+    await delta(alice.c, rev, [entry('S/pub/new.txt')]);
+    await noHint(bob.c);
+    await delta(carol.c, 1, [entry('C/y.txt')]);
+    expect(await nextHint(bob.c)).toEqual({ device_id: carol.deviceId });
+    carol.c.close();
+  });
+});
+
+describe('library.changed: the device list', () => {
+  const nextChange = (c: Client) => c.next('library.changed');
+  async function noChange(c: Client, ms = 150) {
+    await sleep(ms);
+    expect(c.backlog().filter((m: HubMessage) => m.t === 'library.changed')).toEqual([]);
+  }
+  const listed = async (c: Client) => {
+    const r = await c.request('library', {});
+    return (r.body as HubBody<'library.listing'>).devices.map((d) => d.device_id);
+  };
+
+  /** Carol holds one private file, so nobody else has her computer in their library. */
+  async function carolPrivate() {
+    const carol = await signUp(t.url, 'carol');
+    await carol.c.request('index.snapshot', {
+      rev: 1,
+      page: 0,
+      last: true,
+      entries: [entry('C/x.txt')],
+    });
+    return carol;
+  }
+
+  it('says when a device becomes browsable, and when it stops being browsable', async () => {
+    const { bob } = await world();
+    const carol = await carolPrivate();
+    expect(await listed(bob.c)).not.toContain(carol.deviceId);
+    await carol.c.request('acl.replace', {
+      device_id: carol.deviceId,
+      rules: [{ path: 'C/', audience: 'hub' }],
+    });
+    await nextChange(bob.c);
+    expect(await listed(bob.c)).toContain(carol.deviceId);
+    await delta(carol.c, 1, [], ['C/x.txt']);
+    await nextChange(bob.c);
+    expect(await listed(bob.c)).not.toContain(carol.deviceId);
+    carol.c.close();
+  });
+
+  it('says when a new share makes a device browsable', async () => {
+    const { bob } = await world();
+    const carol = await carolPrivate();
+    await carol.c.request('acl.replace', {
+      device_id: carol.deviceId,
+      rules: [{ path: 'Pub/', audience: 'hub' }],
+    });
+    await listed(bob.c);
+    await delta(carol.c, 1, [entry('Pub/y.txt')]);
+    await nextChange(bob.c);
+    expect(await listed(bob.c)).toContain(carol.deviceId);
+    carol.c.close();
+  });
+
+  it('stays quiet about private changes and for sessions that never asked', async () => {
+    const { alice, bob, rev } = await world();
+    const carol = await carolPrivate();
+    expect(await listed(bob.c)).toContain(alice.deviceId);
+    await delta(carol.c, 1, [entry('C/y.txt')]);
+    await delta(alice.c, rev, [entry('S/priv/z.txt')]);
+    await noChange(bob.c);
+    // Alice never asked for her library: nothing comes, whatever changes.
+    await carol.c.request('acl.replace', {
+      device_id: carol.deviceId,
+      rules: [{ path: 'C/', audience: 'hub' }],
+    });
+    await nextChange(bob.c);
+    await noChange(alice.c);
+    carol.c.close();
+  });
+
+  it('says when a connection ends, and a device goes with it', async () => {
+    const { bob } = await world();
+    const carol = await carolPrivate();
+    t.db.putConnection(bob.userId, carol.userId, 'accepted');
+    await carol.c.request('acl.replace', {
+      device_id: carol.deviceId,
+      rules: [{ path: 'C/', audience: { users: [bob.userId] } }],
+    });
+    expect(await listed(bob.c)).toContain(carol.deviceId);
+    expect((await carol.c.request('connection.remove', { user_id: bob.userId })).t).toBe('ok');
+    await nextChange(bob.c);
+    expect(await listed(bob.c)).not.toContain(carol.deviceId);
+    carol.c.close();
+  });
+});

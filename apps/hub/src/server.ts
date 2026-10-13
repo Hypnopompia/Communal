@@ -109,6 +109,16 @@ interface Session {
   profile?: ClientBody<'network.profile'>;
   /** Folders this device watches, keyed by `device_id + path` (resent after every sign-in). */
   watches: Map<string, LiveWatch>;
+  /**
+   * The device this session is browsing (`browse.follow`, memory only), and the device's index
+   * rev it was last told about.
+   */
+  follow?: { device: string; sent: number };
+  /**
+   * The devices the last `library` answer listed (memory only), so the hub can say when that
+   * list changes (`library.changed`). Unset until the session asks.
+   */
+  library?: Set<string>;
   /** A pending `link.claim` from this (unauthenticated) session: its request id. */
   claim?: string;
   badClaims: number;
@@ -352,6 +362,8 @@ export class HubServer {
       this.goingOffline.delete(device);
       this.publishPresence(uid, device, false);
     }
+    const gone = this.db.devicesOf(uid);
+    this.refreshLibraries((x) => gone.some((d) => x.library!.has(d)), gone);
     this.log.info({ user_id: uid }, 'banned user disconnected');
   }
 
@@ -373,6 +385,7 @@ export class HubServer {
     for (const x of this.online.values()) {
       for (const [k, w] of x.watches) if (w.device === device) x.watches.delete(k);
     }
+    this.refreshLibraries((x) => x.library!.has(device), [device]);
   }
 
   private onClose(s: Session) {
@@ -433,17 +446,18 @@ export class HubServer {
           if (!listing) return this.fail(s, 'not_found', 'no such device', msg.id);
           return this.send(s, 'browse.listing', listing, msg.id);
         }
-        case 'library':
+        case 'browse.follow':
+          return this.onBrowseFollow(s, msg.id, msg.body.device_id);
+        case 'library': {
+          const devices = this.catalog.library(s.user!);
+          s.library = new Set(devices.map((d) => d.device_id));
           return this.send(
             s,
             'library.listing',
-            {
-              devices: this.catalog
-                .library(s.user!)
-                .map(({ user, ...d }) => ({ ...d, user: this.summary(user) })),
-            },
+            { devices: devices.map(({ user, ...d }) => ({ ...d, user: this.summary(user) })) },
             msg.id,
           );
+        }
         case 'user.search':
           return this.send(
             s,
@@ -469,8 +483,14 @@ export class HubServer {
           if (this.db.groupOwner(msg.body.group_id) !== s.user) {
             return this.fail(s, 'not_found', 'no such group', msg.id);
           }
+          const members = new Set(
+            this.db.groupsOf(s.user!).find((g) => g.group_id === msg.body.group_id)?.members,
+          );
           this.db.deleteGroup(msg.body.group_id);
-          return this.send(s, 'ok', {}, msg.id);
+          this.send(s, 'ok', {}, msg.id);
+          // Former members may have lost access to files shared with the group.
+          const me = s.user!;
+          return this.nudgeFollowers(this.db.devicesOf(me), (x) => members.has(x.user!));
         }
         case 'group.list':
           return this.send(s, 'group.listing', { groups: this.db.groupsOf(s.user!) }, msg.id);
@@ -612,6 +632,7 @@ export class HubServer {
   ) {
     const did = deviceId(fromB64(d.pubkey));
     this.db.addDevice({ id: did, user_id: user.id, ...d });
+    this.refreshLibraries((x) => x.user === user.id, [did]);
     s.log.info({ user_id: user.id, device_id: did }, 'device added to account');
     this.send(
       s,
@@ -723,6 +744,7 @@ export class HubServer {
     s.log.info({ rev: body.rev, entries: this.db.entryCount(device) }, 'index snapshot applied');
     this.send(s, 'index.ack', { rev: body.rev }, re);
     this.notifyWatchers((w) => w.device === device);
+    this.notifyFollowers(device);
   }
 
   private onDelta(s: Session, re: string, body: ClientBody<'index.delta'>) {
@@ -735,6 +757,50 @@ export class HubServer {
     this.db.applyDelta(device, body.rev, body.upsert, body.remove);
     this.send(s, 'index.ack', { rev: body.rev }, re);
     this.notifyWatchers((w) => w.device === device);
+    this.notifyFollowers(device);
+  }
+
+  // ── live browsing (ADR 0004) ──────────────────────────────────────────────
+
+  private onBrowseFollow(s: Session, re: string, deviceId: string | null) {
+    if (deviceId === null) {
+      s.follow = undefined;
+      return this.send(s, 'ok', {}, re);
+    }
+    // Same answer whether the device doesn't exist or the viewer can't see anything on it.
+    if (!this.catalog.canWatch(s.user!, deviceId, ''))
+      return this.fail(s, 'not_found', 'no such device', re);
+    s.follow = { device: deviceId, sent: this.db.indexRev(deviceId) };
+    this.send(s, 'ok', {}, re);
+  }
+
+  /**
+   * After a device's index changes: hint the followers who can see something that changed, and
+   * anyone whose library gained or lost the device.
+   */
+  private notifyFollowers(device: string) {
+    this.refreshLibraries(() => true, [device]);
+    const rev = this.db.indexRev(device);
+    for (const s of this.online.values()) {
+      const f = s.follow;
+      if (f?.device !== device) continue;
+      const changed = this.catalog.changedSince(s.user!, device, f.sent);
+      f.sent = rev;
+      if (changed) this.send(s, 'browse.changed', { device_id: device });
+    }
+  }
+
+  /**
+   * After a change in who can see what on `devices` (rules, connections, groups): hint the
+   * matching sessions following one of them, whose listing may have gained or lost files (revs
+   * say nothing about that), and update their libraries.
+   */
+  private nudgeFollowers(devices: string[], who: (s: Session) => boolean) {
+    this.refreshLibraries(who, devices);
+    for (const s of this.online.values()) {
+      if (s.follow && devices.includes(s.follow.device) && who(s))
+        this.send(s, 'browse.changed', { device_id: s.follow.device });
+    }
   }
 
   // ── subscriptions (HANDOFF §5 "Subscriptions", ADR 0013) ──────────────────
@@ -817,6 +883,27 @@ export class HubServer {
     }
   }
 
+  /**
+   * Re-checks `devices` against the library of each matching session that has asked for one,
+   * and says `library.changed` where the list of devices would differ.
+   */
+  private refreshLibraries(match: (s: Session) => boolean, devices: string[]) {
+    if (devices.length === 0) return;
+    for (const s of this.online.values()) {
+      const lib = s.library;
+      if (!lib || !match(s)) continue;
+      let changed = false;
+      for (const d of devices) {
+        const listed = this.catalog.inLibrary(s.user!, d);
+        if (listed === lib.has(d)) continue;
+        changed = true;
+        if (listed) lib.add(d);
+        else lib.delete(d);
+      }
+      if (changed) this.send(s, 'library.changed', {});
+    }
+  }
+
   // ── people: user search, connections, groups (HANDOFF §2, §5) ─────────────
 
   private summary(u: {
@@ -893,6 +980,8 @@ export class HubServer {
       const owner = this.db.getDevice(w.device)?.user_id;
       return (x.user === me && owner === requester) || (x.user === requester && owner === me);
     });
+    this.nudgeFollowers(this.db.devicesOf(requester), (x) => x.user === me);
+    this.nudgeFollowers(this.db.devicesOf(me), (x) => x.user === requester);
   }
 
   private onConnectionRemove(s: Session, re: string, other: string) {
@@ -911,6 +1000,8 @@ export class HubServer {
     if (c.state === 'accepted') {
       if (!this.db.sharesWithHub(me)) this.announceDevices(me, [other], false);
       if (!this.db.sharesWithHub(other)) this.announceDevices(other, [me], false);
+      this.nudgeFollowers(this.db.devicesOf(other), (x) => x.user === me);
+      this.nudgeFollowers(this.db.devicesOf(me), (x) => x.user === other);
     }
   }
 
@@ -924,12 +1015,16 @@ export class HubServer {
     if (strangers.length)
       return this.fail(s, 'bad_request', 'group members must be your connections', re);
     const id = body.group_id ?? newGroupId();
+    const previous = this.db.groupsOf(me).find((g) => g.group_id === id)?.members ?? [];
     this.db.upsertGroup(me, id, body.name, [...new Set(body.members)]);
     const group = this.db.groupsOf(me).find((g) => g.group_id === id)!;
     this.send(s, 'group.listing', { groups: [group] }, re);
     // New members may now see files shared with the group.
     const members = new Set(group.members);
     this.rewatch((w, x) => members.has(x.user!) && this.db.getDevice(w.device)?.user_id === me);
+    // Members may also have been removed (or added) since the last version: hint them all.
+    const before = new Set(previous);
+    this.nudgeFollowers(this.db.devicesOf(me), (x) => members.has(x.user!) || before.has(x.user!));
   }
 
   // ── brokering (HANDOFF §8; no relay, ever) ─────────────────────────────────
@@ -1150,6 +1245,7 @@ export class HubServer {
       name: r.name,
       platform: r.platform,
     });
+    this.refreshLibraries((x) => x.user === user.id, [did]);
     this.send(r.claimer, 'link.done', {
       user_id: user.id,
       device_id: did,
@@ -1296,8 +1392,10 @@ export class HubServer {
     }
     this.send(s, 'ok', {}, re);
     // acl.replace comes with every sign-in; only an actual change can make files visible.
-    if (JSON.stringify(this.db.rules(deviceId)) !== rulesBefore)
+    if (JSON.stringify(this.db.rules(deviceId)) !== rulesBefore) {
       this.rewatch((w) => w.device === deviceId);
+      this.nudgeFollowers([deviceId], () => true);
+    }
     // Sharing with the whole hub makes this user's devices' presence visible to everyone.
     const after = this.db.sharesWithHub(s.user!);
     if (before !== after) {

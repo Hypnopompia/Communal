@@ -180,6 +180,11 @@ export const clientBodies = {
     cursor: z.string().max(256).optional(),
   }),
   browse: z.object({ device_id: DeviceId, path: z.union([z.literal(''), SharePath]) }),
+  /**
+   * The device this session is browsing, so the hub can say when it changes (`browse.changed`).
+   * One per session, memory only; null stops it.
+   */
+  'browse.follow': z.object({ device_id: DeviceId.nullable() }),
   /** Devices the viewer can browse (the desktop Library, M9). */
   library: Empty,
   sources: z.object({ hash: Hash }),
@@ -306,6 +311,10 @@ export const hubBodies = {
       )
       .max(5000),
   }),
+  /** The devices the last `library` answer listed changed: ask again. Carries no data. */
+  'library.changed': Empty,
+  /** The followed device's listing changed for this viewer: browse it again. Carries no data. */
+  'browse.changed': z.object({ device_id: DeviceId }),
   'sources.list': z.object({
     hash: Hash,
     sources: z.array(Source),

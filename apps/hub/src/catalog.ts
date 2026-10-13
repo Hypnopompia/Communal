@@ -298,6 +298,30 @@ export class Catalog {
     return { added, removed };
   }
 
+  /**
+   * Whether anything on the device the viewer can see was added, changed (metadata and
+   * thumbnails included: `mrev`) or removed after rev `since`: the test for a `browse.changed`
+   * hint, so changes to hidden files never cause one.
+   */
+  changedSince(viewer: string, deviceId: string, since: number): boolean {
+    const params = { viewer, device: deviceId, since };
+    const any = (table: string, rev: string) =>
+      this.db.raw
+        .prepare(
+          `SELECT 1 FROM ${table} e WHERE e.device_id = @device AND e.${rev} > @since
+           AND ${this.visible()} LIMIT 1`,
+        )
+        .get(params) !== undefined;
+    return any('entries', 'mrev') || any('tombstones', 'rev');
+  }
+
+  /** Whether `library(viewer)` lists the device, checked for that one device alone. */
+  inLibrary(viewer: string, deviceId: string): boolean {
+    const d = this.db.getDevice(deviceId);
+    // visible() already hides banned owners' entries from everyone else.
+    return !!d && d.revoked_at === null && this.canBrowse(viewer, deviceId);
+  }
+
   /** A device is browsable when the viewer can see at least one entry on it. */
   private canBrowse(viewer: string, deviceId: string): boolean {
     return (

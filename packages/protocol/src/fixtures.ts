@@ -102,6 +102,7 @@ export const clientFixtures: { [T in ClientType]: ClientBody<T> } = {
   library: {},
   search: { q: 'alien', kind: 'video', min_size: 1_000_000, available: 'week', limit: 50 },
   browse: { device_id: did2, path: 'Movies/' },
+  'browse.follow': { device_id: did2 },
   sources: { hash },
   watch: { device_id: did2, path: 'Photos/', recursive: true, mirror_deletes: false, since_rev: 0 },
   unwatch: { device_id: did2, path: 'Photos/' },
@@ -169,6 +170,8 @@ export const hubFixtures: { [T in HubType]: HubBody<T> } = {
     cursor: 'c1',
   },
   'browse.listing': { online: true, dirs: [{ name: '2024' }], files: [entry] },
+  'browse.changed': { device_id: did2 },
+  'library.changed': {},
   'sources.list': { hash, sources: [source] },
   'library.listing': {
     devices: [{ device_id: did2, device_name: 'bob-laptop', user, online: false, seen: 'week' }],

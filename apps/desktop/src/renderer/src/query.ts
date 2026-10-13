@@ -7,7 +7,15 @@ import { QueryClient, useQuery, type UseQueryOptions } from '@tanstack/react-que
 import { api, ApiError } from './api';
 
 export type Topic =
-  'hubs' | 'presence' | 'people' | 'devices' | 'transfers' | 'index' | 'subscriptions';
+  | 'hubs'
+  | 'presence'
+  | 'people'
+  | 'devices'
+  | 'transfers'
+  | 'index'
+  | 'subscriptions'
+  | 'browse'
+  | 'library';
 
 export const queryClient = new QueryClient({
   defaultOptions: {

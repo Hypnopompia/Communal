@@ -26,7 +26,7 @@ export function useHubs(): { hubs: HubStatus[]; name: (id: string) => string } {
  */
 export function useLibrary() {
   return useApi<{ devices: LibraryDevice[]; hubs: { hub: string; ok: boolean; error?: string }[] }>(
-    ['presence', 'people', 'hubs', 'devices'],
+    ['presence', 'people', 'hubs', 'devices', 'library'],
     '/v1/library',
     { refetchInterval: 30_000 },
   );

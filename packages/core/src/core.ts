@@ -146,6 +146,8 @@ export class CommunalCore {
   private accountId?: AccountIdentity;
   private rootSecretKept?: Uint8Array;
   private readonly pendingLinks = new Map<string, PendingLink>();
+  /** Per hub, the other device last browsed, which the hub tells us about (`browse.follow`). */
+  private readonly following = new Map<string, string>();
 
   constructor(private readonly o: CoreOptions) {
     this.log = o.log ?? pino({ name: 'core' });
@@ -180,6 +182,11 @@ export class CommunalCore {
     // Our account's revocations go to every hub on every sign-in, so a hub that was away when
     // a device was revoked hears about it (ADR 0014).
     this.hubs.on('ready', ({ hub }) => void this.pushRevocations(hub));
+    // A follow lives in the hub session: renew it after every sign-in.
+    this.hubs.on('ready', ({ hub }) => {
+      const device = this.following.get(hub);
+      if (device) this.follow(hub, device);
+    });
     this.hubs.on('event', ({ hub, msg }) => {
       if (msg.t === 'link.request') this.onLinkRequest(hub, msg.body);
       if (msg.t === 'device.revoked') this.onRevoked(hub, msg.body);
@@ -775,7 +782,20 @@ export class CommunalCore {
     if (!client.ready) throw new CoreError('unavailable', 'hub is offline');
     const reply = await client.request('browse', { device_id: device, path });
     if (reply.t !== 'browse.listing') throw new CoreError('not_found', 'no such device');
+    // This device's own changes come from the indexer; others' from the hub (`browse.changed`).
+    if (device !== this.deviceId && this.following.get(hub) !== device) {
+      this.following.set(hub, device);
+      this.follow(hub, device);
+    }
     return reply.body;
+  }
+
+  /** Asks the hub to say when `device` changes. Only a hint, so failures (old hubs) are fine. */
+  private follow(hub: string, device: string) {
+    this.hubs
+      .get(hub)
+      ?.request('browse.follow', { device_id: device })
+      .catch((err: unknown) => this.log.debug({ hub, err }, 'browse.follow failed'));
   }
 
   // ── settings ──────────────────────────────────────────────────────────────

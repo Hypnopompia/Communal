@@ -261,6 +261,12 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (user_id, device_id)
   );
   `,
+  `
+  -- Live browsing (ADR 0004): the device index rev at which anything about the entry last
+  -- changed (metadata and thumbnails too), so browse.changed can hint at those as well.
+  ALTER TABLE entries ADD COLUMN mrev INTEGER NOT NULL DEFAULT 0;
+  CREATE INDEX entries_mrev ON entries (device_id, mrev);
+  `,
 ];
 
 const now = () => Math.floor(Date.now() / 1000);
@@ -268,6 +274,18 @@ const now = () => Math.floor(Date.now() / 1000);
 /** An upsert keeps the entry's rev unless its content changed (ADR 0013). */
 const KEEP_REV_UNLESS_CHANGED =
   'CASE WHEN entries.hash IS excluded.hash THEN entries.rev ELSE excluded.rev END';
+/** The same for `mrev`, which moves when anything the listing shows changes. */
+const KEEP_MREV_UNLESS_CHANGED = `CASE WHEN ${[
+  'hash',
+  'size',
+  'mtime',
+  'mime',
+  'kind',
+  'meta_json',
+  'thumb',
+]
+  .map((c) => `entries.${c} IS excluded.${c}`)
+  .join(' AND ')} THEN entries.mrev ELSE excluded.mrev END`;
 
 export class HubDb {
   readonly raw: Database.Database;
@@ -547,12 +565,12 @@ export class HubDb {
    */
   applyDelta(deviceId: string, rev: number, upsert: Entry[], remove: string[]) {
     const up = this.raw.prepare(
-      `INSERT INTO entries (device_id, path, dir, name, size, mtime, mime, kind, meta_json, thumb, hash, rule_path, rev)
-       VALUES (@device_id, @path, @dir, @name, @size, @mtime, @mime, @kind, @meta_json, @thumb, @hash, @rule_path, @rev)
+      `INSERT INTO entries (device_id, path, dir, name, size, mtime, mime, kind, meta_json, thumb, hash, rule_path, rev, mrev)
+       VALUES (@device_id, @path, @dir, @name, @size, @mtime, @mime, @kind, @meta_json, @thumb, @hash, @rule_path, @rev, @rev)
        ON CONFLICT (device_id, path) DO UPDATE SET size = excluded.size, mtime = excluded.mtime,
          mime = excluded.mime, kind = excluded.kind, meta_json = excluded.meta_json,
          thumb = excluded.thumb, hash = excluded.hash, rule_path = excluded.rule_path,
-         rev = ${KEEP_REV_UNLESS_CHANGED}`,
+         rev = ${KEEP_REV_UNLESS_CHANGED}, mrev = ${KEEP_MREV_UNLESS_CHANGED}`,
     );
     const bury = this.raw.prepare(
       `INSERT OR REPLACE INTO tombstones (device_id, path, dir, rule_path, rev, at)
@@ -609,13 +627,13 @@ export class HubDb {
       this.raw
         .prepare(
           // "WHERE true" lets SQLite parse an upsert whose source is a SELECT.
-          `INSERT INTO entries (device_id, path, dir, name, size, mtime, mime, kind, meta_json, thumb, hash, rule_path, rev)
-           SELECT device_id, path, dir, name, size, mtime, mime, kind, meta_json, thumb, hash, rule_path, @rev
+          `INSERT INTO entries (device_id, path, dir, name, size, mtime, mime, kind, meta_json, thumb, hash, rule_path, rev, mrev)
+           SELECT device_id, path, dir, name, size, mtime, mime, kind, meta_json, thumb, hash, rule_path, @rev, @rev
            FROM entries_staging WHERE device_id = @device AND true
            ON CONFLICT (device_id, path) DO UPDATE SET size = excluded.size, mtime = excluded.mtime,
              mime = excluded.mime, kind = excluded.kind, meta_json = excluded.meta_json,
              thumb = excluded.thumb, hash = excluded.hash, rule_path = excluded.rule_path,
-             rev = ${KEEP_REV_UNLESS_CHANGED}`,
+             rev = ${KEEP_REV_UNLESS_CHANGED}, mrev = ${KEEP_MREV_UNLESS_CHANGED}`,
         )
         .run({ device: deviceId, rev });
       this.raw

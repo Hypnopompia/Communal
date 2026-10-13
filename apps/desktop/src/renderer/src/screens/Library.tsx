@@ -23,6 +23,29 @@ import {
 import { FolderIcon, Icon } from '../ui/icons';
 import { Empty, ErrorNote } from '../ui/kit';
 
+type View = 'grid' | 'list';
+const VIEW_KEY = 'library.view';
+
+/** Grid or list, remembered across folders and restarts (this profile's localStorage). */
+function useView(): [View, (v: View) => void] {
+  const [view, setView] = useState<View>(() => {
+    try {
+      return localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'grid';
+    } catch {
+      return 'grid';
+    }
+  });
+  const choose = (v: View) => {
+    setView(v);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      // Not remembered; the choice still holds for now.
+    }
+  };
+  return [view, choose];
+}
+
 export function Library({ route }: { route: Extract<Route, { screen: 'library' }> }) {
   const lib = useLibrary();
   const device = lib.data?.devices.find((d) => d.device_id === route.device && d.hub === route.hub);
@@ -128,12 +151,12 @@ function Browse({
   // how two of them keep a folder in step).
   const own = deviceId === me?.device_id;
   const mine = own || device?.user.user_id === me?.account.user_id;
-  const [view, setView] = useState<'grid' | 'list'>('grid');
+  const [view, setView] = useView();
   const [preview, setPreview] = useState<(FileLike & { hash: string }) | null>(null);
   const [subscribe, setSubscribe] = useState(false);
   const download = useDownload();
   const listing = useApi<Listing>(
-    ['index', 'presence'],
+    ['index', 'presence', 'browse'],
     `/v1/browse${qs({ hub, device: deviceId, path })}`,
   );
   const files: FileLike[] = (listing.data?.files ?? []).map((f) => ({

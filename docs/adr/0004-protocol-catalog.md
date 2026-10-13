@@ -9,15 +9,16 @@
 
 ### Hub
 
-| Type                                                | Why                                                                                                                           |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `ok` (h→c)                                          | Generic reply for commands that return no data (`acl.set`, `group.delete`, `watch`, …).                                       |
-| `user.results`                                      | Reply to `user.search`. The catalog marks it c→h→c but doesn't name the reply.                                                |
-| `connection.listing`, `group.listing`               | Replies to `connection.list` and `group.list`.                                                                                |
-| `device.list` / `device.listing` / `device.revoked` | The Settings → Devices screen (§11) and revocation distribution (§4) need them.                                               |
-| `link.denied`                                       | Tells the new device its claim was denied.                                                                                    |
-| `acl.replace` (c→h, M3)                             | Full per-hub rule set for the device, sent on sign-in; keeps the hub in step with the client's authoritative copy (ADR 0009). |
-| `library` / `library.listing` (M9)                  | Devices the viewer can browse, with owner, `online` and `seen`: the desktop Library (ADR 0016).                               |
+| Type                                                  | Why                                                                                                                           |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `ok` (h→c)                                            | Generic reply for commands that return no data (`acl.set`, `group.delete`, `watch`, …).                                       |
+| `user.results`                                        | Reply to `user.search`. The catalog marks it c→h→c but doesn't name the reply.                                                |
+| `connection.listing`, `group.listing`                 | Replies to `connection.list` and `group.list`.                                                                                |
+| `device.list` / `device.listing` / `device.revoked`   | The Settings → Devices screen (§11) and revocation distribution (§4) need them.                                               |
+| `link.denied`                                         | Tells the new device its claim was denied.                                                                                    |
+| `acl.replace` (c→h, M3)                               | Full per-hub rule set for the device, sent on sign-in; keeps the hub in step with the client's authoritative copy (ADR 0009). |
+| `library` / `library.listing` (M9)                    | Devices the viewer can browse, with owner, `online` and `seen`: the desktop Library (ADR 0016).                               |
+| `browse.follow` / `browse.changed`, `library.changed` | Live browsing: the device a session is looking at, and a data-free hint that its listing changed for that viewer (below).     |
 
 ### Peer
 
@@ -55,6 +56,8 @@
 - **`Candidate`** is `{kind: lan|public|mapped|ipv6|advertised, host, port}`. `host` must be an IP literal (ADR 0001). The udx stream id is added in M4.
 - **Link codes** are formatted `XXXX-XXXX` (Crockford-ish alphabet, uppercase).
 - **`watch` / `unwatch`** (M7) are answered with `ok`. The path is normalised to a folder. After `ok`, the hub sends the catch-up as one or more `watch.event`s. Every page but the last carries the old cursor as its `rev` (ADR 0013).
+- **`browse.follow`** takes `{device_id}` (or `null` to stop) and is answered with `ok`, or `not_found` exactly like `watch` when the viewer can see nothing on the device. It lives in the hub session (one device per session, memory only), so core renews it after every sign-in. The hub sends `browse.changed {device_id}` when an index change touches an entry or tombstone the viewer can see (rev newer than the last hint), and after a rule, connection or group change that could change what they see. It never carries data, and changes to hidden files never cause one. Entries carry a second rev, `mrev`, that also moves on metadata-only changes (a thumbnail or media metadata arriving), so those send the hint too. `rev`, which watches use, still moves only when the content changes.
+- **`library.changed {}`** follows any `library` request: the hub remembers which devices it listed (memory only) and re-checks a device whenever its index, its rules, or the owner's connections or groups change, or it's added, revoked or its owner banned. When the list would differ, it sends the hint, and the client asks again. Unbans aren't announced (the admin CLI only edits the database); the next refetch picks them up.
 - **`SharePath`** is `ShareName/rel/path`. It rejects absolute paths, `..`, `.`, empty segments, backslashes and NUL. A trailing `/` marks a folder (ACL rules, browse, watch).
 
 ## Peer frame encoding

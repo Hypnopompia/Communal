@@ -129,7 +129,15 @@ export type UiRoute = z.infer<typeof UiRoute>;
  * itself. Clients refetch what they show. Sent as `{"topics": [...]}`, at most every 250 ms.
  */
 export type ApiTopic =
-  'hubs' | 'presence' | 'people' | 'devices' | 'transfers' | 'index' | 'subscriptions';
+  | 'hubs'
+  | 'presence'
+  | 'people'
+  | 'devices'
+  | 'transfers'
+  | 'index'
+  | 'subscriptions'
+  | 'browse'
+  | 'library';
 
 const HUB_EVENT_TOPIC: Partial<Record<string, ApiTopic>> = {
   'connection.request': 'people',
@@ -140,6 +148,8 @@ const HUB_EVENT_TOPIC: Partial<Record<string, ApiTopic>> = {
   'link.denied': 'devices',
   'device.revoked': 'devices',
   'watch.event': 'subscriptions',
+  'browse.changed': 'browse',
+  'library.changed': 'library',
 };
 
 export class LocalApi {
