@@ -21,6 +21,7 @@ import { HubManager, type HubEntry, type SharedClientOptions } from './hub-manag
 import { Indexer, type IndexerOptions } from './index/indexer.js';
 import { IndexStore, type Audience, type ShareRow } from './index/store.js';
 import { People } from './people.js';
+import { HubAdmin } from './hub-admin.js';
 import { PeerTransport, type TransportOptions } from './peer/transport.js';
 import { NetworkCheck, type NetworkProfile, type PortMapper } from './peer/netcheck.js';
 import { PeerBroker } from './transfer/broker.js';
@@ -133,6 +134,8 @@ export class CommunalCore {
   readonly indexer: Indexer;
   readonly sync: IndexSync;
   readonly people: People;
+  /** Managing the hubs this account administers (ADR 0020). */
+  readonly admin: HubAdmin;
   readonly transport: PeerTransport;
   readonly network: NetworkCheck;
   readonly broker: PeerBroker;
@@ -185,6 +188,7 @@ export class CommunalCore {
     });
     this.media.on('changed', () => this.sync.pushAll());
     this.people = new People(this.hubs, this.store);
+    this.admin = new HubAdmin(this.hubs, this.store);
     // Each hub gets this device's full rule set for that hub on every sign-in (ADR 0009).
     this.hubs.on('ready', ({ hub }) => void this.pushRules(hub));
     // Our account's revocations go to every hub on every sign-in, so a hub that was away when
@@ -918,6 +922,8 @@ export class CommunalCore {
         url: h.url,
         name: h.state.name ?? null,
         ready: h.ready,
+        /** This account administers the hub (ADR 0020): the app offers Manage. */
+        admin: h.admin,
         problem: h.problem,
         registered: h.state.registered,
         user_id: h.state.userId ?? null,

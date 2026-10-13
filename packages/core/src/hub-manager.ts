@@ -74,10 +74,11 @@ export class HubManager extends EventEmitter<HubManagerEvents> {
    * Configured hubs with their connection status. `problem` says why a hub isn't usable when
    * it's for a reason the person must act on: waiting for the hub admin, or refused for good.
    */
-  list(): (HubEntry & { ready: boolean; problem: HubProblem | null })[] {
+  list(): (HubEntry & { ready: boolean; admin: boolean; problem: HubProblem | null })[] {
     return [...this.hubs.values()].map(({ entry, client, problem }) => ({
       ...entry,
       ready: client.ready,
+      admin: client.session?.admin === true,
       problem: client.ready ? null : (problem ?? null),
     }));
   }

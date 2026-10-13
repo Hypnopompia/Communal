@@ -30,8 +30,7 @@ These need a person or hardware that CI doesn't have.
 
 ### Decided, ready to build
 
-- **Hub admin in the client** (ADR 0020). The hub side is done (see the dated section below). Still to do:
-  - core: a `HubClient` admin API and local API routes `/v1/hubs/:id/admin/...`, plus `admin` in hub status;
+- **Hub admin in the client** (ADR 0020). The hub side and core are done (see the dated section below). Still to do:
   - desktop: Settings › Hubs › Manage (settings, users with devices, graph, audit log), refreshed by `admin.changed`;
   - CLI: `communal admin …` over the local API;
   - MCP admin tools: list and log, approve, ban and unban, and settings. Destructive ones are marked, and none can make admins.
@@ -76,13 +75,14 @@ These are fine for now. Fix them if they start to bite.
 - **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
 - **From HANDOFF §15:** hubs caching thumbnails of hub-wide files, and mobile clients.
 
-## Hub admin: the hub side (2026-10-13)
+## Hub admin: hub and core (2026-10-13)
 
 - **Admins (ADR 0020):** `users.admin_at`. The first account on a hub is its admin and is let in even in approval mode. On upgrade, an existing hub's oldest unbanned account becomes its admin. `communal-hub admin list|add|remove` changes admins, and only the shell can.
 - **Audit log:** an `admin_log` table. `approve`, `ban`, `unban`, `changeSettings` and `setAdmin` take an actor and log in the same transaction. `communal-hub log` prints the log.
 - **Protocol:** `admin.users`, `admin.approve`, `admin.ban`, `admin.unban`, `admin.settings.get`/`admin.settings.set`, `admin.graph` and `admin.log`, plus the `admin.changed` hint and `welcome.admin` (ADR 0004). Non-admins get the same `bad_request` as an older hub. A ban from a client signs the account out at once. Admins can't be banned from a client.
 - **Tests:** `apps/hub/src/admin.test.ts` covers every admin message for admins, non-admins and before sign-in, the first account, removing an admin mid-session, banned admins, no paths or addresses in listings, no groups in the graph, log paging, and the migration.
 - **Docs:** `hub.html` and the hub install script say to join a new hub first.
+- **Core:** `HubAdmin` (`core.admin`) and the `/v1/hubs/:id/admin/...` routes, `admin` in hub status, and an `admin` event topic. Renaming the hub updates the admin's own app at once. `m11-hub-admin` drives it all through the local API: only the first account can manage the hub, approval, the graph, a ban that signs someone out, the log, and removal by the shell mid-session.
 
 ## People, shares and a Linux installer (0.1.5, 2026-10-13)
 

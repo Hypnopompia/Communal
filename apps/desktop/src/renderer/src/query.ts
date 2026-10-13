@@ -15,7 +15,8 @@ export type Topic =
   | 'index'
   | 'subscriptions'
   | 'browse'
-  | 'library';
+  | 'library'
+  | 'admin';
 
 export const queryClient = new QueryClient({
   defaultOptions: {

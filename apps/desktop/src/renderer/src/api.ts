@@ -97,10 +97,72 @@ export interface HubStatus {
   /** The hub's readable name, set by its admin (null: show the host name). */
   name: string | null;
   ready: boolean;
+  /** This account administers the hub (ADR 0020): Settings › Hubs offers Manage. */
+  admin: boolean;
   problem: HubProblem | null;
   registered: boolean;
   user_id: string | null;
   network: { nat: string; upnp: boolean; ipv6: boolean; cgnat: boolean } | null;
+}
+
+// ── hub admin (ADR 0020): /v1/hubs/:id/admin/... ──
+
+export interface AdminDevice {
+  device_id: string;
+  name: string;
+  platform: 'darwin' | 'win32' | 'linux';
+  created_at: number;
+  last_seen: number | null;
+  revoked_at: number | null;
+  online: boolean;
+  files: number;
+  bytes: number;
+  nat?: { nat: string; upnp: boolean; ipv6: boolean; cgnat: boolean };
+}
+
+export interface AdminUser {
+  user_id: string;
+  display_name: string;
+  fingerprint: string;
+  status: 'active' | 'pending';
+  admin: boolean;
+  created_at: number;
+  banned_at: number | null;
+  ban_reason: string | null;
+  devices: AdminDevice[];
+  verified: boolean;
+}
+
+export interface AdminSettings {
+  join_mode: 'open' | 'approval';
+  name: string | null;
+}
+
+export interface AdminGraph {
+  people: {
+    user_id: string;
+    display_name: string;
+    admin: boolean;
+    status: 'active' | 'pending';
+    banned: boolean;
+  }[];
+  connections: {
+    a: string;
+    b: string;
+    state: 'accepted' | 'pending';
+    requested_by: string;
+    since: number;
+  }[];
+}
+
+export interface AdminLogEntry {
+  id: number;
+  at: number;
+  /** An admin's user_id, `cli` (the hub's shell) or `hub`. */
+  actor: string;
+  action: string;
+  target: string | null;
+  details: string | null;
 }
 
 export interface Status {

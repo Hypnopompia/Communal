@@ -467,16 +467,16 @@ export class HubDb {
           .all() as { device_id: string; files: number; bytes: number }[]
       ).map((r) => [r.device_id, r]),
     );
-    return (this.raw.prepare('SELECT * FROM users ORDER BY created_at, id').all() as UserRow[]).map(
-      (u) => ({
-        ...u,
-        devices: this.listDevices(u.id).map((d) => ({
-          ...d,
-          files: counts.get(d.id)?.files ?? 0,
-          bytes: counts.get(d.id)?.bytes ?? 0,
-        })),
-      }),
-    );
+    return (
+      this.raw.prepare('SELECT * FROM users ORDER BY created_at, rowid').all() as UserRow[]
+    ).map((u) => ({
+      ...u,
+      devices: this.listDevices(u.id).map((d) => ({
+        ...d,
+        files: counts.get(d.id)?.files ?? 0,
+        bytes: counts.get(d.id)?.bytes ?? 0,
+      })),
+    }));
   }
 
   /** Every connection on the hub: the admin graph (never groups or rules, ADR 0020). */

@@ -1,6 +1,6 @@
 # ADR 0020 — Hub administration from the client
 
-- Status: accepted. The hub side is built (protocol, database, handlers, `communal-hub admin` and `log`). Core, desktop and MCP are next.
+- Status: accepted. Built: the hub side (protocol, database, handlers, `communal-hub admin` and `log`) and core (`HubAdmin`, the local API routes). The desktop screens, the CLI and MCP are next.
 - Date: 2026-10-13
 
 Today a hub admin is anyone with a shell on the hub, using `communal-hub` (HANDOFF §10). The plan was a separate web admin UI after v1, with open questions about sign-in, graph privacy and where to serve it (`docs/questions.md`, now removed). The owner chose a different shape: admin lives in the clients.
@@ -50,7 +50,17 @@ These were open questions or details. They're decided here, and can be revisited
 
 - The new admin messages go in `clientBodies`/`hubBodies`, with fixtures, and are recorded in ADR 0004. `welcome.admin` tells the client whether to show Manage, and an `admin.changed` hint tells open admin screens to refetch.
 - Each one needs access-control cases (admin, non-admin, banned admin) in a new `apps/hub/src/admin.test.ts`.
-- The local API gets `/v1/hubs/:id/admin/...` routes, and the renderer wire types follow them.
+- **Core:** `HubAdmin` (`core.admin`) wraps the messages and refuses early when `welcome.admin` was false. The hub checks again on every message, and an admin removed by the shell mid-session gets `forbidden`.
+  - Hub status carries `admin`.
+  - `admin.changed` becomes the `admin` event topic.
+  - Renaming the hub updates the admin's own saved name at once. Everyone else picks it up on their next connection.
+- **Local API routes:**
+  - `GET /v1/hubs/:id/admin/users`
+  - `POST /v1/hubs/:id/admin/users/:user/approve|ban|unban` (`ban` takes `{reason?}`)
+  - `GET|PUT /v1/hubs/:id/admin/settings`
+  - `GET /v1/hubs/:id/admin/graph`: people plus connections
+  - `GET /v1/hubs/:id/admin/log?limit&before`
+- The renderer wire types follow them, and `test/integration/m11-hub-admin.test.ts` covers the whole flow.
 
 ## Consequences
 

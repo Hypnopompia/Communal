@@ -77,7 +77,7 @@ How the pieces connect:
   - The headless `communal` CLI talks to the same API.
   - **Core must never depend on Electron.**
 - **Core layout** (`packages/core`):
-  - `CommunalCore` (`core.ts`) owns `HubManager`, `IndexStore` (local SQLite: shares, files, change log, per-hub sync state), `Indexer` (scan, watch, rescan, hash) and `IndexSync` (per-hub snapshot/delta).
+  - `CommunalCore` (`core.ts`) owns `HubManager`, `HubAdmin` (`hub-admin.ts`, managing hubs this account administers), `IndexStore` (local SQLite: shares, files, change log, per-hub sync state), `Indexer` (scan, watch, rescan, hash) and `IndexSync` (per-hub snapshot/delta).
   - `LocalApi` (`api/server.ts`) wraps the core for the CLI and desktop. The CLI never touches core internals while the daemon runs.
   - Never iterate a better-sqlite3 statement across an `await`: other statements on the same connection throw. Page with keyset queries instead (`filesPage`).
 - **Transfers** (ADR 0010):

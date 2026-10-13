@@ -512,6 +512,11 @@ export class HubClient extends EventEmitter<HubClientEvents> {
     return new Promise((resolve, reject) => this.eventWaiters.push({ types, resolve, reject }));
   }
 
+  /** Keeps the name an admin just gave the hub (null: the hub has none now). */
+  async rememberName(name: string | null) {
+    if ((name ?? undefined) !== this.o.state.name) await this.save({ name: name ?? undefined });
+  }
+
   private async save(patch: Partial<HubClientState>) {
     Object.assign(this.o.state, patch);
     await this.o.saveState(this.o.state);

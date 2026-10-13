@@ -80,6 +80,17 @@ const UpsertGroup = z.object({
   members: z.array(z.string()).max(1000),
 });
 const HubQuery = z.object({ hub: z.string() });
+const Ban = z.object({ reason: z.string().trim().max(200).optional() });
+const AdminSettingsChange = z
+  .object({
+    join_mode: z.enum(['open', 'approval']).optional(),
+    name: z.string().trim().min(1).max(64).nullable().optional(),
+  })
+  .strict();
+const AdminLogQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(500).optional(),
+  before: z.coerce.number().int().positive().optional(),
+});
 const DeviceName = z.string().trim().min(1).max(64);
 const Link = z.object({
   url: z.string().url().max(512),
@@ -146,7 +157,8 @@ export type ApiTopic =
   | 'index'
   | 'subscriptions'
   | 'browse'
-  | 'library';
+  | 'library'
+  | 'admin';
 
 const HUB_EVENT_TOPIC: Partial<Record<string, ApiTopic>> = {
   'connection.request': 'people',
@@ -159,6 +171,7 @@ const HUB_EVENT_TOPIC: Partial<Record<string, ApiTopic>> = {
   'watch.event': 'subscriptions',
   'browse.changed': 'browse',
   'library.changed': 'library',
+  'admin.changed': 'admin',
 };
 
 export class LocalApi {
@@ -221,6 +234,32 @@ export class LocalApi {
       await this.core.removeHub(param(req, url, 1));
       return { ok: true };
     });
+
+    // ── hub administration (ADR 0020): only on hubs this account administers ──
+    const admin = this.core.admin;
+    route('GET', '/v1/hubs/:id/admin/users', async (req, url) => ({
+      users: await admin.users(param(req, url, 1)),
+    }));
+    for (const action of ['approve', 'unban'] as const) {
+      route('POST', `/v1/hubs/:id/admin/users/:user/${action}`, async (req, url) => {
+        await admin[action](param(req, url, 1), param(req, url, 2));
+        return { ok: true };
+      });
+    }
+    route('POST', '/v1/hubs/:id/admin/users/:user/ban', async (req, url, body) => {
+      await admin.ban(param(req, url, 1), param(req, url, 2), Ban.parse(body).reason);
+      return { ok: true };
+    });
+    route('GET', '/v1/hubs/:id/admin/settings', async (req, url) =>
+      admin.settings(param(req, url, 1)),
+    );
+    route('PUT', '/v1/hubs/:id/admin/settings', async (req, url, body) =>
+      admin.updateSettings(param(req, url, 1), AdminSettingsChange.parse(body)),
+    );
+    route('GET', '/v1/hubs/:id/admin/graph', async (req, url) => admin.graph(param(req, url, 1)));
+    route('GET', '/v1/hubs/:id/admin/log', async (req, url) =>
+      admin.log(param(req, url, 1), AdminLogQuery.parse(Object.fromEntries(url.searchParams))),
+    );
 
     // ── account and devices (M8, ADR 0014) ──
     route('GET', '/v1/account', async () => this.core.identity());
