@@ -1,0 +1,13 @@
+[
+  {
+    "version": "0.1.0",
+    "date": "2026-10-12",
+    "changes": [
+      "First release: share folders from your computer with people you know, and download straight from theirs.",
+      "Search everything shared with you, with previews of pictures, videos, music, PDFs and text.",
+      "Choose who can see each folder or file: only you, particular people or groups, or everyone on a hub.",
+      "Follow a friend's folder to get new files automatically.",
+      "Let AI assistants such as Claude use Communal for you (Settings › AI agents)."
+    ]
+  }
+]

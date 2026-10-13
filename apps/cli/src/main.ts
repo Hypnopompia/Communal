@@ -39,13 +39,20 @@ import {
   type HubClientState,
   type HubEntry,
   type MergedSearch,
+  apiSocketPath,
+  discoverApi,
   seenLabel,
   RouterPortMapper,
   type Explained,
 } from '@communal/core';
 import { PROTOCOL_VERSION } from '@communal/protocol';
 
-const VERSION = '0.0.0';
+/** From package.json, which sits next to src/ and dist/ in the workspace and in releases. */
+const VERSION = (
+  JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
+    version: string;
+  }
+).version;
 const log = pino({ name: 'communal', level: process.env.LOG_LEVEL ?? 'info' });
 const dataDir = process.env.COMMUNAL_DATA ?? join(process.env.HOME ?? '.', '.communal');
 /** Dev-only conveniences need a dev build (see docs/adr/0006-hub-sessions-and-tls.md). */
@@ -60,7 +67,7 @@ const paths = {
   hubs: () => join(dataDir, 'hubs.json'),
   /** Single-hub config written before multi-hub support; migrated on first load. */
   legacyHub: () => join(dataDir, 'hub.json'),
-  socket: () => process.env.COMMUNAL_API_SOCKET ?? join(dataDir, 'api.sock'),
+  socket: () => process.env.COMMUNAL_API_SOCKET ?? apiSocketPath(dataDir),
 };
 
 function loadDeviceKey(): KeyPair | null {
@@ -155,15 +162,30 @@ async function daemonRunning(): Promise<boolean> {
     .catch(() => false);
 }
 
-/** Runs a command against the daemon, turning errors into a message and exit code. */
+/**
+ * The core to send commands to: the headless daemon for this data dir, else (when no data dir
+ * or socket was named) the open desktop app, if it allows control (ADR 0017).
+ */
+async function runningCore(): Promise<LocalApiClient | null> {
+  if (await daemonRunning()) return api();
+  if (process.env.COMMUNAL_DATA || process.env.COMMUNAL_API_SOCKET) return null;
+  const found = await discoverApi();
+  return found?.kind === 'desktop' ? found.client : null;
+}
+
+/** Runs a command against the running core, turning errors into a message and exit code. */
 async function viaDaemon(fn: (c: LocalApiClient) => Promise<void>) {
-  if (!(await daemonRunning())) {
-    console.error('the communal daemon is not running (start it with `communal daemon`)');
+  const core = await runningCore();
+  if (!core) {
+    console.error(
+      'Communal is not running here: start `communal daemon`, or open the Communal app and ' +
+        'turn on Settings › AI agents › "Allow control from the CLI and AI agents"',
+    );
     process.exitCode = 1;
     return;
   }
   try {
-    await fn(api());
+    await fn(core);
   } catch (err) {
     console.error((err as Error).message);
     process.exitCode = 1;
@@ -1466,6 +1488,16 @@ program
     await localApi.close();
     await core.stop();
     log.info('daemon stopped');
+  });
+
+program
+  .command('mcp')
+  .description(
+    'run the MCP server on stdio, so an AI agent can use Communal (`claude mcp add communal -- communal mcp`)',
+  )
+  .action(async () => {
+    const { runStdio } = await import('@communal/mcp');
+    await runStdio();
   });
 
 program

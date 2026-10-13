@@ -73,3 +73,12 @@ export function hubUrl(input: string): string {
   if (u.pathname === '/' || u.pathname === '') u.pathname = '/v1';
   return u.toString();
 }
+
+/**
+ * "Maya’s iMac" from an owner and a device name, without doubling the owner when the device
+ * name already starts with it ("Maya’s iMac", "maya-laptop").
+ */
+export function computerName(owner: string, device: string): string {
+  const o = owner.trim().toLowerCase();
+  return o && device.trim().toLowerCase().startsWith(o) ? device : `${owner}’s ${device}`;
+}

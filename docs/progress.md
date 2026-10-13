@@ -2,13 +2,36 @@
 
 ## Next up
 
-**v1 is feature-complete.** What's left needs the owner:
-
-- **Hands-on test of the M9 done criterion:** a non-technical person installs the app, joins, shares a folder and downloads a file without reading docs. The flow was walked through end to end by driving the app (below), but not by a person.
-- **The 1 GiB transfer between two physical machines on a LAN** (open since M0). It needs a second machine.
-- **Release decisions** (ADR 0016 "Not done"): the update-feed location, code-signing certificates, version numbers.
-- The NAT lab (`docker/nat/test.sh`) and the CI `desktop` / release workflows haven't run since M9. Linux packaging was checked locally in Docker (below). Windows packaging hasn't been run anywhere yet.
+- **First release (v0.1.0):** `pnpm release` once `.env` has the App Store Connect API key (see `.env.example`). It also needs a first green run of the CI `desktop` job and the release workflow on GitHub, including the untested Windows build.
+- **Planned: download destinations and folder downloads** (owner request, 2026-10-12; design notes in `docs/questions.md`). Downloads go to a folder chosen by kind (audio → ~/Music, video → ~/Movies…), and a whole folder (an album) downloads at once, keeping its structure. When the destination is inside a shared folder, finished files are re-shared, so popular files gain sources and downloads spread across them.
+- **Hands-on test of the M9 done criterion** by a non-technical person, with the release build.
+- **The 1 GiB transfer between two physical machines on a LAN** (open since M0).
+- Windows code signing; an in-app "What's new" from `apps/desktop/changelog.json`.
 - After v1: the hub web admin UI (`docs/questions.md`) and a retention setting for long-unseen devices (ADR 0015).
+
+## After M9 — agents, releases, site (2026-10-12)
+
+- **AI agents (ADR 0017):**
+  - `packages/mcp`: an MCP server over the local API. It has every tool except secrets and trust: no recovery key, no device linking or revoking, no verifying people.
+  - It runs as `communal mcp`, as `communal-mcp`, or inside the desktop app (`ELECTRON_RUN_AS_NODE`).
+  - The desktop app serves a local control socket only while Settings › AI agents allows it, switching on and off live. `show_in_app` moves the open window to a screen.
+  - The CLI falls back to the open app when no daemon runs.
+  - Checked end to end: an MCP client launched the app's own binary as the server, found the open app, read its status, and moved its window to Search.
+- **Releases (ADR 0016):**
+  - `pnpm release` signs and notarizes the Mac apps (Apple Silicon and Intel) locally, like ListenSync, and uploads them with a merged `latest-mac.yml` to a draft GitHub release.
+  - GitHub Actions adds Windows, Linux and the headless and hub tarballs, then the script publishes.
+  - electron-updater reads GitHub Releases.
+  - The Intel build is made on Apple Silicon, then CPU-checked with `lipo` and smoke-tested under Rosetta.
+- **Packaging fixes:** executables get their own Mach-O UUIDs (macOS Local Network permission, Apple TN3179), and the Info.plist explains the Local Network prompt. The staging copy moved outside the repo.
+- **Hub packaging:** `pnpm --filter @communal/hub package` makes a tarball with a systemd unit (it can bind 443 without root) and an install script.
+- **Site:** `site/` (overview, app guide, CLI, AI agents, running a hub), with screenshots of demo data. It's deployed to GitHub Pages by `.github/workflows/pages.yml`.
+- **App fixes:**
+  - The window can be dragged anywhere along the top edge on macOS.
+  - "Maya’s Maya’s iMac" no longer happens (`computerName()`).
+  - Small thumbnails in search results and list views are scaled, not cropped.
+  - Dialogs focus the chosen option.
+  - A new search from an agent replaces the current one.
+- MIT license, README, versions 0.1.0.
 
 ## M9 — Desktop app + packaging (2026-10-12)
 

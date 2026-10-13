@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>App guide · Communal</title>
+    <meta
+      name="description"
+      content="How to use the Communal app: joining a hub, sharing folders, choosing who sees them, searching and downloading."
+    />
+    <meta property="og:title" content="App guide · Communal" />
+    <meta
+      property="og:description"
+      content="How to use the Communal app: joining a hub, sharing folders, choosing who sees them, searching and downloading."
+    />
+    <meta
+      property="og:image"
+      content="https://hypnopompia.github.io/Communal/screenshots/folder.webp"
+    />
+    <link rel="icon" href="icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;700&display=swap"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="wrap">
+        <a class="brand" href="index.html"
+          ><svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="8" cy="9" r="6" fill="#2f5bea" />
+            <circle cx="16" cy="9" r="6" fill="#18936a" fill-opacity=".85" />
+            <circle cx="12" cy="16" r="6" fill="#e0a43a" fill-opacity=".85" /></svg
+          >Communal</a
+        >
+        <nav aria-label="Site">
+          <a href="index.html">Overview</a><a href="guide.html" aria-current="page">App guide</a
+          ><a href="cli.html">CLI</a><a href="agents.html">AI agents</a
+          ><a href="hub.html">Run a hub</a>
+        </nav>
+      </div>
+    </header>
+    <main class="wrap doc">
+      <nav class="toc" aria-label="On this page">
+        <strong>On this page</strong><a href="#install">Install</a
+        ><a href="#first-launch">First launch</a><a href="#library">Library</a
+        ><a href="#search">Search</a><a href="#sharing">Sharing and access</a
+        ><a href="#people">People and groups</a><a href="#transfers">Transfers</a
+        ><a href="#subscriptions">Subscriptions</a><a href="#activity">Activity</a
+        ><a href="#settings">Settings</a><a href="#background">Running in the background</a>
+      </nav>
+      <article>
+        <h1>Using the app</h1>
+        <p class="lede">Everything the Communal app does, screen by screen.</p>
+
+        <h2 id="install">Install</h2>
+        <p>
+          Download Communal for your computer from the <a href="index.html">front page</a> and open
+          it. On a Mac, drag it into Applications. Communal checks for updates itself and installs
+          them the next time you quit; a <b>Restart to update</b> button appears in the sidebar when
+          one is ready.
+        </p>
+        <p>
+          The first time it runs, macOS asks whether Communal may find devices on your local
+          network. Choose <b>Allow</b>: Communal talks directly to the computers of the people you
+          share with, including ones in your own home, and asks your router to let them reach you.
+        </p>
+
+        <h2 id="first-launch">First launch</h2>
+        <figure>
+          <img
+            class="shot"
+            src="screenshots/welcome.webp"
+            alt="The welcome screen: I’m new here, Add this computer to my account, Restore my account"
+            loading="lazy"
+            width="1600"
+            height="1000"
+          />
+        </figure>
+        <ul>
+          <li>
+            <b>I’m new here.</b> Choose the name people will know you by, type the hub address you
+            were given, and name this computer. Some hubs let you in straight away; others wait for
+            their admin to approve you, and you can set up your shared folders meanwhile.
+          </li>
+          <li>
+            <b>Add this computer to my account.</b> On a computer that already uses Communal, open
+            Settings › Devices and choose <b>Get a code</b>. Type the code here. The other computer
+            then asks you to approve this one: check that the ID it shows matches the one shown here
+            before approving.
+          </li>
+          <li>
+            <b>Restore my account.</b> If you’ve lost every computer you used Communal on, use the
+            recovery key you saved (a file and its passphrase, or 24 words). Your shares,
+            connections and access choices come back as this computer rejoins your hubs.
+          </li>
+        </ul>
+
+        <h2 id="library">Library</h2>
+        <p>
+          The Library lists everyone whose files you can see, computer by computer, starting with
+          your own. A green dot means the computer is online now; otherwise it says when it was last
+          seen.
+        </p>
+        <figure>
+          <img
+            class="shot"
+            src="screenshots/library.webp"
+            alt="The Library: Alex’s and Maya’s computers, both online"
+            loading="lazy"
+            width="1600"
+            height="1000"
+          />
+        </figure>
+        <p>
+          Open a computer to browse its shared folders. Switch between <b>Grid</b> and
+          <b>List</b> at the top right.
+        </p>
+        <ul>
+          <li>
+            <b>Click</b> a file to look at it: pictures and PDF pages open large, text and code show
+            their first page, videos and music play straight from the owner’s computer.
+          </li>
+          <li><b>Double-click</b> a file, or use <b>Download</b>, to save it.</li>
+          <li>
+            <b>Subscribe to this folder</b> follows the folder you’re in (see
+            <a href="#subscriptions">Subscriptions</a>).
+          </li>
+        </ul>
+        <p>
+          If the computer is offline you can still look around, but downloads wait until it’s back.
+        </p>
+
+        <h2 id="search">Search</h2>
+        <p>
+          Search looks through everything shared with you on every hub at once. Type part of a name:
+          every word counts, so <code>beach 2019</code> finds “Beach trip (2019).mp4”. Narrow it by
+          kind (pictures, videos, music, documents…) or size.
+        </p>
+        <figure>
+          <img
+            class="shot"
+            src="screenshots/search.webp"
+            alt="Search filtered to pictures"
+            loading="lazy"
+            width="1600"
+            height="1000"
+          />
+        </figure>
+        <p>
+          A file that several people have appears once. <b>Show only available files</b> hides files
+          whose computers haven’t been online in the past week, and results from computers that are
+          online come first.
+        </p>
+
+        <h2 id="sharing">Sharing and access</h2>
+        <p>
+          Open <b>My shares</b> and choose <b>Share a folder</b>. Give it the name others will see;
+          where it is on your computer stays private. Communal prepares each file (and makes
+          previews of pictures, videos and documents) in the background; the progress shows at the
+          top.
+        </p>
+        <figure>
+          <img
+            class="shot"
+            src="screenshots/shares.webp"
+            alt="My shares: three shared folders and who can see each"
+            loading="lazy"
+            width="1600"
+            height="1000"
+          />
+        </figure>
+        <p>
+          A new folder is visible only to you. Under <b>Who can see what</b>, choose
+          <b>Change</b> on a folder or file:
+        </p>
+        <ul>
+          <li><b>Only me</b>: your other computers can still see it.</li>
+          <li>
+            <b>Specific people and groups</b>: people you’re connected with. Nobody can tell who
+            else has access.
+          </li>
+          <li>
+            <b>Everyone on the hub</b>: anyone signed in to that hub can find and download it.
+          </li>
+          <li>
+            <b>Same as the folder it’s in</b>: files and folders follow the nearest folder above
+            them unless you choose otherwise.
+          </li>
+        </ul>
+        <figure>
+          <img
+            class="shot"
+            src="screenshots/access.webp"
+            alt="Choosing who can see a folder"
+            loading="lazy"
+            width="1600"
+            height="1000"
+          />
+        </figure>
+        <div class="note">
+          <p>
+            Access is set separately on each hub. If you’re on more than one, pick the hub at the
+            top of <b>Who can see what</b>: a folder can be public on one hub and private on
+            another.
+          </p>
+        </div>
+
+        <h2 id="people">People and groups</h2>
+        <p>
+          To share with someone in particular, connect with them first. In <b>People</b>, search for
+          their name and choose <b>Connect</b>; they’ll see your request and can accept it. Either
+          of you can disconnect at any time, which ends access granted through the connection
+          straight away.
+        </p>
+        <figure>
+          <img
+            class="shot"
+            src="screenshots/people.webp"
+            alt="People: one connection, and the groups section"
+            loading="lazy"
+            width="1600"
+            height="1000"
+          />
+        </figure>
+        <p>
+          <b>Verify</b> shows a safety code made from both your keys. Compare it with the one they
+          see, in person or on a call; if they match, nobody is pretending to be either of you.
+        </p>
+        <p>
+          <b>Groups</b> are your own lists of connections, for sharing with several people at once.
+          Only you see your groups; members don’t see each other through them.
+        </p>
+
+        <h2 id="transfers">Transfers</h2>
+        <p>
+          Downloads show their progress and how fast each computer is sending. A download from a
+          computer that’s offline waits and starts by itself when it’s back.
+        </p>
+        <p>
+          If two computers can’t reach each other, Transfers says why (for example a router that
+          blocks direct connections) and what usually fixes it, and on whose side.
+        </p>
+
+        <h2 id="subscriptions">Subscriptions</h2>
+        <p>
+          Subscribing to a folder downloads everything in it and keeps it up to date: new files
+          arrive by themselves, including ones added while you were away. When you subscribe,
+          Communal asks whether to delete your copy when the owner deletes a file; the answer is
+          <b>No</b> unless you change it. Copies you’ve changed yourself are never touched, and
+          deleted files go to your trash, not straight away.
+        </p>
+        <p>
+          In <b>Subscriptions</b> you can pause a folder, change that choice, or unsubscribe (files
+          you already have stay).
+        </p>
+
+        <h2 id="activity">Activity</h2>
+        <p>
+          Activity lists who got which of your files and when. This list is kept on your computer
+          only; the hub never sees it.
+        </p>
+        <figure>
+          <img
+            class="shot"
+            src="screenshots/activity.webp"
+            alt="Activity: three files Alex downloaded"
+            loading="lazy"
+            width="1600"
+            height="1000"
+          />
+        </figure>
+
+        <h2 id="settings">Settings</h2>
+        <h3>Account</h3>
+        <p>
+          Shows your fingerprint (the code people’s safety codes come from).
+          <b>Save recovery key</b> exports a file protected by a passphrase, or 24 words to write
+          down. Keep it somewhere safe and private: whoever has it can use your account. Only the
+          first computer you set up (or one you restored) can save it.
+        </p>
+        <h3>Devices</h3>
+        <p>
+          Your computers. <b>Get a code</b> adds another one. <b>Remove</b> signs a lost or stolen
+          computer out of every hub and stops other people’s computers trusting it; it can’t be
+          undone.
+        </p>
+        <h3>Hubs</h3>
+        <p>
+          The hubs you’re on, whether each is connected, and <b>Join another hub</b>. Your existing
+          shares aren’t listed on a new hub until you choose so in My shares.
+        </p>
+        <h3>Network</h3>
+        <p>
+          How easy this computer is to reach, as seen from each hub, and whether your router opened
+          a port for Communal. <b>Check again</b> after changing your network.
+        </p>
+        <h3>Sharing speed</h3>
+        <p>
+          Limit upload speed and how many people download from you at once, or share only within
+          your home network.
+        </p>
+        <h3>Storage</h3>
+        <p>How much space previews of other people’s files may take, and <b>Clear previews</b>.</p>
+        <h3>AI agents</h3>
+        <p>
+          Lets the command line and AI assistants such as Claude control this app while it’s open.
+          See <a href="agents.html">AI agents</a>.
+        </p>
+
+        <h2 id="background">Running in the background</h2>
+        <p>
+          Closing the window doesn’t stop sharing: Communal keeps running so others can download
+          from you. Quit from the menu bar icon (or the taskbar icon on Windows and Linux) or with
+          ⌘Q.
+        </p>
+      </article>
+    </main>
+    <footer>
+      <div class="wrap">
+        <span>Communal is free and open source (MIT).</span
+        ><a href="https://github.com/Hypnopompia/Communal">Source on GitHub</a
+        ><a href="https://github.com/Hypnopompia/Communal/releases/latest">Releases</a
+        ><a href="https://github.com/Hypnopompia/Communal/issues">Report a problem</a>
+      </div>
+    </footer>
+    <script src="downloads.js" defer></script>
+  </body>
+</html>

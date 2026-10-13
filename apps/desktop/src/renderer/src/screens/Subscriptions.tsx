@@ -1,7 +1,7 @@
 /** Subscriptions (HANDOFF §11): followed folders, where they go, mirror-deletes, pause, remove. */
 import { useState } from 'react';
 import { api, type Subscription } from '../api';
-import { baseName, hubName } from '../format';
+import { baseName, hubName, computerName } from '../format';
 import { useHubs, useNames } from '../hubs';
 import { useNav } from '../nav';
 import { useApi } from '../query';
@@ -71,7 +71,7 @@ function SubRow({ s }: { s: Subscription }) {
       <div className="grow" style={{ display: 'grid', gap: 6 }}>
         <div className="title">{baseName(s.path)}</div>
         <div className="sub">
-          From {d ? `${d.user}’s ${d.name}` : 'another computer'}
+          From {d ? computerName(d.user, d.name) : 'another computer'}
           {hubs.length > 1 && hub ? ` on ${hubName(hub.url)}` : ''}. Saved in{' '}
           <a
             href="#"

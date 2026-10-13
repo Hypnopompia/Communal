@@ -61,22 +61,38 @@ Closing the window keeps the app sharing in the background. It quits from the tr
 
 ## Packaging
 
-- **Desktop:** `pnpm --filter @communal/desktop package`.
-  - It builds, makes a flat production copy with `pnpm deploy --config.node-linker=hoisted`, runs electron-builder on that copy, then smoke-tests the unpacked app.
-  - Targets: macOS dmg + zip, Windows NSIS, Linux AppImage + deb. Each platform builds its own, since the native prebuilds are per platform.
-  - **No asar.** The core spawns ffmpeg by path (Electron only redirects `execFile`, not `spawn`, into `app.asar.unpacked`, and that's unclear inside a `utilityProcess`). The `trash` package execs its bundled helper. pdf.js reads font files from disk. Unpacking everything that matters would leave almost nothing in the archive, and the archive isn't a security boundary. Sources and builds nothing loads (better-sqlite3's C sources, unused pdf.js builds) are excluded. The macOS app is about 175 MB.
-  - **Signing hooks:**
-    - macOS uses `CSC_LINK` / `CSC_KEY_PASSWORD` or a keychain identity, with hardened runtime and `build/entitlements.mac.plist`. `scripts/notarize.mjs` notarizes and staples when `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` are set.
-    - Windows uses `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD`.
-    - Without these, builds are unsigned. Set `CSC_IDENTITY_AUTO_DISCOVERY=false` to stop electron-builder from picking up a local identity.
-  - **Auto-update:** electron-updater with a generic HTTPS feed. Building with `COMMUNAL_UPDATE_URL` writes `app-update.yml`. The app checks at start and every 6 hours, downloads in the background, installs on quit or on "Restart to update". Without a feed the updater stays off.
-  - `.github/workflows/release.yml` packages every platform on a `v*` tag and uploads the artifacts. Uploading them to the feed is manual for now.
+- **Desktop:** `pnpm --filter @communal/desktop package [-- --arch x64|arm64] [--dir]`.
+  - It builds, makes a flat production copy for the target CPU with `pnpm deploy --config.node-linker=hoisted --cpu=<arch>` in the temp folder, runs electron-builder on that copy into `release/<arch>/`, then smoke-tests the unpacked app.
+  - The copy lives **outside the repo**. Inside it, electron-builder's `pnpm list` sees the workspace and copies packages (including other CPUs' builds) from there.
+  - Targets: macOS dmg + zip (one per CPU), Windows NSIS, Linux AppImage + deb. Each OS builds its own, since the native prebuilds are per platform.
+  - **Mac on both CPUs (owner decision):** two apps rather than a universal one, because the native modules differ per CPU.
+    - The Intel app is built on Apple Silicon: `--cpu=x64` brings in the x64 sharp, canvas and libvips. The other CPU's platform packages are deleted, and ffmpeg-static's binary is fetched again for x64, since pnpm reuses the one it built for the host.
+    - Every Mach-O file in the app is then checked with `lipo` against the target CPU. Rosetta lets an x64 app run arm64 helpers on Apple Silicon, so the smoke test (run under `arch -x86_64`) can't catch a wrong binary on its own. It once shipped an arm64 ffmpeg in the Intel app this way.
+    - File names carry the CPU (`Communal-<version>-<arch>.<ext>`), so the updater picks the right zip.
+  - **No asar.** The core spawns ffmpeg by path (Electron only redirects `execFile`, not `spawn`, into `app.asar.unpacked`, and that's unclear inside a `utilityProcess`). The `trash` package execs its bundled helper. pdf.js reads font files from disk. Unpacking everything that matters would leave almost nothing in the archive, and the archive isn't a security boundary. Sources and builds nothing loads (better-sqlite3's C sources, unused pdf.js builds) are excluded. The Mac app is about 175 MB on Apple Silicon and 225 MB on Intel (ffmpeg's x64 build is larger).
+  - **Local Network permission (macOS):**
+    - macOS identifies apps for this permission by the Mach-O UUID of their executables (Apple TN3179). Every app built on the same Electron release ships identical executables, so Communal would share the permission, and the name shown in the prompt, with any other Electron app of that version. In development the prompt said "HamMap".
+    - The `afterPack` hook (`scripts/unique-uuid.mjs`) gives the main executable and its helpers UUIDs derived from the app id, then re-signs them ad hoc before the real signing.
+    - `NSLocalNetworkUsageDescription` explains in the prompt why the access is needed.
+  - **Signing and notarizing (macOS)**, the same way as the owner's ListenSync:
+    - A **Developer ID Application** certificate in the keychain (electron-builder finds it). Hardened runtime, with `build/entitlements.mac.plist`.
+    - Notarization uses electron-builder's built-in support with an **App Store Connect API key** (`APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`, from the environment or the repo's gitignored `.env`). `package.mjs` turns it on only when all three are set.
+    - Windows signing would use `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD`. There's no Windows certificate yet, so Windows builds are unsigned (SmartScreen warns).
+    - `CSC_IDENTITY_AUTO_DISCOVERY=false` builds unsigned.
+  - **Auto-update from GitHub Releases:**
+    - `publish: github (Hypnopompia/Communal)` in electron-builder.yml writes `app-update.yml` into the app. electron-updater checks the latest release at start and every 6 hours, downloads in the background, and installs on quit or on "Restart to update".
+    - Builds never publish themselves (`--publish never`). Uploads happen in the release flow below.
+- **Releases** (`pnpm release`, `scripts/release.mjs`), modeled on ListenSync's:
+  1. Checks that the version's notes are in `apps/desktop/changelog.json`, `main` is committed and pushed, a Developer ID is in the keychain, and the API key is set.
+  2. Pushes the `v<version>` tag, which starts `.github/workflows/release.yml`, and creates a draft release.
+  3. Builds, notarizes and smoke-tests the arm64 and x64 Mac apps. It merges their `latest-mac.yml` files into one listing both zips (each Mac picks its own) and uploads everything to the draft.
+  4. Waits for the Actions run, which builds Windows and Linux on their own runners, plus the headless tarballs (x64, arm64) and the hub tarball, and uploads them to the same draft.
+  5. Publishes the release.
 - **Smoke test:** `COMMUNAL_SMOKE=1` starts the app with no window. The core must start and `/v1/self-check` must pass. It runs in CI on all three OSes (`desktop` job) and at the end of every package build.
+- **Hub:** `pnpm --filter @communal/hub package` makes `communal-hub-<version>.tar.gz` (any OS: better-sqlite3 ships every prebuild), with `communal-hub.service`, an env file and `install.sh`. The hub terminates TLS itself, since it needs clients' real addresses. The site's "Run a hub" page covers certbot with a renewal hook.
 - **Headless:** `pnpm --filter @communal/cli package` makes `communal-<version>-<os>-<arch>.tar.gz`. It contains the CLI with production dependencies, `bin/communal`, `communal.service`, `communal.env.example` and `install.sh`. The installer needs Node 24, creates a `communal` system user, installs to `/opt/communal`, and enables the service. The service is hardened: read-only system and home, writable `/var/lib/communal` only. The Docker image (`docker/headless.Dockerfile`) remains the other route. The hub image is unchanged.
 
 ## Not done
 
-- Uploading release artifacts to the update feed, and choosing where the feed lives (owner decision).
-- Code-signing certificates: the hooks are in place, the certificates are the owner's.
-- Release versions: every package is still `0.0.0`.
-- A project homepage. The deb format requires one, so `apps/desktop/package.json` has the reserved placeholder `https://communal.invalid`.
+- Windows code signing (no certificate yet).
+- An in-app "What's new" from `changelog.json` (ListenSync has one).

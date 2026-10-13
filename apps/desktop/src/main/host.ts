@@ -11,11 +11,21 @@ import { WebSocket } from 'ws';
 import type { FromHost, HostInit } from '../shared/host.js';
 import type { KeyStore } from './keys.js';
 
+import type { UiRoute } from '@communal/core';
 import type { HostState } from '../shared/bridge.js';
 
 interface HostEvents {
   state: [HostState];
   topics: [string[]];
+  control: [ControlState];
+  ui: [UiRoute];
+}
+
+/** The local control socket for the CLI and AI agents (ADR 0017). */
+export interface ControlState {
+  enabled: boolean;
+  socket: string | null;
+  error?: string;
 }
 
 export class CoreHost extends EventEmitter<HostEvents> {
@@ -26,6 +36,7 @@ export class CoreHost extends EventEmitter<HostEvents> {
   private stopping = false;
   private restarts = 0;
   status: HostState = { state: 'starting' };
+  control: ControlState;
 
   constructor(
     private readonly o: Omit<HostInit, 't' | 'token' | 'deviceSecret' | 'rootSecret'> & {
@@ -33,6 +44,15 @@ export class CoreHost extends EventEmitter<HostEvents> {
     },
   ) {
     super();
+    this.control = { enabled: o.control, socket: null };
+  }
+
+  /** Turns the control socket on or off, live: no restart. */
+  setControl(on: boolean) {
+    this.o.control = on;
+    this.control = { enabled: on, socket: on ? this.control.socket : null };
+    this.child?.postMessage({ t: 'control', on });
+    this.emit('control', this.control);
   }
 
   start() {
@@ -60,6 +80,14 @@ export class CoreHost extends EventEmitter<HostEvents> {
         this.setState({ state: 'ready', deviceId: m.deviceId });
       } else if (m.t === 'save-root') keys.saveRoot(new Uint8Array(m.secret));
       else if (m.t === 'fatal') this.setState({ state: 'failed', message: m.message });
+      else if (m.t === 'control') {
+        this.control = {
+          enabled: this.o.control,
+          socket: m.socket,
+          ...(m.error ? { error: m.error } : {}),
+        };
+        this.emit('control', this.control);
+      } else if (m.t === 'ui') this.emit('ui', m.route);
     });
     child.on('exit', (code) => {
       this.base = undefined;

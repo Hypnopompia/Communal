@@ -1,0 +1,28 @@
+{
+  "name": "@communal/mcp",
+  "version": "0.1.0",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "description": "MCP server that lets an AI agent use Communal through a running core",
+  "bin": {
+    "communal-mcp": "./dist/main.js"
+  },
+  "exports": {
+    ".": {
+      "@communal/source": "./src/index.ts",
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@communal/core": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "zod": "^4.6.6"
+  }
+}

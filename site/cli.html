@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Command line · Communal</title>
+    <meta
+      name="description"
+      content="The communal command: run Communal on a server or NAS and control it from a terminal."
+    />
+    <meta property="og:title" content="Command line · Communal" />
+    <meta
+      property="og:description"
+      content="The communal command: run Communal on a server or NAS and control it from a terminal."
+    />
+    <meta
+      property="og:image"
+      content="https://hypnopompia.github.io/Communal/screenshots/folder.webp"
+    />
+    <link rel="icon" href="icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;700&display=swap"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="wrap">
+        <a class="brand" href="index.html"
+          ><svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="8" cy="9" r="6" fill="#2f5bea" />
+            <circle cx="16" cy="9" r="6" fill="#18936a" fill-opacity=".85" />
+            <circle cx="12" cy="16" r="6" fill="#e0a43a" fill-opacity=".85" /></svg
+          >Communal</a
+        >
+        <nav aria-label="Site">
+          <a href="index.html">Overview</a><a href="guide.html">App guide</a
+          ><a href="cli.html" aria-current="page">CLI</a><a href="agents.html">AI agents</a
+          ><a href="hub.html">Run a hub</a>
+        </nav>
+      </div>
+    </header>
+    <main class="wrap doc">
+      <nav class="toc" aria-label="On this page">
+        <strong>On this page</strong><a href="#install">Install on Linux</a
+        ><a href="#desktop">With the desktop app</a><a href="#setup">Setting up</a
+        ><a href="#sharing">Sharing and access</a><a href="#people">People and groups</a
+        ><a href="#finding">Finding and downloading</a><a href="#subscriptions">Subscriptions</a
+        ><a href="#devices">Devices and recovery</a><a href="#env">Settings</a>
+      </nav>
+      <article>
+        <h1>Command line</h1>
+        <p class="lede">
+          The <code>communal</code> command runs Communal on a computer with no screen (a home
+          server, a NAS) and controls it. It’s the same engine as the app.
+        </p>
+
+        <h2 id="install">Install on Linux</h2>
+        <p>
+          Download <code>communal-&lt;version&gt;-linux-x64.tar.gz</code> (or <code>-arm64</code>)
+          from the
+          <a href="https://github.com/Hypnopompia/Communal/releases/latest">latest release</a>. It
+          needs Node.js 24 or later.
+        </p>
+        <pre><code>tar xzf communal-*-linux-x64.tar.gz
+cd communal-*-linux-x64
+sudo ./install.sh</code></pre>
+        <p>
+          That installs Communal to <code>/opt/communal</code>, adds
+          <code>/usr/local/bin/communal</code>, and starts the <code>communal</code> systemd service
+          as its own user with its data in <code>/var/lib/communal</code>. Settings such as the UDP
+          port or upload limits go in <code>/etc/communal/communal.env</code>.
+        </p>
+        <p>Run commands as the service user, which owns the data:</p>
+        <pre><code>sudo -u communal communal hub add wss://hub.example.com/v1 --name "Home server"
+sudo -u communal communal share add /srv/media/Movies --name Movies
+sudo -u communal communal acl set Movies/ hub
+sudo -u communal communal status</code></pre>
+        <p>
+          The folders you share must be readable by the <code>communal</code> user. A Docker image
+          is also available; see the repository’s <code>docker/</code> folder.
+        </p>
+
+        <h2 id="desktop">With the desktop app</h2>
+        <p>
+          When no <code>communal daemon</code> is running, the command controls the open desktop app
+          instead, as long as
+          <b>Settings › AI agents › Allow control from the CLI and AI agents</b> is on. Running from
+          a checkout of the source: <code>pnpm --filter @communal/cli dev -- status</code>.
+        </p>
+
+        <h2 id="setup">Setting up</h2>
+        <table>
+          <tr>
+            <th>Command</th>
+            <th>What it does</th>
+          </tr>
+          <tr>
+            <td><code>communal hub add &lt;url&gt; --name &lt;name&gt;</code></td>
+            <td>
+              Join a hub (the first one creates your account). <code>hub list</code>,
+              <code>hub remove</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><code>communal daemon</code></td>
+            <td>Run the engine in the foreground (what the service runs).</td>
+          </tr>
+          <tr>
+            <td><code>communal status</code></td>
+            <td>This device, its hubs and indexing progress.</td>
+          </tr>
+          <tr>
+            <td><code>communal check</code></td>
+            <td>Check the install: native modules, ffmpeg, the trash helper.</td>
+          </tr>
+          <tr>
+            <td><code>communal netcheck</code></td>
+            <td>NAT type per hub, router port mapping, IPv6, carrier-grade NAT.</td>
+          </tr>
+        </table>
+
+        <h2 id="sharing">Sharing and access</h2>
+        <table>
+          <tr>
+            <th>Command</th>
+            <th>What it does</th>
+          </tr>
+          <tr>
+            <td><code>communal share add &lt;path&gt; --name &lt;name&gt;</code></td>
+            <td>
+              Share a folder. <code>share list</code>, <code>share remove &lt;name&gt;</code>,
+              <code>share hubs &lt;name&gt; [hub ids…]</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><code>communal acl set &lt;path&gt; &lt;audience&gt;</code></td>
+            <td>
+              Who can see a folder (ending in <code>/</code>) or file: <code>me</code>,
+              <code>hub</code>, <code>users:&lt;ids&gt;</code> or <code>groups:&lt;ids&gt;</code>.
+              Add <code>--hub</code> when on several hubs.
+            </td>
+          </tr>
+          <tr>
+            <td><code>communal acl clear &lt;path&gt;</code></td>
+            <td>
+              Remove a rule so the path follows its folder again. <code>acl list</code> shows every
+              rule.
+            </td>
+          </tr>
+        </table>
+
+        <h2 id="people">People and groups</h2>
+        <table>
+          <tr>
+            <th>Command</th>
+            <th>What it does</th>
+          </tr>
+          <tr>
+            <td><code>communal people search &lt;name&gt;</code></td>
+            <td>Find people on a hub.</td>
+          </tr>
+          <tr>
+            <td><code>communal people request|accept|remove &lt;user_id&gt;</code></td>
+            <td>Connect, accept a request, or disconnect.</td>
+          </tr>
+          <tr>
+            <td><code>communal people list</code></td>
+            <td>Connections and pending requests.</td>
+          </tr>
+          <tr>
+            <td><code>communal people verify &lt;user_id&gt; [--confirm]</code></td>
+            <td>Show the safety code to compare; <code>--confirm</code> marks them verified.</td>
+          </tr>
+          <tr>
+            <td><code>communal group set &lt;name&gt; [members…]</code></td>
+            <td>
+              Create a group from connections (<code>--id</code> replaces one).
+              <code>group list</code>, <code>group delete</code>.
+            </td>
+          </tr>
+        </table>
+
+        <h2 id="finding">Finding and downloading</h2>
+        <table>
+          <tr>
+            <th>Command</th>
+            <th>What it does</th>
+          </tr>
+          <tr>
+            <td><code>communal search &lt;words…&gt;</code></td>
+            <td>
+              Search every hub. <code>--kind</code>, <code>--min-size</code>, <code>--online</code>,
+              <code>--seen today|week|month</code>, <code>--json</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><code>communal browse &lt;hub&gt; &lt;device&gt; [path]</code></td>
+            <td>List a folder on a computer you can see.</td>
+          </tr>
+          <tr>
+            <td><code>communal peek &lt;hub&gt; &lt;device&gt; &lt;hash&gt;</code></td>
+            <td>Show the start of a text or code file.</td>
+          </tr>
+          <tr>
+            <td><code>communal thumbs &lt;hub&gt; &lt;device&gt; &lt;path&gt;</code></td>
+            <td>Fetch a folder’s thumbnails into the cache.</td>
+          </tr>
+          <tr>
+            <td><code>communal get &lt;hash&gt;</code></td>
+            <td>
+              Download by content hash from every online source. <code>--name</code>,
+              <code>--dest</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><code>communal transfers</code></td>
+            <td>
+              Downloads, with the reason and tips when a source can’t be reached.
+              <code>communal cancel &lt;id&gt;</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><code>communal log</code></td>
+            <td>Who downloaded what from this computer (kept locally only).</td>
+          </tr>
+        </table>
+
+        <h2 id="subscriptions">Subscriptions</h2>
+        <table>
+          <tr>
+            <th>Command</th>
+            <th>What it does</th>
+          </tr>
+          <tr>
+            <td><code>communal subscribe &lt;device&gt; &lt;path&gt; --no-mirror-deletes</code></td>
+            <td>
+              Follow a folder. You must say <code>--mirror-deletes</code> or
+              <code>--no-mirror-deletes</code>. Also <code>--dest</code>, <code>--flat</code>,
+              <code>--hub</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><code>communal subscriptions [list|set|remove]</code></td>
+            <td>List, change (pause, mirror deletes) or remove subscriptions.</td>
+          </tr>
+        </table>
+
+        <h2 id="devices">Devices and recovery</h2>
+        <table>
+          <tr>
+            <th>Command</th>
+            <th>What it does</th>
+          </tr>
+          <tr>
+            <td><code>communal devices [list]</code></td>
+            <td>Your computers.</td>
+          </tr>
+          <tr>
+            <td><code>communal devices add</code></td>
+            <td>Make a link code for a new computer, then approve it.</td>
+          </tr>
+          <tr>
+            <td><code>communal devices requests|approve|deny</code></td>
+            <td>Computers waiting for approval.</td>
+          </tr>
+          <tr>
+            <td><code>communal devices revoke &lt;device&gt;</code></td>
+            <td>Remove a lost computer everywhere (can’t be undone).</td>
+          </tr>
+          <tr>
+            <td><code>communal link &lt;code&gt; --hub &lt;url&gt;</code></td>
+            <td>Add this computer to your account (works with the daemon stopped).</td>
+          </tr>
+          <tr>
+            <td>
+              <code>communal recovery export --out &lt;file&gt;</code> or <code>--words</code>
+            </td>
+            <td>Save the recovery key (on the computer that holds the account’s root key).</td>
+          </tr>
+          <tr>
+            <td>
+              <code>communal restore &lt;file&gt;</code> or <code>--words --hub &lt;url&gt;</code>
+            </td>
+            <td>Restore your account onto a fresh computer.</td>
+          </tr>
+        </table>
+        <p>
+          Passphrases and words are read without echo, or from
+          <code>COMMUNAL_RECOVERY_PASSPHRASE</code> / <code>COMMUNAL_RECOVERY_WORDS</code>.
+        </p>
+
+        <h2 id="env">Settings</h2>
+        <table>
+          <tr>
+            <th>Variable</th>
+            <th>Meaning</th>
+          </tr>
+          <tr>
+            <td><code>COMMUNAL_DATA</code></td>
+            <td>Data folder (default <code>~/.communal</code>).</td>
+          </tr>
+          <tr>
+            <td><code>COMMUNAL_PEER_PORT</code></td>
+            <td>
+              UDP port for peers (0: any). Forward it on your router for the best reachability.
+            </td>
+          </tr>
+          <tr>
+            <td><code>COMMUNAL_ADVERTISE_ADDR</code></td>
+            <td>
+              Extra <code>ip:port</code> others can reach this computer at (a port forward, a public
+              IP).
+            </td>
+          </tr>
+          <tr>
+            <td><code>COMMUNAL_UPNP=false</code></td>
+            <td>Don’t ask the router to open the port.</td>
+          </tr>
+          <tr>
+            <td>
+              <code>COMMUNAL_UPLOAD_KBPS</code>, <code>COMMUNAL_MAX_UPLOADS</code>,
+              <code>COMMUNAL_LAN_ONLY</code>
+            </td>
+            <td>Upload limits (changes made with the API or app take precedence).</td>
+          </tr>
+          <tr>
+            <td><code>COMMUNAL_DOWNLOADS</code></td>
+            <td>Where downloads land.</td>
+          </tr>
+        </table>
+        <p>
+          The command for AI assistants, <code>communal mcp</code>, is covered under
+          <a href="agents.html">AI agents</a>.
+        </p>
+      </article>
+    </main>
+    <footer>
+      <div class="wrap">
+        <span>Communal is free and open source (MIT).</span
+        ><a href="https://github.com/Hypnopompia/Communal">Source on GitHub</a
+        ><a href="https://github.com/Hypnopompia/Communal/releases/latest">Releases</a
+        ><a href="https://github.com/Hypnopompia/Communal/issues">Report a problem</a>
+      </div>
+    </footer>
+    <script src="downloads.js" defer></script>
+  </body>
+</html>

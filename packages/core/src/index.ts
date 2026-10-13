@@ -29,3 +29,4 @@ export * from './transfer/stream.js';
 export * from './subscriptions.js';
 export type { SubscriptionRow, SubFileRow } from './index/store.js';
 export * from './selfcheck.js';
+export * from './api/discover.js';

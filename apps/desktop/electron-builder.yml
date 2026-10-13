@@ -31,10 +31,20 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
-  # Signing uses CSC_LINK / CSC_KEY_PASSWORD (or a keychain identity) when present; without
-  # them the build is unsigned. Notarizing happens in scripts/notarize.mjs.
-  notarize: false
-afterSign: scripts/notarize.mjs
+  # Signing uses the Developer ID identity in the keychain (or CSC_LINK / CSC_KEY_PASSWORD);
+  # scripts/package.mjs turns notarizing on when the App Store Connect API key is set.
+  # One app per CPU, named with the CPU so the updater can tell them apart (ADR 0016).
+  artifactName: Communal-${version}-${arch}.${ext}
+  extendInfo:
+    NSLocalNetworkUsageDescription: Communal connects directly to the computers of people you share with, including ones on your own network, and asks your router to let them reach this one.
+afterPack: scripts/unique-uuid.mjs
+# Updates come from GitHub Releases (electron-updater reads latest*.yml from the latest
+# release). scripts/release.mjs uploads the files; builds themselves never publish.
+publish:
+  provider: github
+  owner: Hypnopompia
+  repo: Communal
+  releaseType: draft
 dmg:
   sign: false
 win:

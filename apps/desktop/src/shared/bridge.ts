@@ -22,6 +22,13 @@ export interface CommunalBridge {
   openPath(path: string): Promise<void>;
   showInFolder(path: string): Promise<void>;
   openExternal(url: string): Promise<void>;
+  /** An agent asked to show a screen (`show_in_app`). */
+  onNavigate(cb: (route: { screen: string; [k: string]: unknown }) => void): () => void;
+  /** Control from the CLI and AI agents (ADR 0017). */
+  agents(): Promise<AgentsState>;
+  setAgents(on: boolean): Promise<AgentsState>;
+  onAgents(cb: (s: AgentsState) => void): () => void;
+  copyText(text: string): Promise<void>;
   /** Auto-update (packaged builds only). */
   onUpdate(cb: (u: UpdateState) => void): () => void;
   installUpdate(): Promise<void>;
@@ -32,3 +39,13 @@ export type UpdateState =
   | { state: 'available'; version: string }
   | { state: 'downloaded'; version: string }
   | { state: 'error'; message: string };
+
+export interface AgentsState {
+  enabled: boolean;
+  /** Where the control socket listens, while it does. */
+  socket: string | null;
+  error?: string;
+  /** `claude mcp add …` for Claude Code, and an mcpServers block for other MCP clients. */
+  claudeCode: string;
+  json: string;
+}

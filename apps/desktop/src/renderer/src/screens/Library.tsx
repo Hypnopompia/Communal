@@ -4,7 +4,7 @@
  */
 import { useState } from 'react';
 import { qs, type LibraryDevice, type Listing } from '../api';
-import { baseName, plural, seenLabel } from '../format';
+import { baseName, plural, seenLabel, computerName } from '../format';
 import { useLibrary, useStatus } from '../hubs';
 import { useNav, type Route } from '../nav';
 import { useApi } from '../query';
@@ -168,7 +168,9 @@ function Browse({
           />
         )}
         <div>
-          <h1>{device ? `${device.user.display_name}’s ${device.device_name}` : 'Computer'}</h1>
+          <h1>
+            {device ? computerName(device.user.display_name, device.device_name) : 'Computer'}
+          </h1>
           <span className={`status${online ? ' on' : ''}`}>
             {device ? seenLabel(online ? 'now' : device.seen) : online ? 'Online' : 'Offline'}
           </span>
@@ -259,16 +261,7 @@ function Browse({
             const thumb = hasThumb(f.hash);
             return (
               <div key={f.name} className="row">
-                <div
-                  style={{
-                    width: 40,
-                    height: 30,
-                    display: 'grid',
-                    placeItems: 'center',
-                    overflow: 'hidden',
-                    borderRadius: 4,
-                  }}
-                >
+                <div className="mini-art" style={{ width: 40, height: 30 }}>
                   <FileArt file={f} hasThumb={thumb} iconSize={30} />
                 </div>
                 <div className="grow">

@@ -103,6 +103,27 @@ const ExportRecovery = z.union([
 
 type Handler = (req: IncomingMessage, url: URL, body: unknown) => Promise<unknown>;
 
+/** A desktop screen to show (the renderer's routes, ADR 0017). */
+export const UiRoute = z.discriminatedUnion('screen', [
+  z.object({
+    screen: z.literal('library'),
+    hub: z.string().max(64).optional(),
+    device: z.string().max(128).optional(),
+    path: z.string().max(4096).optional(),
+  }),
+  z.object({ screen: z.literal('search'), q: z.string().max(256).optional() }),
+  z.object({
+    screen: z.enum(['shares', 'people', 'transfers', 'subscriptions', 'activity']),
+  }),
+  z.object({
+    screen: z.literal('settings'),
+    tab: z
+      .enum(['account', 'devices', 'hubs', 'network', 'bandwidth', 'storage', 'agents'])
+      .optional(),
+  }),
+]);
+export type UiRoute = z.infer<typeof UiRoute>;
+
 /**
  * What `GET /v1/events` (WebSocket) announces: which parts of the state changed, never the data
  * itself. Clients refetch what they show. Sent as `{"topics": [...]}`, at most every 250 ms.
@@ -129,7 +150,11 @@ export class LocalApi {
   private flushTimer?: NodeJS.Timeout;
   private unsubscribe?: () => void;
 
-  constructor(private readonly core: CommunalCore) {
+  constructor(
+    private readonly core: CommunalCore,
+    /** The desktop app passes this so agents can move its window to a screen (`/v1/ui/show`). */
+    private readonly ui?: { show(route: UiRoute): void },
+  ) {
     const route = (method: string, path: string, handler: Handler) =>
       this.routes.push({
         method,
@@ -142,6 +167,11 @@ export class LocalApi {
     };
 
     route('GET', '/v1/status', async () => this.core.status());
+    route('POST', '/v1/ui/show', async (_req, _url, body) => {
+      if (!this.ui) throw new CoreError('not_found', 'no app window: this core runs headless');
+      this.ui.show(UiRoute.parse(body));
+      return { ok: true };
+    });
     // Platform pieces (native modules, ffmpeg, trash helper) load and run here.
     route('GET', '/v1/self-check', async () => {
       const checks = await selfCheck(this.core);
@@ -506,15 +536,17 @@ export class LocalApi {
     this.server.on('upgrade', (req, socket, head) => this.upgrade(req, socket, head, token));
     this.unsubscribe = this.watchCore();
     if ('socketPath' in on) {
-      rmSync(on.socketPath, { force: true });
+      // Windows named pipes (\\.\pipe\…) have no file to clear or chmod; access is per user.
+      const pipe = on.socketPath.startsWith('\\\\');
       // Unix socket paths are short (104 bytes on macOS, 108 on Linux): say so, don't crash.
-      if (Buffer.byteLength(on.socketPath) > 103)
+      if (!pipe && Buffer.byteLength(on.socketPath) > 103)
         throw new Error(
           `the API socket path is too long for this OS (${on.socketPath.length} characters); ` +
             'use a shorter data directory or set COMMUNAL_API_SOCKET',
         );
+      if (!pipe) rmSync(on.socketPath, { force: true });
       await this.listenOn((r) => this.server!.listen(on.socketPath, r));
-      chmodSync(on.socketPath, 0o600);
+      if (!pipe) chmodSync(on.socketPath, 0o600);
       return on.socketPath;
     }
     await this.listenOn((r) => this.server!.listen(on.port, on.host, r));

@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
@@ -17,7 +18,10 @@ import {
   shell,
   Tray,
 } from 'electron';
+import { createRequire } from 'node:module';
+import { dirname } from 'node:path';
 import { CoreHost } from './host.js';
+import { PrefsFile } from './prefs.js';
 import { KeyStore } from './keys.js';
 import { Updater } from './updater.js';
 
@@ -54,8 +58,10 @@ function start() {
   const keys = new KeyStore(app.getPath('userData'), !smokeTest);
   if (!keys.encrypted && !smokeTest)
     console.warn('safeStorage is unavailable: keys are stored unencrypted with mode 0600');
+  const prefs = new PrefsFile(app.getPath('userData'));
   const host = new CoreHost({
     keys,
+    control: prefs.value.control,
     dataDir: join(app.getPath('userData'), 'core'),
     downloadsDir: process.env.COMMUNAL_DOWNLOADS ?? join(app.getPath('downloads'), 'Communal'),
     version: app.getVersion(),
@@ -83,9 +89,22 @@ function start() {
 
   host.on('state', (s) => win?.webContents.send('host:state', s));
   host.on('topics', (t) => win?.webContents.send('core:topics', t));
+  host.on('control', () => win?.webContents.send('agents:state', agentsState(host)));
+  // An agent asked to show a screen: bring the window forward and go there.
+  host.on('ui', (route) => {
+    showWindow();
+    win?.webContents.send('ui:navigate', route);
+  });
   updater.on('state', (s) => win?.webContents.send('update:state', s));
 
   ipcMain.handle('host:state', () => host.status);
+  ipcMain.handle('agents:get', () => agentsState(host));
+  ipcMain.handle('agents:set', (_e, on: boolean) => {
+    prefs.set({ control: on });
+    host.setControl(on);
+    return agentsState(host);
+  });
+  ipcMain.handle('clipboard:write', (_e, text: string) => clipboard.writeText(text));
   ipcMain.handle('app:device-name', () => hostname().split('.')[0] || hostname());
   ipcMain.handle('dialog:folder', async (_e, title: string) => {
     const r = await dialog.showOpenDialog(win!, {
@@ -165,6 +184,33 @@ function smoke(host: CoreHost) {
       app.exit(0);
     })().catch((err: Error) => fail(err.message));
   });
+}
+
+/**
+ * The control socket's state plus how to connect an MCP client to this install: this app's own
+ * binary runs the bundled MCP server as plain Node (ELECTRON_RUN_AS_NODE), so nothing else needs
+ * installing (ADR 0017).
+ */
+function agentsState(host: CoreHost) {
+  const script = join(
+    dirname(createRequire(import.meta.url).resolve('@communal/mcp/package.json')),
+    'dist/main.js',
+  );
+  const env: Record<string, string> = { ELECTRON_RUN_AS_NODE: '1' };
+  if (process.env.COMMUNAL_USER_DATA) env.COMMUNAL_USER_DATA = process.env.COMMUNAL_USER_DATA;
+  const quote = (s: string) => (/[\s"']/.test(s) ? `"${s.replace(/"/g, '\\"')}"` : s);
+  const envFlags = Object.entries(env)
+    .map(([k, v]) => `--env ${k}=${quote(v)}`)
+    .join(' ');
+  return {
+    ...host.control,
+    claudeCode: `claude mcp add --scope user communal ${envFlags} -- ${quote(process.execPath)} ${quote(script)}`,
+    json: JSON.stringify(
+      { mcpServers: { communal: { command: process.execPath, args: [script], env } } },
+      null,
+      2,
+    ),
+  };
 }
 
 function createWindow() {

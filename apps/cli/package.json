@@ -1,6 +1,7 @@
 {
   "name": "@communal/cli",
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "bin": {
@@ -15,6 +16,7 @@
   "dependencies": {
     "@communal/core": "workspace:*",
     "@communal/crypto": "workspace:*",
+    "@communal/mcp": "workspace:*",
     "@communal/protocol": "workspace:*",
     "commander": "^15.0.0",
     "pino": "^10.4.0"

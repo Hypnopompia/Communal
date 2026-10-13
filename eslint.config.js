@@ -10,6 +10,7 @@ export default tseslint.config(
       'apps/desktop/out/**',
       'apps/desktop/release/**',
       'apps/cli/release/**',
+      'apps/hub/release/**',
     ],
   },
   js.configs.recommended,
@@ -21,6 +22,13 @@ export default tseslint.config(
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
       '@typescript-eslint/consistent-type-imports': 'error',
+    },
+  },
+  {
+    // The static site's browser script.
+    files: ['site/**/*.js'],
+    languageOptions: {
+      globals: { document: 'readonly', navigator: 'readonly', fetch: 'readonly' },
     },
   },
   {

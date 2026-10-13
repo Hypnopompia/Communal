@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI agents · Communal</title>
+    <meta
+      name="description"
+      content="Let Claude or another MCP assistant use Communal: search, download, share and more."
+    />
+    <meta property="og:title" content="AI agents · Communal" />
+    <meta
+      property="og:description"
+      content="Let Claude or another MCP assistant use Communal: search, download, share and more."
+    />
+    <meta
+      property="og:image"
+      content="https://hypnopompia.github.io/Communal/screenshots/folder.webp"
+    />
+    <link rel="icon" href="icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;700&display=swap"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="wrap">
+        <a class="brand" href="index.html"
+          ><svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="8" cy="9" r="6" fill="#2f5bea" />
+            <circle cx="16" cy="9" r="6" fill="#18936a" fill-opacity=".85" />
+            <circle cx="12" cy="16" r="6" fill="#e0a43a" fill-opacity=".85" /></svg
+          >Communal</a
+        >
+        <nav aria-label="Site">
+          <a href="index.html">Overview</a><a href="guide.html">App guide</a
+          ><a href="cli.html">CLI</a><a href="agents.html" aria-current="page">AI agents</a
+          ><a href="hub.html">Run a hub</a>
+        </nav>
+      </div>
+    </header>
+    <main class="wrap doc">
+      <nav class="toc" aria-label="On this page">
+        <strong>On this page</strong><a href="#app">With the app</a><a href="#server">On a server</a
+        ><a href="#tools">What an assistant can do</a><a href="#limits">What it can’t do</a
+        ><a href="#examples">Things to ask</a>
+      </nav>
+      <article>
+        <h1>AI agents</h1>
+        <p class="lede">
+          Claude, or any assistant that speaks the Model Context Protocol (MCP), can use Communal
+          for you: find and download files, share folders, change who can see them, manage
+          connections and subscriptions, and show you the result in the app.
+        </p>
+
+        <h2 id="app">With the app</h2>
+        <ol>
+          <li>
+            Open <b>Settings › AI agents</b> and turn on
+            <b>Allow control from the CLI and AI agents</b>. It takes effect straight away; there’s
+            no need to restart.
+          </li>
+          <li>
+            Copy the command shown there and run it once in a terminal to add Communal to Claude
+            Code. For Claude Desktop or another MCP client, copy the settings block into its MCP
+            servers configuration instead.
+          </li>
+        </ol>
+        <figure>
+          <img
+            class="shot"
+            src="screenshots/agents.webp"
+            alt="Settings › AI agents, with the command for Claude Code"
+            loading="lazy"
+            width="1600"
+            height="1000"
+          />
+        </figure>
+        <p>
+          The assistant then talks to the app that’s already open. When it opens a screen for you,
+          the app’s window comes forward and goes there.
+        </p>
+        <p>
+          Only programs running as you on the same computer can connect, and only while the setting
+          is on.
+        </p>
+
+        <h2 id="server">On a server</h2>
+        <p>With the headless client, use its own command:</p>
+        <pre><code>claude mcp add communal -- communal mcp</code></pre>
+        <p>
+          It finds the running <code>communal daemon</code> (or the open app) by itself, and keeps
+          working when either restarts. Set <code>COMMUNAL_DATA</code> if the daemon uses a
+          different data folder.
+        </p>
+
+        <h2 id="tools">What an assistant can do</h2>
+        <table>
+          <tr>
+            <th>Area</th>
+            <th>Tools</th>
+          </tr>
+          <tr>
+            <td>Overview</td>
+            <td><code>get_status</code>, <code>list_hubs</code>, <code>self_check</code></td>
+          </tr>
+          <tr>
+            <td>Finding files</td>
+            <td>
+              <code>search_files</code>, <code>list_library</code>, <code>browse_folder</code>,
+              <code>preview_text</code>
+            </td>
+          </tr>
+          <tr>
+            <td>Downloads</td>
+            <td>
+              <code>download_file</code>, <code>list_transfers</code>, <code>cancel_transfer</code>,
+              <code>get_activity</code>
+            </td>
+          </tr>
+          <tr>
+            <td>Sharing</td>
+            <td>
+              <code>list_shares</code>, <code>share_folder</code>, <code>stop_sharing</code>,
+              <code>set_share_hubs</code>, <code>get_access_rules</code>, <code>set_access</code>
+            </td>
+          </tr>
+          <tr>
+            <td>People</td>
+            <td>
+              <code>list_connections</code>, <code>find_people</code>,
+              <code>request_connection</code>, <code>accept_connection</code>,
+              <code>remove_connection</code>, <code>list_groups</code>, <code>save_group</code>,
+              <code>delete_group</code>
+            </td>
+          </tr>
+          <tr>
+            <td>Subscriptions</td>
+            <td>
+              <code>list_subscriptions</code>, <code>subscribe_folder</code>,
+              <code>update_subscription</code>, <code>unsubscribe</code>
+            </td>
+          </tr>
+          <tr>
+            <td>Hubs and settings</td>
+            <td>
+              <code>join_hub</code>, <code>leave_hub</code>, <code>list_devices</code>,
+              <code>get_network</code>, <code>check_network</code>, <code>get_settings</code>,
+              <code>set_upload_limits</code>
+            </td>
+          </tr>
+          <tr>
+            <td>The app window</td>
+            <td><code>show_in_app</code></td>
+          </tr>
+        </table>
+        <p>
+          Tools that change something are marked as such, so your assistant asks before using them.
+          Opening a folder to other people (<code>set_access</code>, <code>share_folder</code>)
+          deserves a careful look.
+        </p>
+
+        <h2 id="limits">What it can’t do</h2>
+        <p>
+          Some things always need you: an assistant can’t see or save your recovery key, add,
+          approve or remove your computers, or mark a person as verified (that means comparing a
+          code with them yourself).
+        </p>
+
+        <h2 id="examples">Things to ask</h2>
+        <ul>
+          <li>“Find the lake trip photos Maya shared and download them to my Pictures folder.”</li>
+          <li>“Share my Music folder with everyone on the family hub.”</li>
+          <li>“Who downloaded files from me this week?”</li>
+          <li>“Why is my download from Sam stuck?”</li>
+          <li>“Show me Maya’s Photos folder in the app.”</li>
+        </ul>
+      </article>
+    </main>
+    <footer>
+      <div class="wrap">
+        <span>Communal is free and open source (MIT).</span
+        ><a href="https://github.com/Hypnopompia/Communal">Source on GitHub</a
+        ><a href="https://github.com/Hypnopompia/Communal/releases/latest">Releases</a
+        ><a href="https://github.com/Hypnopompia/Communal/issues">Report a problem</a>
+      </div>
+    </footer>
+    <script src="downloads.js" defer></script>
+  </body>
+</html>

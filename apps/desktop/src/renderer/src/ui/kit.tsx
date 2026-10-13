@@ -24,8 +24,13 @@ export function Dialog({
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const prev = document.activeElement as HTMLElement | null;
-    // The first field, else the main action, else anything focusable.
-    ['input, select, textarea', 'button.primary', 'button']
+    // The first text field, else the chosen option, else the main action, else anything.
+    [
+      'input:not([type=radio]):not([type=checkbox]), select, textarea',
+      'input[type=radio]:checked',
+      'button.primary',
+      'button',
+    ]
       .map((sel) => ref.current?.querySelector<HTMLElement>(sel))
       .find(Boolean)
       ?.focus();

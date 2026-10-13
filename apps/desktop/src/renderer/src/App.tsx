@@ -55,11 +55,15 @@ function Centered({ children }: { children: React.ReactNode }) {
 function Ready() {
   const status = useStatus();
   const [route, setRoute] = useState<Route>({ screen: 'library' });
+  // An AI agent asked to show a screen (`show_in_app`, ADR 0017).
+  useEffect(() => window.communal.onNavigate((r) => setRoute(r as Route)), []);
   if (!status.data) return status.error ? <Centered>{status.error.message}</Centered> : null;
   if (status.data.hubs.length === 0 && !status.data.account.user_id)
     return <Welcome deviceId={status.data.device_id} />;
   return (
     <NavCtx.Provider value={setRoute}>
+      {/* macOS draws the window with no title bar: this strip is where it can be dragged. */}
+      <div className="titlebar" aria-hidden="true" />
       <div className="shell">
         <Sidebar route={route} go={setRoute} />
         <main className="main">
@@ -75,7 +79,8 @@ function Screen({ route }: { route: Route }) {
     case 'library':
       return <Library key={`${route.hub}/${route.device}`} route={route} />;
     case 'search':
-      return <Search initial={route.q ?? ''} />;
+      // A new query (from an agent's show_in_app) starts a fresh search.
+      return <Search key={route.q ?? ''} initial={route.q ?? ''} />;
     case 'shares':
       return <Shares />;
     case 'people':

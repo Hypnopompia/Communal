@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { effective } from './access';
-import { hubUrl, seenLabel, size } from './format';
+import { computerName, hubUrl, seenLabel, size } from './format';
 
 describe('hub addresses as people type them', () => {
   it('becomes the hub WebSocket URL', () => {
@@ -40,5 +40,13 @@ describe('display text', () => {
     expect(size(250_000_000)).toBe('250 MB');
     expect(seenLabel('now')).toBe('Online');
     expect(seenLabel('older')).toBe('Offline for over a month');
+  });
+});
+
+describe('computer names', () => {
+  it('adds the owner only when the device name lacks it', () => {
+    expect(computerName('Maya', 'iMac')).toBe('Maya’s iMac');
+    expect(computerName('Maya', 'Maya’s iMac')).toBe('Maya’s iMac');
+    expect(computerName('Maya', 'maya-laptop')).toBe('maya-laptop');
   });
 });

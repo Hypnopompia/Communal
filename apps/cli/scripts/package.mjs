@@ -14,7 +14,9 @@ const root = join(cli, '../..');
 const { version } = JSON.parse(readFileSync(join(cli, 'package.json'), 'utf8'));
 const name = `communal-${version}-${process.platform}-${process.arch}`;
 const out = join(cli, 'release', name);
-const run = (cmd, a, cwd = root) => execFileSync(cmd, a, { cwd, stdio: 'inherit' });
+// COPYFILE_DISABLE: macOS tar would otherwise add extended attributes Linux tar warns about.
+const run = (cmd, a, cwd = root) =>
+  execFileSync(cmd, a, { cwd, stdio: 'inherit', env: { ...process.env, COPYFILE_DISABLE: '1' } });
 
 run('pnpm', ['--filter', '@communal/cli...', 'run', 'build']);
 rmSync(out, { recursive: true, force: true });

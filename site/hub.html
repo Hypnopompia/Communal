@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Run a hub · Communal</title>
+    <meta
+      name="description"
+      content="Host a Communal hub for your group on Linux or Docker: install, TLS, ports and admin."
+    />
+    <meta property="og:title" content="Run a hub · Communal" />
+    <meta
+      property="og:description"
+      content="Host a Communal hub for your group on Linux or Docker: install, TLS, ports and admin."
+    />
+    <meta
+      property="og:image"
+      content="https://hypnopompia.github.io/Communal/screenshots/folder.webp"
+    />
+    <link rel="icon" href="icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;700&display=swap"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="wrap">
+        <a class="brand" href="index.html"
+          ><svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="8" cy="9" r="6" fill="#2f5bea" />
+            <circle cx="16" cy="9" r="6" fill="#18936a" fill-opacity=".85" />
+            <circle cx="12" cy="16" r="6" fill="#e0a43a" fill-opacity=".85" /></svg
+          >Communal</a
+        >
+        <nav aria-label="Site">
+          <a href="index.html">Overview</a><a href="guide.html">App guide</a
+          ><a href="cli.html">CLI</a><a href="agents.html">AI agents</a
+          ><a href="hub.html" aria-current="page">Run a hub</a>
+        </nav>
+      </div>
+    </header>
+    <main class="wrap doc">
+      <nav class="toc" aria-label="On this page">
+        <strong>On this page</strong><a href="#needs">What it needs</a><a href="#install">Install</a
+        ><a href="#tls">Certificate</a><a href="#admin">Who can join</a><a href="#docker">Docker</a
+        ><a href="#privacy">What a hub knows</a>
+      </nav>
+      <article>
+        <h1>Run a hub</h1>
+        <p class="lede">
+          A hub is the meeting point for a group: it knows who’s in it, what they share (names,
+          sizes and who may see them, never the files), and introduces computers to each other. A
+          small Linux machine or container is plenty.
+        </p>
+
+        <h2 id="needs">What it needs</h2>
+        <ul>
+          <li>A Linux machine with Node.js 24 or later (or Docker).</li>
+          <li>
+            A domain name pointing at it, and a TLS certificate for that name (for example from
+            Let’s Encrypt).
+          </li>
+          <li>
+            These ports forwarded from your router: <b>TCP 443</b> for the hub,
+            <b>UDP 3478 and 3479</b> so the hub can tell each computer what kind of network it’s on,
+            and <b>TCP 80</b> if you get certificates with certbot’s HTTP check.
+          </li>
+        </ul>
+        <p>
+          The hub must see each computer’s real address, so it handles TLS itself: don’t put it
+          behind a reverse proxy.
+        </p>
+
+        <h2 id="install">Install</h2>
+        <p>
+          Download <code>communal-hub-&lt;version&gt;.tar.gz</code> from the
+          <a href="https://github.com/Hypnopompia/Communal/releases/latest">latest release</a>,
+          then:
+        </p>
+        <pre><code>tar xzf communal-hub-*.tar.gz
+cd communal-hub-*
+sudo ./install.sh</code></pre>
+        <p>
+          That installs the hub to <code>/opt/communal-hub</code> with its data in
+          <code>/var/lib/communal-hub</code>, and sets up the <code>communal-hub</code> systemd
+          service. Its settings are in <code>/etc/communal-hub/communal-hub.env</code>: the port
+          (443), the NAT probe ports, the certificate files and the join mode.
+        </p>
+
+        <h2 id="tls">Certificate</h2>
+        <p>
+          With certbot, a renewal hook copies each new certificate where the hub reads it and
+          restarts the hub:
+        </p>
+        <pre><code>sudo apt install certbot
+sudo mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+sudo tee /etc/letsencrypt/renewal-hooks/deploy/communal-hub.sh &gt;/dev/null &lt;&lt;'EOF'
+#!/bin/sh
+set -e
+src=/etc/letsencrypt/live/hub.example.com
+install -o communal-hub -g communal-hub -m 0644 "$src/fullchain.pem" /etc/communal-hub/tls/fullchain.pem
+install -o communal-hub -g communal-hub -m 0600 "$src/privkey.pem" /etc/communal-hub/tls/privkey.pem
+systemctl restart communal-hub
+EOF
+sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/communal-hub.sh
+sudo certbot certonly --standalone -d hub.example.com \
+  --deploy-hook /etc/letsencrypt/renewal-hooks/deploy/communal-hub.sh</code></pre>
+        <p>
+          People then join with the address <code>hub.example.com</code>; the app fills in the rest
+          (<code>wss://hub.example.com/v1</code>).
+        </p>
+
+        <h2 id="admin">Who can join</h2>
+        <p>
+          A new hub starts in <b>approval</b> mode: each new account waits until you let it in.
+          Admin commands work on the database while the hub runs:
+        </p>
+        <pre><code>sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub communal-hub users
+sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub communal-hub approve &lt;user_id&gt;
+sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub communal-hub ban &lt;user_id&gt; --reason "…"
+sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub communal-hub set join_mode open</code></pre>
+        <p>
+          With <code>join_mode open</code> anyone who knows the address can join. Since accounts
+          need no email, a banned person can come back with a new key on an open hub; use approval
+          mode if that matters.
+        </p>
+
+        <h2 id="docker">Docker</h2>
+        <p>
+          The repository’s <code>docker/hub.Dockerfile</code> builds the same hub. Mount a volume at
+          <code>/data</code>, publish 8443/tcp and 3478–3479/udp, and pass the certificate with
+          <code>COMMUNAL_TLS_CERT</code> and <code>COMMUNAL_TLS_KEY</code>.
+        </p>
+
+        <h2 id="privacy">What a hub knows</h2>
+        <p>
+          The hub stores accounts (display name and public key), connections, groups, access rules,
+          and the names, sizes and types of shared files. It never stores files, thumbnails or
+          download history, and it never relays transfers. Its admin can see the list of who is on
+          the hub and who is connected to whom.
+        </p>
+      </article>
+    </main>
+    <footer>
+      <div class="wrap">
+        <span>Communal is free and open source (MIT).</span
+        ><a href="https://github.com/Hypnopompia/Communal">Source on GitHub</a
+        ><a href="https://github.com/Hypnopompia/Communal/releases/latest">Releases</a
+        ><a href="https://github.com/Hypnopompia/Communal/issues">Report a problem</a>
+      </div>
+    </footer>
+    <script src="downloads.js" defer></script>
+  </body>
+</html>

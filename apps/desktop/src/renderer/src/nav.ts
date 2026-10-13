@@ -11,7 +11,8 @@ export type Route =
   | { screen: 'activity' }
   | { screen: 'settings'; tab?: SettingsTab };
 
-export type SettingsTab = 'account' | 'devices' | 'hubs' | 'network' | 'bandwidth' | 'storage';
+export type SettingsTab =
+  'account' | 'devices' | 'hubs' | 'network' | 'bandwidth' | 'storage' | 'agents';
 
 export const NavCtx = createContext<(r: Route) => void>(() => undefined);
 export const useNav = () => useContext(NavCtx);

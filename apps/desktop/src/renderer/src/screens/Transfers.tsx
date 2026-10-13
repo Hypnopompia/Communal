@@ -3,7 +3,7 @@
  * the hub's diagnosis, tips and who can fix it (ADR 0011).
  */
 import { api, type Transfer } from '../api';
-import { ago, rate, size } from '../format';
+import { ago, rate, size, computerName } from '../format';
 import { useNames } from '../hubs';
 import { useApi } from '../query';
 import { FileIcon, iconForName } from '../ui/icons';
@@ -100,7 +100,7 @@ function TransferRow({ t, onCancel }: { t: Transfer; onCancel?: () => void }) {
               const d = names.device(s.device_id);
               return (
                 <span key={s.device_id}>
-                  {d ? `${d.user}’s ${d.name}` : 'A computer'}: {rate(s.rate)}
+                  {d ? computerName(d.user, d.name) : 'A computer'}: {rate(s.rate)}
                 </span>
               );
             })}

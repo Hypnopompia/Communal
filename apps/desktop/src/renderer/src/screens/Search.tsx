@@ -206,18 +206,7 @@ function HitRow({ hit }: { hit: Hit }) {
   const online = new Set(hit.sources.filter((s) => s.online).map((s) => s.device_id)).size;
   return (
     <div className="row">
-      <div
-        style={{
-          width: 56,
-          height: 42,
-          display: 'grid',
-          placeItems: 'center',
-          overflow: 'hidden',
-          borderRadius: 6,
-          background: 'var(--surface-2)',
-          flexShrink: 0,
-        }}
-      >
+      <div className="mini-art" style={{ width: 56, height: 42 }}>
         <FileArt file={file} hasThumb={hasThumb(hit.hash)} iconSize={34} />
       </div>
       <div className="grow">

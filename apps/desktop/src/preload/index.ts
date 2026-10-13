@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
-import type { CommunalBridge, HostState, UpdateState } from '../shared/bridge.js';
+import type { AgentsState, CommunalBridge, HostState, UpdateState } from '../shared/bridge.js';
 
 function subscribe<T>(channel: string, cb: (v: T) => void): () => void {
   const f = (_e: IpcRendererEvent, v: T) => cb(v);
@@ -28,6 +28,11 @@ const bridge: CommunalBridge = {
   openPath: (p) => ipcRenderer.invoke('shell:open', p),
   showInFolder: (p) => ipcRenderer.invoke('shell:show', p),
   openExternal: (url) => ipcRenderer.invoke('shell:external', url),
+  onNavigate: (cb) => subscribe('ui:navigate', cb),
+  agents: () => ipcRenderer.invoke('agents:get'),
+  setAgents: (on) => ipcRenderer.invoke('agents:set', on),
+  onAgents: (cb) => subscribe<AgentsState>('agents:state', cb),
+  copyText: (text) => ipcRenderer.invoke('clipboard:write', text),
   onUpdate: (cb) => subscribe<UpdateState>('update:state', cb),
   installUpdate: () => ipcRenderer.invoke('update:install'),
 };

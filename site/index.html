@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Communal: share folders with the people you know</title>
+    <meta
+      name="description"
+      content="Private, Napster-style file sharing for friends and family. Files go straight from computer to computer; you choose who sees each folder."
+    />
+    <meta property="og:title" content="Communal: share folders with the people you know" />
+    <meta
+      property="og:description"
+      content="Private, Napster-style file sharing for friends and family. Files go straight from computer to computer; you choose who sees each folder."
+    />
+    <meta
+      property="og:image"
+      content="https://hypnopompia.github.io/Communal/screenshots/folder.webp"
+    />
+    <link rel="icon" href="icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;700&display=swap"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="wrap">
+        <a class="brand" href="index.html"
+          ><svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="8" cy="9" r="6" fill="#2f5bea" />
+            <circle cx="16" cy="9" r="6" fill="#18936a" fill-opacity=".85" />
+            <circle cx="12" cy="16" r="6" fill="#e0a43a" fill-opacity=".85" /></svg
+          >Communal</a
+        >
+        <nav aria-label="Site">
+          <a href="index.html" aria-current="page">Overview</a><a href="guide.html">App guide</a
+          ><a href="cli.html">CLI</a><a href="agents.html">AI agents</a
+          ><a href="hub.html">Run a hub</a>
+        </nav>
+      </div>
+    </header>
+    <main class="wrap">
+      <div class="hero">
+        <div class="people" aria-hidden="true">
+          <span style="background: linear-gradient(135deg, #d9a03b, #a6862b)">M</span
+          ><span style="background: linear-gradient(135deg, #c2397e, #8f2b6e)">A</span
+          ><span style="background: linear-gradient(135deg, #2f9a72, #24755a)">S</span
+          ><span style="background: linear-gradient(135deg, #4f6ee0, #3a52b0)">J</span>
+        </div>
+        <h1>Share folders with the people you know.</h1>
+        <p class="lede">
+          Communal lets friends, family and small groups share files straight from one computer to
+          another. You choose who sees each folder. The files never sit on anyone else’s server.
+        </p>
+        <div class="downloads">
+          <a
+            class="btn"
+            data-asset="mac-arm64"
+            href="https://github.com/Hypnopompia/Communal/releases/latest"
+            >Mac<small>Apple Silicon (M1 and later)</small></a
+          >
+          <a
+            class="btn"
+            data-asset="mac-x64"
+            href="https://github.com/Hypnopompia/Communal/releases/latest"
+            >Mac<small>Intel</small></a
+          >
+          <a
+            class="btn"
+            data-asset="windows"
+            href="https://github.com/Hypnopompia/Communal/releases/latest"
+            >Windows<small>10 and 11</small></a
+          >
+          <a
+            class="btn"
+            data-asset="appimage"
+            href="https://github.com/Hypnopompia/Communal/releases/latest"
+            >Linux<small>AppImage</small></a
+          >
+          <a
+            class="btn"
+            data-asset="deb"
+            href="https://github.com/Hypnopompia/Communal/releases/latest"
+            >Linux<small>Debian, Ubuntu (.deb)</small></a
+          >
+        </div>
+        <p class="meta">
+          <span data-version>Free and open source</span>. Updates install themselves.
+        </p>
+      </div>
+      <div class="shot hero-shot">
+        <img
+          src="screenshots/folder.webp"
+          alt="Communal showing a folder of lake trip photos on Maya’s iMac, with thumbnails"
+          width="1600"
+          height="1000"
+        />
+      </div>
+
+      <section>
+        <h2>How it works</h2>
+        <p class="lede">
+          A small server called a hub keeps the list of who is on it and what they share. When you
+          download, the file comes directly from the computer that has it.
+        </p>
+        <div class="how">
+          <div>
+            <h3>Join a hub</h3>
+            <p>
+              Someone in your group runs a hub and gives you its address. There’s no email and no
+              password: your computer makes its own key the first time.
+            </p>
+          </div>
+          <div>
+            <h3>Share a folder</h3>
+            <p>
+              Pick a folder. It stays private until you choose who can see it: only you, particular
+              people or groups, or everyone on the hub.
+            </p>
+          </div>
+          <div>
+            <h3>Find and download</h3>
+            <p>
+              Browse people’s shared folders or search everything at once. Files come straight from
+              their computers, from several at once when more than one has them.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="feature">
+          <div class="text">
+            <h3>Look before you download</h3>
+            <p>
+              Thumbnails, photo details and video length come from the owner’s computer. Open a
+              picture full size, read the start of a text file, or play a video or song without
+              saving it first.
+            </p>
+            <p><a href="guide.html#library">Browsing the library</a></p>
+          </div>
+          <figure>
+            <img
+              class="shot"
+              src="screenshots/preview.webp"
+              alt="A photo opened full size from another person’s computer"
+              loading="lazy"
+              width="1600"
+              height="1000"
+            />
+          </figure>
+        </div>
+        <div class="feature">
+          <div class="text">
+            <h3>You decide who sees what</h3>
+            <p>
+              Every shared folder starts out visible only to you. Open it to particular people, to a
+              group, or to everyone on a hub. Nobody can tell who else has access.
+            </p>
+            <p><a href="guide.html#sharing">Sharing and access</a></p>
+          </div>
+          <figure>
+            <img
+              class="shot"
+              src="screenshots/access.webp"
+              alt="Choosing who can see the Music folder: only me, specific people and groups, or everyone on the hub"
+              loading="lazy"
+              width="1600"
+              height="1000"
+            />
+          </figure>
+        </div>
+        <div class="feature">
+          <div class="text">
+            <h3>Search everything shared with you</h3>
+            <p>
+              One search covers every hub you’re on. Each file shows up once however many people
+              have it, with whether they’re online now.
+            </p>
+            <p><a href="guide.html#search">Searching</a></p>
+          </div>
+          <figure>
+            <img
+              class="shot"
+              src="screenshots/search.webp"
+              alt="Search results for pictures, each with a thumbnail and who it comes from"
+              loading="lazy"
+              width="1600"
+              height="1000"
+            />
+          </figure>
+        </div>
+        <div class="feature">
+          <div class="text">
+            <h3>Follow a folder</h3>
+            <p>
+              Subscribe to a friend’s folder and new files arrive on their own, even after you’ve
+              been away. You decide whether their deletions remove your copies, and the answer is no
+              unless you say yes.
+            </p>
+            <p><a href="guide.html#subscriptions">Subscriptions</a></p>
+          </div>
+          <figure>
+            <img
+              class="shot"
+              src="screenshots/transfers.webp"
+              alt="Finished downloads"
+              loading="lazy"
+              width="1600"
+              height="1000"
+            />
+          </figure>
+        </div>
+      </section>
+
+      <section>
+        <h2>Private by design</h2>
+        <div class="how">
+          <div>
+            <h3>No relay</h3>
+            <p>
+              Files and thumbnails travel only between the two computers, encrypted. The hub never
+              stores them and never sees what you download.
+            </p>
+          </div>
+          <div>
+            <h3>Your history stays yours</h3>
+            <p>
+              The record of who downloaded what from you is kept on your computer only. Each person
+              checks who they’re talking to with keys, not with the hub’s word for it.
+            </p>
+          </div>
+          <div>
+            <h3>Your own hub</h3>
+            <p>
+              Hubs are small and easy to run on a home server. Run one for your family, or join a
+              friend’s. One app can be on several hubs at once.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>More</h2>
+        <div class="cards">
+          <div class="card">
+            <h3>App guide</h3>
+            <p>
+              Every screen, from first launch to recovery keys.
+              <a href="guide.html">Read the guide</a>
+            </p>
+          </div>
+          <div class="card">
+            <h3>Command line</h3>
+            <p>
+              Run Communal on a server or NAS with no screen. <a href="cli.html">CLI reference</a>
+            </p>
+          </div>
+          <div class="card">
+            <h3>AI agents</h3>
+            <p>
+              Let Claude or another assistant search, download and share for you.
+              <a href="agents.html">Set it up</a>
+            </p>
+          </div>
+          <div class="card">
+            <h3>Run a hub</h3>
+            <p>Host a hub for your group on Linux or Docker. <a href="hub.html">Hub guide</a></p>
+          </div>
+        </div>
+      </section>
+    </main>
+    <footer>
+      <div class="wrap">
+        <span>Communal is free and open source (MIT).</span
+        ><a href="https://github.com/Hypnopompia/Communal">Source on GitHub</a
+        ><a href="https://github.com/Hypnopompia/Communal/releases/latest">Releases</a
+        ><a href="https://github.com/Hypnopompia/Communal/issues">Report a problem</a>
+      </div>
+    </footer>
+    <script src="downloads.js" defer></script>
+  </body>
+</html>

@@ -3,6 +3,7 @@
  * address), network check, bandwidth and storage.
  */
 import { useEffect, useState } from 'react';
+import type { AgentsState } from '../../../shared/bridge';
 import { api, type Device, type LinkRequest, type NetworkSummary, type UploadLimits } from '../api';
 import { ago, hubName, size } from '../format';
 import { hubUrl } from '../format';
@@ -19,6 +20,7 @@ const TABS: { tab: SettingsTab; label: string }[] = [
   { tab: 'network', label: 'Network' },
   { tab: 'bandwidth', label: 'Sharing speed' },
   { tab: 'storage', label: 'Storage' },
+  { tab: 'agents', label: 'AI agents' },
 ];
 
 export function Settings({ tab }: { tab: SettingsTab }) {
@@ -55,6 +57,7 @@ export function Settings({ tab }: { tab: SettingsTab }) {
       {tab === 'network' && <Network />}
       {tab === 'bandwidth' && <Bandwidth />}
       {tab === 'storage' && <Storage />}
+      {tab === 'agents' && <Agents />}
     </div>
   );
 }
@@ -779,5 +782,84 @@ function Storage() {
         </button>
       </div>
     </div>
+  );
+}
+
+// ── AI agents (ADR 0017) ──
+
+function Agents() {
+  const [state, setState] = useState<AgentsState | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+  useEffect(() => {
+    void window.communal.agents().then(setState);
+    return window.communal.onAgents(setState);
+  }, []);
+  if (!state) return null;
+  const copy = (what: string, text: string) =>
+    void window.communal.copyText(text).then(() => {
+      setCopied(what);
+      setTimeout(() => setCopied(null), 2000);
+    });
+  return (
+    <>
+      <div className="panel panel-pad section" style={{ maxWidth: 720 }}>
+        <h2>Control from the CLI and AI agents</h2>
+        <p className="muted">
+          Lets the <span className="mono">communal</span> command and AI assistants such as Claude
+          use Communal on this computer while the app is open: search, download, share folders,
+          change who can see them, and more. Only programs running as you on this computer can
+          connect.
+        </p>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={state.enabled}
+            onChange={(e) => void window.communal.setAgents(e.target.checked).then(setState)}
+          />
+          <span>
+            <b>Allow control from the CLI and AI agents</b>
+            <br />
+            <span className="muted small">
+              {state.enabled
+                ? state.socket
+                  ? 'On. Agents can connect now.'
+                  : state.error
+                    ? `Couldn’t start: ${state.error}`
+                    : 'Starting…'
+                : 'Off. Nothing outside this window can control Communal.'}
+            </span>
+          </span>
+        </label>
+        <div className="notice">
+          <span>
+            Agents can’t see or save your recovery key, add or remove your computers, or mark people
+            as verified. Your assistant asks you before it changes anything.
+          </span>
+        </div>
+      </div>
+      {state.enabled && (
+        <div className="panel panel-pad section" style={{ maxWidth: 720 }}>
+          <h2>Connect Claude</h2>
+          <p className="muted">Run this once in a terminal to add Communal to Claude Code:</p>
+          <pre className="peek" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+            {state.claudeCode}
+          </pre>
+          <div>
+            <button className="btn" onClick={() => copy('cc', state.claudeCode)}>
+              {copied === 'cc' ? 'Copied' : 'Copy command'}
+            </button>
+          </div>
+          <p className="muted">
+            For Claude Desktop or another MCP client, add this to its MCP servers settings:
+          </p>
+          <pre className="peek">{state.json}</pre>
+          <div>
+            <button className="btn" onClick={() => copy('json', state.json)}>
+              {copied === 'json' ? 'Copied' : 'Copy settings'}
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
