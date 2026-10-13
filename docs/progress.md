@@ -30,7 +30,7 @@ These need a person or hardware that CI doesn't have.
 
 ### Decided, ready to build
 
-- **Agents, first step** (ADR 0021, `docs/plans/agents.md`): thumbnails as MCP image content, then an access dry run. The dry run is shown to the person, never taken as confirmation.
+- **Agents, first step** (ADR 0021, `docs/plans/agents.md`): thumbnails are done (`view_thumbnails`). Still to do: the access dry run, which is shown to the person and never taken as confirmation.
 - **Re-share warning** (ADR 0021): say who will see the files before a download lands in a shared folder.
 - **People on several hubs** (ADR 0021): one person per `user_id` in People, named as on the first hub you joined. Actions stay per hub.
 - **First-device guidance** (ADR 0021): the guide and recovery-key screens say to keep the first computer and the recovery key safe, and to start a new account if either is stolen.
@@ -70,6 +70,11 @@ These are fine for now. Fix them if they start to bite.
 
 - **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
 - **From HANDOFF §15:** hubs caching thumbnails of hub-wide files, and mobile clients.
+
+## Agents: thumbnails (2026-10-13)
+
+- **`view_thumbnails`** (MCP, ADR 0021): up to 12 small (320 px) or 2 large (1600 px) thumbnails at once, returned as MCP image content, each labelled with its hash. Files without one are listed by hash. It fetches through the existing preview path, so the owner's computer checks access for every hash, and a refusal looks like "no thumbnail". `LocalApiClient.bytes()` reads binary responses.
+- **Test:** `m12-agent-tools` checks a public image (a real WebP), a private one (left out), the owner seeing its own private file, and the size limit.
 
 ## Hub admin (2026-10-13)
 

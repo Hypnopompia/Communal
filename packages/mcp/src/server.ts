@@ -51,6 +51,15 @@ const Audience = z
       'connected people (user ids) and my groups (group ids)',
   );
 
+/** A tool result that isn't JSON text: images, say. */
+type Content = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
+class Raw {
+  constructor(readonly content: Content[]) {}
+}
+
+const Hash = z.string().regex(/^[0-9a-f]{64}$/);
+const THUMB_LIMIT = { small: 12, large: 2 } as const;
+
 const READ = { readOnlyHint: true, openWorldHint: false } as const;
 const CHANGE = { readOnlyHint: false, destructiveHint: false, openWorldHint: false } as const;
 const REMOVE = { readOnlyHint: false, destructiveHint: true, openWorldHint: false } as const;
@@ -87,6 +96,7 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
       (async (args: any) => {
         try {
           const out = await run(await api(), args as z.infer<z.ZodObject<S>>);
+          if (out instanceof Raw) return { content: out.content };
           return { content: [{ type: 'text' as const, text: JSON.stringify(out, null, 2) }] };
         } catch (err) {
           const e = err as Error & { code?: string };
@@ -173,6 +183,49 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
     { hub: Hub, device: z.string(), hash: z.string().regex(/^[0-9a-f]{64}$/) },
     READ,
     (c, a) => c.get(`/v1/peek${q(a)}`),
+  );
+
+  tool(
+    'view_thumbnails',
+    "Shows thumbnails of files on someone's computer (or this one) as images, so you can see what photos, videos, PDFs and other files with a thumbnail look like without downloading them. Use hashes of entries whose thumb is true (from browse_folder or search_files). small (320 px) takes up to 12 at once, large (1600 px) up to 2. The owner's computer checks access for every file, and location data is stripped.",
+    {
+      hub: Hub,
+      device: z.string().describe('Device id that has the files (a source from search or browse)'),
+      hashes: z.array(Hash).min(1).max(THUMB_LIMIT.small),
+      size: z.enum(['small', 'large']).default('small'),
+    },
+    READ,
+    async (c, a) => {
+      const size = a.size === 'large' ? 1600 : 320;
+      const hashes = [...new Set(a.hashes)];
+      if (hashes.length > THUMB_LIMIT[a.size])
+        throw new Error(`${a.size} thumbnails: at most ${THUMB_LIMIT[a.size]} at once`);
+      const { thumbs } = await c.post<{ thumbs: Record<string, boolean> }>('/v1/thumbs', {
+        hub: a.hub,
+        device: a.device,
+        hashes,
+        size,
+      });
+      const content: Content[] = [];
+      const missing: string[] = [];
+      for (const h of hashes) {
+        const img = thumbs[h]
+          ? await c.bytes(`/v1/thumbs/${h}?size=${size}`).catch(() => null)
+          : null;
+        if (!img) {
+          missing.push(h);
+          continue;
+        }
+        content.push({ type: 'text', text: `Thumbnail of ${h}:` });
+        content.push({ type: 'image', data: img.data.toString('base64'), mimeType: img.type });
+      }
+      if (missing.length)
+        content.push({
+          type: 'text',
+          text: `No thumbnail (none made, not allowed, or the computer is offline): ${missing.join(', ')}`,
+        });
+      return new Raw(content);
+    },
   );
 
   // ── downloads ──

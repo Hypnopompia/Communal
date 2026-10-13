@@ -18,8 +18,12 @@ export class LocalApiClient {
   delete<T = unknown>(path: string): Promise<T> {
     return this.call('DELETE', path);
   }
+  /** A binary GET (a thumbnail, say): the bytes and their content type. */
+  bytes(path: string): Promise<{ type: string; data: Buffer }> {
+    return this.call('GET', path, undefined, true);
+  }
 
-  private call<T>(method: string, path: string, body?: unknown): Promise<T> {
+  private call<T>(method: string, path: string, body?: unknown, raw = false): Promise<T> {
     const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
     const headers: Record<string, string> = {};
     if (payload) headers['content-type'] = 'application/json';
@@ -36,7 +40,12 @@ export class LocalApiClient {
         const chunks: Buffer[] = [];
         res.on('data', (c: Buffer) => chunks.push(c));
         res.on('end', () => {
-          const text = Buffer.concat(chunks).toString();
+          const all = Buffer.concat(chunks);
+          if (raw && (res.statusCode ?? 500) < 400) {
+            const type = String(res.headers['content-type'] ?? 'application/octet-stream');
+            return resolve({ type, data: all } as T);
+          }
+          const text = all.toString();
           let json: unknown;
           try {
             json = JSON.parse(text);
