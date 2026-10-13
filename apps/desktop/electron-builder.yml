@@ -26,6 +26,8 @@ files:
   - '!node_modules/pdfjs-dist/{build,web,image_decoders,types}/**'
 mac:
   category: public.app-category.utilities
+  # Made by scripts/icons.mjs with iconutil: electron-builder's own .icns garbles the small sizes.
+  icon: build/icon.icns
   target: [dmg, zip]
   hardenedRuntime: true
   gatekeeperAssess: false

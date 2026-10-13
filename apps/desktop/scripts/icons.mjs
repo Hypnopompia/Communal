@@ -1,7 +1,10 @@
 // Renders the app and tray icons from the mark (three overlapping discs). Run after changing
-// the mark: `node scripts/icons.mjs`. Outputs are committed.
+// the mark: `node scripts/icons.mjs` (on macOS, so the .icns is remade too). Outputs are
+// committed.
+import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -38,4 +41,25 @@ await sharp(Buffer.from(tray(16)))
 await sharp(Buffer.from(tray(32)))
   .png()
   .toFile(join(here, '../resources/trayTemplate@2x.png'));
+
+// The Mac .icns, made with Apple's iconutil from each size rendered on its own. The one
+// electron-builder makes from icon.png has garbled 16, 32 and 48 px icons (Finder lists, the
+// Get Info header).
+if (process.platform === 'darwin') {
+  const tmp = mkdtempSync(join(tmpdir(), 'communal-icon-'));
+  const set = join(tmp, 'icon.iconset');
+  mkdirSync(set);
+  for (const s of [16, 32, 128, 256, 512]) {
+    for (const [px, suffix] of [
+      [s, ''],
+      [s * 2, '@2x'],
+    ])
+      await sharp(Buffer.from(app), { density: (72 * px) / 1024 })
+        .resize(px, px)
+        .png()
+        .toFile(join(set, `icon_${s}x${s}${suffix}.png`));
+  }
+  execFileSync('iconutil', ['-c', 'icns', set, '-o', join(here, '../build/icon.icns')]);
+  rmSync(tmp, { recursive: true, force: true });
+} else console.warn('build/icon.icns not updated: that needs macOS (iconutil).');
 console.log('icons written');
