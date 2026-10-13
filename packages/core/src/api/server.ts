@@ -344,6 +344,11 @@ export class LocalApi {
       const hub = url.searchParams.get('hub') ?? undefined;
       return { rules: this.core.rules(hub) };
     });
+    // What a rule change would do, without making it (ADR 0021).
+    route('POST', '/v1/acl/preview', async (_req, _url, body) => {
+      const b = SetRule.parse(body);
+      return this.core.previewRule(b.hub, b.path, b.audience);
+    });
     route('PUT', '/v1/acl', async (_req, _url, body) => {
       const b = SetRule.parse(body);
       await this.core.setRule(b.hub, b.path, b.audience);

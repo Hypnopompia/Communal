@@ -26,11 +26,11 @@ These need a person or hardware that CI doesn't have.
 
 - **Windows code signing** (no certificate yet, ADR 0016).
 - **An in-app "What's new"** from `apps/desktop/changelog.json` (ADR 0016).
+- **Show the access preview in the app.** `POST /v1/acl/preview` already says which files would be seen by whom. The audience picker in My shares could show the same thing before saving.
 - **A message to send to the person with the easier fix.** Transfers shows who can fix a failed connection, but there's no ready-made note to send them (M5, HANDOFF §8).
 
 ### Decided, ready to build
 
-- **Agents, first step** (ADR 0021, `docs/plans/agents.md`): thumbnails are done (`view_thumbnails`). Still to do: the access dry run, which is shown to the person and never taken as confirmation.
 - **Re-share warning** (ADR 0021): say who will see the files before a download lands in a shared folder.
 - **People on several hubs** (ADR 0021): one person per `user_id` in People, named as on the first hub you joined. Actions stay per hub.
 - **First-device guidance** (ADR 0021): the guide and recovery-key screens say to keep the first computer and the recovery key safe, and to start a new account if either is stolen.
@@ -71,10 +71,12 @@ These are fine for now. Fix them if they start to bite.
 - **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
 - **From HANDOFF §15:** hubs caching thumbnails of hub-wide files, and mobile clients.
 
-## Agents: thumbnails (2026-10-13)
+## Agents: thumbnails and the access preview (2026-10-13)
 
 - **`view_thumbnails`** (MCP, ADR 0021): up to 12 small (320 px) or 2 large (1600 px) thumbnails at once, returned as MCP image content, each labelled with its hash. Files without one are listed by hash. It fetches through the existing preview path, so the owner's computer checks access for every hash, and a refusal looks like "no thumbnail". `LocalApiClient.bytes()` reads binary responses.
-- **Test:** `m12-agent-tools` checks a public image (a real WebP), a private one (left out), the owner seeing its own private file, and the size limit.
+- **`preview_access`** (MCP), backed by `POST /v1/acl/preview` and core `previewRule` (`access-preview.ts`). For a proposed rule it lists which files would change audience, grouped from → to, with files, bytes, examples, named and counted people, whether anyone new could see them (`widens`) and a one-paragraph summary. It uses only this device's own rules, files, connections and groups, and changes nothing. `set_access` and the server instructions say to run it, show the summary, and still ask.
+- **Fix:** the media worker could write an analysis result after the core closed its store, an unhandled rejection in tests. It now checks `stopped` right before each write.
+- **Tests:** `access-preview.test.ts` covers widening and narrowing, nearer rules, groups and connections, nothing changing, a single file, and a share not listed on the hub. `m12-agent-tools` checks a public image (a real WebP), a private one (left out), the owner seeing its own private file, and the size limit.
 
 ## Hub admin (2026-10-13)
 

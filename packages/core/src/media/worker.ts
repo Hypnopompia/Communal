@@ -106,6 +106,11 @@ export class MediaWorker extends EventEmitter<MediaEvents> {
     }
   }
 
+  /**
+   * Analyses one file. Every store write comes right after a `stopped` check with no await in
+   * between: the core closes the store once `stop()` returns, possibly while an analysis is
+   * still running, and that result is simply dropped (it's redone on the next start).
+   */
   private async one(f: MediaTodo): Promise<boolean> {
     if (!analysable(f.kind, f.mime)) return this.store.setMedia(f, {}, false);
     const abs = join(f.root, ...f.rel.split('/'));
@@ -113,11 +118,14 @@ export class MediaWorker extends EventEmitter<MediaEvents> {
       const st = await lstat(abs).catch(() => null);
       return !!st?.isFile() && st.size === f.size && Math.floor(st.mtimeMs) === f.mtime;
     };
-    if (!(await same())) return this.store.setMedia(f, {}, false);
+    const unchanged = await same();
+    if (this.stopped) return false;
+    if (!unchanged) return this.store.setMedia(f, {}, false);
     const { meta, thumb } = await analyze(abs, f.mime, f.kind, f.size);
     // The file changed while we read it: the indexer will re-hash it and we'll come back.
     if (this.stopped || !(await same())) return false;
     if (thumb) await this.thumbs.put(f.hash, THUMB_SIZE, thumb).catch(() => {});
+    if (this.stopped) return false;
     return this.store.setMedia(f, meta, thumb !== null);
   }
 

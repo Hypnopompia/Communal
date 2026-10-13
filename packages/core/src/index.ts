@@ -11,6 +11,7 @@ export { detect, kindFor, type Kind } from './index/detect.js';
 export { hashFile, CHUNK_SIZE } from './index/hasher.js';
 export * from './people.js';
 export * from './hub-admin.js';
+export * from './access-preview.js';
 export * from './account.js';
 export type { Audience } from './index/store.js';
 export * from './peer/transport.js';

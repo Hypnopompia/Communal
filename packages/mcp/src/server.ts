@@ -73,8 +73,9 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
         'their computers, choose who can see each folder or file (per hub), and download ' +
         'directly from each other. Use list_hubs first; most tools take a hub id. Files are ' +
         'identified by content hash. Paths on hubs look like "ShareName/folder/file". ' +
-        'Changing who can see something (set_access, share_folder) exposes files to other ' +
-        'people: confirm the audience with the user first. show_in_app moves the open ' +
+        'Changing who can see something (set_access) exposes files to other people: run ' +
+        'preview_access first, show the user its summary and wait for them to agree; a ' +
+        'preview is never a confirmation. show_in_app moves the open ' +
         'desktop window to a screen so the user can see what you did. On hubs where list_hubs ' +
         'says admin: true, the *_hub_* tools manage the hub (people waiting to join, bans, its ' +
         'settings, connections and the admin log); confirm every ban, approval and settings ' +
@@ -329,8 +330,19 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
     (c, a) => c.get(`/v1/acl${q({ hub: a.hub })}`),
   );
   tool(
+    'preview_access',
+    'Shows what set_access would do without doing it: which of my files would be seen by whom instead, on that hub, with people named and counted, and whether anyone new could see them (widens). Run it before set_access and show the user its summary. It is not a confirmation: still ask the user.',
+    {
+      hub: Hub,
+      path: z.string().min(1).max(4096).describe('e.g. "Photos/" or "Photos/2024/beach.jpg"'),
+      audience: Audience.nullable(),
+    },
+    READ,
+    (c, a) => c.post('/v1/acl/preview', a),
+  );
+  tool(
     'set_access',
-    'Sets who can see a folder (path ending in "/") or file on one hub. audience null removes the rule so it follows its folder again. This can expose files to other people: confirm with the user.',
+    'Sets who can see a folder (path ending in "/") or file on one hub. audience null removes the rule so it follows its folder again. This can expose files to other people: run preview_access first, show the user what it says, and only go ahead once they agree.',
     {
       hub: Hub,
       path: z.string().min(1).max(4096).describe('e.g. "Photos/" or "Photos/2024/beach.jpg"'),

@@ -158,4 +158,40 @@ describe('M12: agent tools', () => {
     });
     expect(tooMany.isError).toBe(true);
   }, 60_000);
+
+  it('previews an access change with real names, and changes nothing', async () => {
+    const h = await hub();
+    const alice = await core('alice');
+    const bob = await core('bob');
+    const { id: ha, state: aliceState } = (await alice.addHub(h.url, acct('alice'))).hub;
+    const { id: hb, state: bobState } = (await bob.addHub(h.url, acct('bob'))).hub;
+    await alice.people.request(ha, bobState.userId!);
+    await bob.people.accept(hb, aliceState.userId!);
+    const folder = tmp('communal-m12-photos-');
+    await png(join(folder, 'one.png'), 40, 30, 1);
+    await png(join(folder, 'two.png'), 40, 30, 2);
+    await alice.addShare('Photos', folder);
+    await until(() => alice.store.counts().files === 2, 10_000, 'indexing');
+    const call = await agentOn(alice);
+    const text = async (name: string, args: Record<string, unknown>) => {
+      const r = await call(name, args);
+      if (r.isError) throw new Error((r.content[0] as { text: string }).text);
+      return JSON.parse((r.content[0] as { text: string }).text) as Record<string, unknown>;
+    };
+
+    const toBob = await text('preview_access', {
+      hub: ha,
+      path: 'Photos/',
+      audience: { users: [bobState.userId] },
+    });
+    expect(toBob).toMatchObject({ files: 2, widens: true, listed: true });
+    expect(toBob.summary).toContain('from only you to bob (1 person)');
+    expect(alice.rules(ha)[ha]).toEqual([]);
+
+    await text('set_access', { hub: ha, path: 'Photos/', audience: { users: [bobState.userId] } });
+    const toHub = await text('preview_access', { hub: ha, path: 'Photos/', audience: 'hub' });
+    expect(toHub.summary).toContain('to everyone on 127.0.0.1');
+    const back = await text('preview_access', { hub: ha, path: 'Photos/', audience: null });
+    expect(back).toMatchObject({ files: 2, widens: false });
+  }, 60_000);
 });

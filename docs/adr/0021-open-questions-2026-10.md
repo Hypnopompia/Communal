@@ -14,6 +14,7 @@ The ideas are in `docs/plans/agents.md`.
 - **Build first:**
   - **Thumbnails as image content** in MCP.
   - **An access dry run.** Given a proposed rule change, it reports which files become visible or hidden, to how many people, on which hub. It never shows the owner anything they couldn't already see. The desktop app's audience picker can show the same preview.
+- **Built (2026-10-13):** `view_thumbnails`, plus `preview_access` (`POST /v1/acl/preview`, core `previewRule`). The preview uses only this device's own rules, files, connections and groups. List rules count only accepted connections, since list grants only work while connected. A share not listed on the hub is reported as such, not as a widening.
 - **A dry run isn't a confirmation.** An agent still asks the person every time an audience widens, and shows the dry run's result in the question. The server instructions and the `set_access`/`share_folder` tool descriptions say so.
 - **Content leaving the owner's computer** (content search across friends' shares, peer queries) is limited to **snippets, never full text**. It comes only from shares whose owner opted in, and it's off by default. This is a constraint for later work. Nothing is built yet.
 

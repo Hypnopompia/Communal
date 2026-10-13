@@ -126,7 +126,8 @@
             <td>Sharing</td>
             <td>
               <code>list_shares</code>, <code>share_folder</code>, <code>stop_sharing</code>,
-              <code>set_share_hubs</code>, <code>get_access_rules</code>, <code>set_access</code>
+              <code>set_share_hubs</code>, <code>get_access_rules</code>,
+              <code>preview_access</code>, <code>set_access</code>
             </td>
           </tr>
           <tr>
@@ -170,8 +171,8 @@
         </table>
         <p>
           Tools that change something are marked as such, so your assistant asks before using them.
-          Opening a folder to other people (<code>set_access</code>, <code>share_folder</code>)
-          deserves a careful look.
+          Before it changes who can see a folder, the assistant runs <code>preview_access</code>
+          and tells you which files would be seen by whom. It still waits for you to say yes.
         </p>
 
         <h2 id="limits">What it can’t do</h2>

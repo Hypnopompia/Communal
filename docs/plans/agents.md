@@ -1,6 +1,6 @@
 # Plan: expanding what AI agents can do (MCP)
 
-**Status:** first step decided (owner, 2026-10-13, ADR 0021): tier 1 thumbnails (built: `view_thumbnails`) plus the tier 2 access dry run. The rest are ideas, not scheduled. Hub admin tools are planned separately (ADR 0020).
+**Status:** first step decided (owner, 2026-10-13, ADR 0021): tier 1 thumbnails (built: `view_thumbnails`) plus the tier 2 access dry run (built: `preview_access`). The rest are ideas, not scheduled. Hub admin tools are planned separately (ADR 0020).
 
 ADR 0017's MCP server covers search, browse, downloads, shares, access, people, subscriptions and diagnostics. The ideas below would let an agent see what's in files, react to changes, and change access more safely. They're grouped by cost.
 

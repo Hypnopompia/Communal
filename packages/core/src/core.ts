@@ -22,6 +22,7 @@ import { Indexer, type IndexerOptions } from './index/indexer.js';
 import { IndexStore, type Audience, type ShareRow } from './index/store.js';
 import { People } from './people.js';
 import { HubAdmin } from './hub-admin.js';
+import { previewRule, type AccessPreview, type PeopleOnHub } from './access-preview.js';
 import { PeerTransport, type TransportOptions } from './peer/transport.js';
 import { NetworkCheck, type NetworkProfile, type PortMapper } from './peer/netcheck.js';
 import { PeerBroker } from './transfer/broker.js';
@@ -694,6 +695,37 @@ export class CommunalCore {
    * again). Folder paths end with `/`: `Photos/`, `Photos/2024/`; a file is `Photos/a.jpg`.
    */
   async setRule(hub: string, path: string, audience: Audience | null) {
+    this.store.setRule(hub, this.rulePath(hub, path), audience);
+    await this.pushRules(hub);
+  }
+
+  /**
+   * What `setRule` would change, without changing it (ADR 0021): which files would be seen by
+   * whom instead. Uses only this device's rules, files, connections and groups.
+   */
+  async previewRule(hub: string, path: string, audience: Audience | null): Promise<AccessPreview> {
+    const rulePath = this.rulePath(hub, path);
+    const entry = this.hubs.find(hub)!;
+    const people: PeopleOnHub = {
+      hubName: entry.state.name ?? new URL(entry.url).hostname,
+      connections: new Map(),
+      groups: new Map(),
+    };
+    // Offline, names and head counts are unknown; which files change is still exact.
+    if (this.hubs.get(hub)?.ready) {
+      const [connections, groups] = await Promise.all([
+        this.people.connections(hub).catch(() => []),
+        this.people.groups(hub).catch(() => []),
+      ]);
+      for (const c of connections)
+        if (c.state === 'accepted') people.connections.set(c.user_id, c.display_name);
+      for (const g of groups) people.groups.set(g.group_id, { name: g.name, members: g.members });
+    }
+    return previewRule(this.store, hub, rulePath, audience, people);
+  }
+
+  /** Checks a rule path for `hub` and normalises it (a bare share name means its folder). */
+  private rulePath(hub: string, path: string): string {
     if (!this.hubs.find(hub)) throw new CoreError('not_found', `no such hub: ${hub}`);
     const share = path.split('/')[0]!;
     if (!this.store.share(share))
@@ -705,9 +737,7 @@ export class CommunalCore {
     ) {
       throw new CoreError('bad_request', 'invalid path');
     }
-    const rulePath = path.includes('/') ? path : path + '/';
-    this.store.setRule(hub, rulePath, audience);
-    await this.pushRules(hub);
+    return path.includes('/') ? path : path + '/';
   }
 
   /** Sends this device's rules for `hub` to it (no-op while offline; repeated on sign-in). */
