@@ -7,3 +7,6 @@ coverage/
 .env
 hub-data/
 docker/fixtures/alice/big-video.mkv
+apps/desktop/out/
+apps/desktop/release/
+apps/cli/release/

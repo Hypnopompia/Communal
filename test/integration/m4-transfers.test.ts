@@ -143,8 +143,16 @@ describe('M4: direct transfers', () => {
     const carol = await sharer(h, 'carol', data);
     const bob = await core('bob', { window: 2 });
     await bob.addHub(h.url, acct('bob'));
-    const done = await finished(bob, bob.downloads.add({ hash: alice.hash, name: 'm.mkv' }).id);
+    // The Transfers screen's per-source view, sampled while chunks arrive.
+    const live = new Map<string, number>();
+    bob.downloads.on('progress', ({ id }) => {
+      for (const s of bob.downloads.liveSources(id)) live.set(s.device_id, s.bytes);
+    });
+    const id = bob.downloads.add({ hash: alice.hash, name: 'm.mkv' }).id;
+    const done = await finished(bob, id);
     expect(readFileSync(done.final_path!).equals(data)).toBe(true);
+    expect([...live.keys()].sort()).toEqual([alice.c.deviceId, carol.c.deviceId].sort());
+    expect(bob.downloads.liveSources(id)).toEqual([]);
     await until(
       () => alice.c.store.uploadLog().length > 0 && carol.c.store.uploadLog().length > 0,
       3_000,

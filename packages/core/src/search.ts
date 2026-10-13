@@ -1,4 +1,4 @@
-import type { ClientBody, HubBody } from '@communal/protocol';
+import { Seen, type ClientBody, type HubBody } from '@communal/protocol';
 import type { HubManager } from './hub-manager.js';
 
 type Hit = HubBody<'search.results'>['hits'][number];
@@ -63,15 +63,39 @@ export async function searchAll(
       }
     }
   }
-  for (const hit of merged.values())
-    hit.sources.sort((a, b) => Number(b.online) - Number(a.online));
+  const rank = (s: { seen: Seen }) => Seen.options.indexOf(s.seen);
+  for (const hit of merged.values()) hit.sources.sort((a, b) => rank(a) - rank(b));
+  // Each hub ranks by availability first (ADR 0015); keep that across hubs. The sort is stable,
+  // so hits stay in relevance order within an availability tier.
+  const hits = order.map((h) => merged.get(h)!);
+  const tier = (h: MergedHit) => {
+    const seen = h.sources[0]?.seen;
+    return seen === 'now' ? 0 : seen === 'today' || seen === 'week' ? 1 : 2;
+  };
+  hits.sort((a, b) => tier(a) - tier(b));
 
   return {
-    hits: order.map((h) => merged.get(h)!),
+    hits,
     hubs: results.map((r) =>
       r.ok
         ? { hub: r.hub, ok: true, ...(r.res.cursor ? { cursor: r.res.cursor } : {}) }
         : { hub: r.hub, ok: false, error: r.error },
     ),
   };
+}
+
+/** How a source's availability reads in the UI and CLI (ADR 0015). */
+export function seenLabel(seen: Seen): string {
+  switch (seen) {
+    case 'now':
+      return 'online';
+    case 'today':
+      return 'offline · seen today';
+    case 'week':
+      return 'offline · seen this week';
+    case 'month':
+      return 'offline · seen this month';
+    case 'older':
+      return 'offline · not seen for over a month';
+  }
 }

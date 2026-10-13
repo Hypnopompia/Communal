@@ -1,4 +1,4 @@
-import type { ClientBody, HubBody } from '@communal/protocol';
+import type { ClientBody, HubBody, Seen } from '@communal/protocol';
 import { rowToEntry, type Entry, type EntryRow, type HubDb } from './db.js';
 
 /**
@@ -18,10 +18,17 @@ import { rowToEntry, type Entry, type EntryRow, type HubDb } from './db.js';
  * can't access never show up, not even as counts.
  */
 export class Catalog {
+  private readonly isOnline: (deviceId: string) => boolean;
+  private readonly onlineDevices: () => string[];
+
   constructor(
     private readonly db: HubDb,
-    private readonly isOnline: (deviceId: string) => boolean,
-  ) {}
+    presence: { isOnline: (deviceId: string) => boolean; onlineDevices: () => string[] },
+    private readonly clock: () => number = () => Math.floor(Date.now() / 1000),
+  ) {
+    this.isOnline = presence.isOnline;
+    this.onlineDevices = presence.onlineDevices;
+  }
 
   /** SQL condition over `e` (entries) for what @viewer may see. */
   private visible(): string {
@@ -47,11 +54,25 @@ export class Catalog {
     )`;
   }
 
+  /**
+   * Full-text search, one hit per content hash. Ranked by availability first (some source
+   * online, then seen within a week, then older; ADR 0015), then relevance, then newest. The
+   * `available` filter keeps hits with at least one source seen that recently. Online state
+   * lives in memory, so the online device ids go into the query as JSON: filtering after the
+   * query would break paging.
+   */
   search(viewer: string, q: ClientBody<'search'>): HubBody<'search.results'> {
     const match = ftsQuery(q.q);
     const offset = decodeCursor(q.cursor);
+    const t = this.clock();
     const where = ['e.hash IS NOT NULL', this.visible()];
-    const params: Record<string, unknown> = { viewer, limit: q.limit + 1, offset };
+    const params: Record<string, unknown> = {
+      viewer,
+      limit: q.limit + 1,
+      offset,
+      online: JSON.stringify(this.onlineDevices()),
+      week: t - WEEK,
+    };
     if (q.kind) {
       where.push('e.kind = @kind');
       params.kind = q.kind;
@@ -59,6 +80,14 @@ export class Catalog {
     if (q.min_size !== undefined) {
       where.push('e.size >= @min_size');
       params.min_size = q.min_size;
+    }
+    const isOnline = 'e.device_id IN (SELECT value FROM json_each(@online))';
+    if (q.available) {
+      if (q.available === 'now') where.push(isOnline);
+      else {
+        where.push(`(${isOnline} OR d.last_seen >= @since)`);
+        params.since = t - SEEN_WITHIN[q.available];
+      }
     }
     let from = 'entries e';
     let rank = '0';
@@ -68,22 +97,25 @@ export class Catalog {
       rank = 'bm25(entries_fts)';
       params.match = match;
     }
+    const tier = `CASE WHEN ${isOnline} THEN 0 WHEN d.last_seen >= @week THEN 1 ELSE 2 END`;
     // One hit per distinct content hash, best match first (then newest).
     const groups = this.db.raw
       .prepare(
         // bm25() can't sit inside an aggregate: rank each row in a materialized CTE (so the
         // planner can't flatten it back into the GROUP BY), then group by hash.
         `WITH ranked AS MATERIALIZED (
-           SELECT e.hash AS hash, ${rank} AS r, e.mtime AS m, e.name AS name FROM ${from} WHERE ${where.join(' AND ')}
+           SELECT e.hash AS hash, ${rank} AS r, e.mtime AS m, e.name AS name, ${tier} AS a
+           FROM ${from} JOIN devices d ON d.id = e.device_id WHERE ${where.join(' AND ')}
          ),
-         -- Newest copy per hash, grouped once. (A correlated subquery here rescanned the whole
-         -- CTE per group: quadratic, 49 s for a prefix query over 50k files.)
-         newest AS MATERIALIZED (SELECT hash, max(m) AS m FROM ranked GROUP BY hash)
+         -- Newest copy and best availability per hash, grouped once. (A correlated subquery
+         -- here rescanned the whole CTE per group: quadratic, 49 s for a prefix query over 50k
+         -- files.)
+         per_hash AS MATERIALIZED (SELECT hash, max(m) AS m, min(a) AS a FROM ranked GROUP BY hash)
          -- SQLite: with a single min(), bare columns (name) come from the best-ranked row, so the
          -- hit is named after the copy that actually matched the query.
-         SELECT ranked.hash AS hash, min(r) AS r, name, newest.m AS m
-         FROM ranked JOIN newest ON newest.hash = ranked.hash
-         GROUP BY ranked.hash ORDER BY r, m DESC, hash LIMIT @limit OFFSET @offset`,
+         SELECT ranked.hash AS hash, min(r) AS r, name, per_hash.m AS m, per_hash.a AS a
+         FROM ranked JOIN per_hash ON per_hash.hash = ranked.hash
+         GROUP BY ranked.hash ORDER BY a, r, m DESC, hash LIMIT @limit OFFSET @offset`,
       )
       .all(params) as { hash: string; name: string }[];
     const more = groups.length > q.limit;
@@ -102,14 +134,7 @@ export class Catalog {
         kind: e.kind,
         meta: e.meta,
         thumb: rs.some((r) => r.thumb === 1),
-        sources: rs
-          .map((r) => ({
-            device_id: r.device_id,
-            owner: r.owner,
-            path: r.path,
-            online: this.isOnline(r.device_id),
-          }))
-          .sort((a, b) => Number(b.online) - Number(a.online)),
+        sources: this.toSources(rs, t),
       };
     });
     return more ? { hits, cursor: encodeCursor(offset + q.limit) } : { hits };
@@ -117,17 +142,23 @@ export class Catalog {
 
   sources(viewer: string, hash: string): HubBody<'sources.list'> {
     const rows = this.rowsForHashes(viewer, [hash]).get(hash) ?? [];
-    return {
-      hash,
-      sources: rows
-        .map((r) => ({
+    return { hash, sources: this.toSources(rows, this.clock()) };
+  }
+
+  /** Sources for one hash, most available first. */
+  private toSources(rows: (EntryRow & { owner: string; last_seen: number | null })[], t: number) {
+    return rows
+      .map((r) => {
+        const online = this.isOnline(r.device_id);
+        return {
           device_id: r.device_id,
           owner: r.owner,
           path: r.path,
-          online: this.isOnline(r.device_id),
-        }))
-        .sort((a, b) => Number(b.online) - Number(a.online)),
-    };
+          online,
+          seen: online ? ('now' as const) : seenBucket(r.last_seen, t),
+        };
+      })
+      .sort((a, b) => SEEN_ORDER.indexOf(a.seen) - SEEN_ORDER.indexOf(b.seen));
   }
 
   /**
@@ -158,6 +189,57 @@ export class Catalog {
       dirs: [...names].sort().map((name) => ({ name })),
       files,
     };
+  }
+
+  /**
+   * Every device the viewer can browse, for the desktop Library (M9): their own devices, and
+   * other people's devices with at least one entry visible to them. Candidates come from the
+   * social graph (own, connected, or sharing with the whole hub), and each is checked with the
+   * same `visible()` rule as browse, so the list never reveals a device holding nothing the
+   * viewer may see.
+   */
+  library(viewer: string): {
+    device_id: string;
+    device_name: string;
+    user: { id: string; display_name: string; root_pubkey: string };
+    online: boolean;
+    seen: Seen;
+  }[] {
+    const t = this.clock();
+    const candidates = this.db.raw
+      .prepare(
+        `SELECT d.id, d.name, d.last_seen, u.id AS user_id, u.display_name, u.root_pubkey
+         FROM devices d JOIN users u ON u.id = d.user_id
+         WHERE d.revoked_at IS NULL AND u.banned_at IS NULL AND (
+           u.id = @viewer
+           OR u.id IN (SELECT user_b FROM connections WHERE user_a = @viewer AND state = 'accepted'
+                       UNION SELECT user_a FROM connections WHERE user_b = @viewer AND state = 'accepted')
+           OR u.id IN (SELECT dd.user_id FROM access_rules r JOIN devices dd ON dd.id = r.device_id
+                       WHERE r.kind = 'hub' AND dd.revoked_at IS NULL)
+         )
+         ORDER BY u.id = @viewer DESC, u.display_name, d.name
+         LIMIT 5000`,
+      )
+      .all({ viewer }) as {
+      id: string;
+      name: string;
+      last_seen: number | null;
+      user_id: string;
+      display_name: string;
+      root_pubkey: string;
+    }[];
+    return candidates
+      .filter((d) => this.canBrowse(viewer, d.id))
+      .map((d) => {
+        const online = this.isOnline(d.id);
+        return {
+          device_id: d.id,
+          device_name: d.name,
+          user: { id: d.user_id, display_name: d.display_name, root_pubkey: d.root_pubkey },
+          online,
+          seen: online ? ('now' as const) : seenBucket(d.last_seen, t),
+        };
+      });
   }
 
   /** Whether the viewer can see a file with this hash on that device (brokering, HANDOFF §6). */
@@ -232,18 +314,18 @@ export class Catalog {
   private rowsForHashes(
     viewer: string,
     hashes: string[],
-  ): Map<string, (EntryRow & { owner: string })[]> {
-    const out = new Map<string, (EntryRow & { owner: string })[]>();
+  ): Map<string, (EntryRow & { owner: string; last_seen: number | null })[]> {
+    const out = new Map<string, (EntryRow & { owner: string; last_seen: number | null })[]>();
     if (hashes.length === 0) return out;
     const params: Record<string, unknown> = { viewer };
     hashes.forEach((h, i) => (params[`h${i}`] = h));
     const rows = this.db.raw
       .prepare(
-        `SELECT e.*, d.user_id AS owner FROM entries e JOIN devices d ON d.id = e.device_id
+        `SELECT e.*, d.user_id AS owner, d.last_seen AS last_seen FROM entries e JOIN devices d ON d.id = e.device_id
          WHERE e.hash IN (${hashes.map((_, i) => `@h${i}`).join(',')}) AND ${this.visible()}
          ORDER BY e.device_id, e.path`,
       )
-      .all(params) as (EntryRow & { owner: string })[];
+      .all(params) as (EntryRow & { owner: string; last_seen: number | null })[];
     for (const r of rows) {
       const list = out.get(r.hash!) ?? [];
       list.push(r);
@@ -251,6 +333,24 @@ export class Catalog {
     }
     return out;
   }
+}
+
+const DAY = 86_400;
+const WEEK = 7 * DAY;
+const SEEN_WITHIN = { today: DAY, week: WEEK, month: 30 * DAY } as const;
+const SEEN_ORDER: Seen[] = ['now', 'today', 'week', 'month', 'older'];
+
+/**
+ * An offline device's last sign-in, rounded (ADR 0015). "today" is the last 24 hours, not the
+ * calendar day, so it doesn't depend on anyone's time zone.
+ */
+export function seenBucket(lastSeen: number | null, t: number): Seen {
+  if (lastSeen === null) return 'older';
+  const ago = t - lastSeen;
+  if (ago < SEEN_WITHIN.today) return 'today';
+  if (ago < SEEN_WITHIN.week) return 'week';
+  if (ago < SEEN_WITHIN.month) return 'month';
+  return 'older';
 }
 
 /**

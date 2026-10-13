@@ -66,10 +66,15 @@ async function core(name: string, opts: { dataDir?: string; device?: KeyPair } =
   return Object.assign(c, { trashed, markStopped: () => (stopped = true) }) as Core;
 }
 
-async function until(cond: () => boolean | Promise<boolean>, ms: number, label: string) {
+async function until(
+  cond: () => boolean | Promise<boolean>,
+  ms: number,
+  label: string | (() => string),
+) {
   const end = Date.now() + ms;
   while (!(await cond())) {
-    if (Date.now() > end) throw new Error(`timed out waiting for ${label}`);
+    if (Date.now() > end)
+      throw new Error(`timed out waiting for ${typeof label === 'string' ? label : label()}`);
     await sleep(25);
   }
 }
@@ -114,6 +119,7 @@ async function owner(
 
 /** Waits until the owner's files are hashed and the hub has exactly `n` hashed entries. */
 async function settled(h: TestHub, c: CommunalCore, n: number) {
+  let seen = '';
   await until(
     async () => {
       await c.sync.idle();
@@ -122,10 +128,11 @@ async function settled(h: TestHub, c: CommunalCore, n: number) {
         .prepare('SELECT count(*) FROM entries WHERE device_id = ? AND hash IS NOT NULL')
         .pluck()
         .get(c.deviceId);
+      seen = `files ${counts.files}, hashed ${counts.hashed}, on hub ${String(onHub)}`;
       return counts.files === n && counts.hashed === n && onHub === n;
     },
     15_000,
-    `owner index at ${n} files`,
+    () => `owner index at ${n} files (last saw ${seen})`,
   );
 }
 

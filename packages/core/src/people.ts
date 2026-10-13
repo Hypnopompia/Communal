@@ -77,6 +77,35 @@ export class People {
     return r.users.filter(checkSummary).map((u) => this.person(u));
   }
 
+  /**
+   * Devices this user can browse on every connected hub (the desktop Library). Entries whose
+   * identity doesn't check out are dropped, like everywhere else. A hub that's offline or fails
+   * is reported rather than failing the whole listing.
+   */
+  async library() {
+    const results = await this.hubs.requestAll('library', {});
+    const devices = [];
+    const hubs = [];
+    for (const r of results) {
+      if (!r.ok || r.msg.t !== 'library.listing') {
+        hubs.push({
+          hub: r.hub,
+          ok: false,
+          error: r.ok ? `unexpected reply ${r.msg.t}` : r.error.message,
+        });
+        continue;
+      }
+      hubs.push({ hub: r.hub, ok: true });
+      const body = r.msg.body as HubBody<'library.listing'>;
+      for (const d of body.devices) {
+        if (!checkSummary(d.user)) continue;
+        const { user, ...rest } = d;
+        devices.push({ hub: r.hub, ...rest, user: this.person(user) });
+      }
+    }
+    return { devices, hubs };
+  }
+
   async connections(hub: string) {
     const r = await this.ask(hub, 'connection.list', {}, 'connection.listing');
     return r.connections

@@ -41,6 +41,11 @@ export interface HubManagerOptions extends SharedClientOptions {
   save: (hubs: HubEntry[]) => void | Promise<void>;
 }
 
+export interface HubProblem {
+  reason: HubFatalError['reason'] | 'pending_approval';
+  message: string;
+}
+
 export type FanOutResult =
   { hub: string; ok: true; msg: HubMessage } | { hub: string; ok: false; error: Error };
 
@@ -51,7 +56,10 @@ export const newHubId = (): string => 'h_' + toBase32(randomBytes(6));
  * several hubs at once and fan a request (e.g. a search) out to all of them (ADR 0007).
  */
 export class HubManager extends EventEmitter<HubManagerEvents> {
-  private readonly hubs = new Map<string, { entry: HubEntry; client: HubClient }>();
+  private readonly hubs = new Map<
+    string,
+    { entry: HubEntry; client: HubClient; problem?: HubProblem }
+  >();
   private started = false;
 
   constructor(private readonly opts: HubManagerOptions) {
@@ -59,9 +67,16 @@ export class HubManager extends EventEmitter<HubManagerEvents> {
     for (const entry of opts.hubs) this.attach(entry);
   }
 
-  /** Configured hubs with their connection status. */
-  list(): (HubEntry & { ready: boolean })[] {
-    return [...this.hubs.values()].map(({ entry, client }) => ({ ...entry, ready: client.ready }));
+  /**
+   * Configured hubs with their connection status. `problem` says why a hub isn't usable when
+   * it's for a reason the person must act on: waiting for the hub admin, or refused for good.
+   */
+  list(): (HubEntry & { ready: boolean; problem: HubProblem | null })[] {
+    return [...this.hubs.values()].map(({ entry, client, problem }) => ({
+      ...entry,
+      ready: client.ready,
+      problem: client.ready ? null : (problem ?? null),
+    }));
   }
 
   get(id: string): HubClient | undefined {
@@ -151,10 +166,20 @@ export class HubManager extends EventEmitter<HubManagerEvents> {
     client.on('event', (msg) => this.emit('event', { hub, msg }));
     client.on('account_created', (created) => this.emit('account_created', { hub, created }));
     client.on('enrolled', (enrolled) => this.emit('enrolled', { hub, enrolled }));
-    client.on('pending_approval', () => this.emit('pending_approval', { hub }));
+    const slot: { entry: HubEntry; client: HubClient; problem?: HubProblem } = { entry, client };
+    client.on('pending_approval', () => {
+      slot.problem = {
+        reason: 'pending_approval',
+        message: 'waiting for the hub admin to approve this account',
+      };
+      this.emit('pending_approval', { hub });
+    });
     client.on('disconnected', (d) => this.emit('disconnected', { hub, ...d }));
-    client.on('fatal', (error) => this.emit('fatal', { hub, error }));
-    this.hubs.set(entry.id, { entry, client });
+    client.on('fatal', (error) => {
+      slot.problem = { reason: error.reason, message: error.message };
+      this.emit('fatal', { hub, error });
+    });
+    this.hubs.set(entry.id, slot);
   }
 
   private async persist() {

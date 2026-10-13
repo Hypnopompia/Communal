@@ -46,6 +46,21 @@ const NatObservation = z.object({
   cgnat: z.boolean(),
 });
 
+/**
+ * When a source's device was last connected, rounded so search doesn't publish anyone's exact
+ * activity history (ADR 0015). `now` means online.
+ */
+export const Seen = z.enum(['now', 'today', 'week', 'month', 'older']);
+export type Seen = z.infer<typeof Seen>;
+
+const Source = z.object({
+  device_id: DeviceId,
+  owner: UserId,
+  path: SharePath,
+  online: z.boolean(),
+  seen: Seen,
+});
+
 const SearchHit = z.object({
   hash: Hash,
   name: z.string(),
@@ -54,9 +69,7 @@ const SearchHit = z.object({
   kind: Kind,
   meta: Entry.shape.meta,
   thumb: z.boolean(),
-  sources: z.array(
-    z.object({ device_id: DeviceId, owner: UserId, path: SharePath, online: z.boolean() }),
-  ),
+  sources: z.array(Source),
 });
 
 const Group = z.object({
@@ -161,10 +174,14 @@ export const clientBodies = {
     q: z.string().max(256),
     kind: Kind.optional(),
     min_size: z.number().int().nonnegative().optional(),
+    /** Only hits with a source seen at least this recently (ADR 0015). Omitted: any. */
+    available: Seen.exclude(['older']).optional(),
     limit: z.number().int().min(1).max(500),
     cursor: z.string().max(256).optional(),
   }),
   browse: z.object({ device_id: DeviceId, path: z.union([z.literal(''), SharePath]) }),
+  /** Devices the viewer can browse (the desktop Library, M9). */
+  library: Empty,
   sources: z.object({ hash: Hash }),
   watch: z.object({
     device_id: DeviceId,
@@ -276,11 +293,22 @@ export const hubBodies = {
     dirs: z.array(z.object({ name: z.string() })),
     files: z.array(Entry),
   }),
+  'library.listing': z.object({
+    devices: z
+      .array(
+        z.object({
+          device_id: DeviceId,
+          device_name: DeviceName,
+          user: UserSummary,
+          online: z.boolean(),
+          seen: Seen,
+        }),
+      )
+      .max(5000),
+  }),
   'sources.list': z.object({
     hash: Hash,
-    sources: z.array(
-      z.object({ device_id: DeviceId, owner: UserId, path: SharePath, online: z.boolean() }),
-    ),
+    sources: z.array(Source),
   }),
   'watch.event': z.object({
     device_id: DeviceId,

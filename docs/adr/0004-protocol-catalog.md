@@ -17,6 +17,7 @@
 | `device.list` / `device.listing` / `device.revoked` | The Settings → Devices screen (§11) and revocation distribution (§4) need them.                                               |
 | `link.denied`                                       | Tells the new device its claim was denied.                                                                                    |
 | `acl.replace` (c→h, M3)                             | Full per-hub rule set for the device, sent on sign-in; keeps the hub in step with the client's authoritative copy (ADR 0009). |
+| `library` / `library.listing` (M9)                  | Devices the viewer can browse, with owner, `online` and `seen`: the desktop Library (ADR 0016).                               |
 
 ### Peer
 
@@ -41,6 +42,7 @@
   - `account.restore` is answered with `account.created`.
   - `device.listing` entries carry `root`.
   - `connect.offer` carries `from_revocations` and `connect.answer` carries `to_revocations`: the peer account's proofs, at most 256.
+- **M9 (ADR 0015):** each source in `search.results` and `sources.list` carries `seen` (`now | today | week | month | older`), and `search` takes an optional `available` filter (`now | today | week | month`).
 - **`acl.set`** `audience` can be `null`, which clears a rule so the path inherits again.
 - **`connect.offer`** carries `from_user`, `from_root_pubkey` and `from_chain`, so the uploader can verify the downloader's cert chain (§7 `hello` checks) without another hub round trip.
 - **`connect.request` / `connect.offer` / `connect.answer`** carry udx `stream_id`s and both sides' candidates (M4). The forwarded `connect.answer` adds the owner's identity (`to_user`, `to_root_pubkey`, `to_chain`) and the transfer token the downloader presents in `hello` (ADR 0010).

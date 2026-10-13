@@ -89,6 +89,13 @@ export function parseReport(report: string): VideoInfo {
   return info;
 }
 
+/** The first line of `ffmpeg -version` (installs and self-checks), or throws. */
+export async function ffmpegVersion(): Promise<string> {
+  const r = await run(['-version'], 10_000, 1024 * 1024);
+  if (r.code !== 0) throw new Error(`ffmpeg exited with ${r.code}`);
+  return r.stdout.toString().split('\n')[0] ?? '';
+}
+
 export async function probe(abs: string): Promise<VideoInfo> {
   // With no output given ffmpeg exits non-zero after printing the input report: that's fine.
   const r = await run(['-i', abs], 15_000);

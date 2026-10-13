@@ -39,6 +39,7 @@ import {
   type HubClientState,
   type HubEntry,
   type MergedSearch,
+  seenLabel,
   RouterPortMapper,
   type Explained,
 } from '@communal/core';
@@ -357,20 +358,38 @@ program
   .description('search every connected hub at once')
   .option('--kind <kind>', 'image, video, audio, document, archive, code, text, disk_image, other')
   .option('--min-size <bytes>', 'smallest file size')
+  .option('--online', 'only files with a source online now')
+  .option('--seen <when>', 'only files with a source seen within: today, week, month')
   .option('--limit <n>', 'results per hub', '50')
   .option('--json', 'machine-readable output')
   .action(
-    (words: string[], opts: { kind?: string; minSize?: string; limit: string; json?: boolean }) =>
+    (
+      words: string[],
+      opts: {
+        kind?: string;
+        minSize?: string;
+        online?: boolean;
+        seen?: string;
+        limit: string;
+        json?: boolean;
+      },
+    ) =>
       viaDaemon(async (c) => {
         const p = new URLSearchParams({ q: words.join(' '), limit: opts.limit });
         if (opts.kind) p.set('kind', opts.kind);
         if (opts.minSize) p.set('min_size', opts.minSize);
+        if (opts.seen && !['today', 'week', 'month'].includes(opts.seen))
+          throw new Error('--seen must be today, week or month');
+        const available = opts.online ? 'now' : opts.seen;
+        if (available) p.set('available', available);
         const r = await c.get<MergedSearch>(`/v1/search?${p}`);
         if (opts.json) return console.log(JSON.stringify(r, null, 2));
         for (const h of r.hits) {
           const online = h.sources.filter((s) => s.online).length;
+          // Sources come most available first.
+          const best = online ? `${online} online` : seenLabel(h.sources[0]!.seen);
           console.log(
-            `${h.name}  ${humanSize(h.size)}  ${h.kind}  ${h.sources.length} source(s), ${online} online  ${h.hash.slice(0, 12)}`,
+            `${h.name}  ${humanSize(h.size)}  ${h.kind}  ${h.sources.length} source(s), ${best}  ${h.hash.slice(0, 12)}`,
           );
         }
         const down = r.hubs.filter((h) => !h.ok);
@@ -1448,6 +1467,21 @@ program
     await core.stop();
     log.info('daemon stopped');
   });
+
+program
+  .command('check')
+  .description('check that this install works: native modules, ffmpeg, the trash helper')
+  .action(() =>
+    viaDaemon(async (c) => {
+      const r = await c.get<{
+        ok: boolean;
+        checks: Record<string, { ok: boolean; detail?: string }>;
+      }>('/v1/self-check');
+      for (const [name, x] of Object.entries(r.checks))
+        console.log(`${x.ok ? 'ok  ' : 'FAIL'}  ${name.padEnd(10)} ${x.detail ?? ''}`);
+      if (!r.ok) process.exitCode = 1;
+    }),
+  );
 
 program
   .command('status')

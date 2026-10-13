@@ -1,0 +1,43 @@
+# Communal headless client (HANDOFF §11). Installed by packaging/install.sh.
+#
+# Manage it with the CLI as the service user, which owns the data dir and the API socket:
+#   sudo -u communal communal status
+# Shares must be readable by the `communal` user (e.g. add it to a group that can read them).
+[Unit]
+Description=Communal file sharing (headless client)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=communal
+Group=communal
+Environment=COMMUNAL_DATA=/var/lib/communal
+Environment=NODE_ENV=production
+# Optional settings (COMMUNAL_PEER_PORT, COMMUNAL_ADVERTISE_ADDR, COMMUNAL_UPLOAD_KBPS,
+# COMMUNAL_UPNP=false, ...) go in this file:
+EnvironmentFile=-/etc/communal/communal.env
+ExecStart=/opt/communal/bin/communal daemon
+Restart=on-failure
+RestartSec=5
+StateDirectory=communal
+StateDirectoryMode=0700
+UMask=0077
+
+# Hardening: the daemon reads shares, writes only its data dir and downloads.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/communal
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

@@ -8,6 +8,7 @@ import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { WebSocket } from 'ws';
 import { pino } from 'pino';
 import { generateKeyPair } from '@communal/crypto';
 import { CommunalCore, LocalApi, LocalApiClient, type MergedSearch } from '@communal/core';
@@ -316,6 +317,57 @@ describe('M2: indexing, sync and search', () => {
       await new LocalApiClient({ url: base, token: 'sekret-token-123' }).get('/v1/status'),
     ).toMatchObject({
       device_id: c.deviceId,
+    });
+  });
+
+  it('announces changes on /v1/events and filters search by availability', async () => {
+    const h = await hub();
+    const c = await core('alice');
+    const api = new LocalApi(c);
+    const base = await api.listen({ host: '127.0.0.1', port: 0, token: 'sekret-token-123' });
+    cleanups.push(() => api.close());
+    const cli = new LocalApiClient({ url: base, token: 'sekret-token-123' });
+    const wsUrl = base.replace(/^http/, 'ws') + '/v1/events';
+
+    // No token, no events.
+    const refused = new WebSocket(wsUrl, { headers: { authorization: 'Bearer nope-nope-nope-1' } });
+    await new Promise<void>((done) => {
+      refused.on('error', () => done());
+      refused.on('open', () => done());
+    });
+    expect(refused.readyState).not.toBe(WebSocket.OPEN);
+
+    const ws = new WebSocket(wsUrl, { headers: { authorization: 'Bearer sekret-token-123' } });
+    cleanups.push(() => ws.terminate());
+    const topics = new Set<string>();
+    ws.on('message', (m: Buffer) => {
+      for (const t of (JSON.parse(m.toString()) as { topics: string[] }).topics) topics.add(t);
+    });
+    await new Promise((ok) => ws.once('open', ok));
+
+    await cli.post('/v1/hubs', { url: h.url, display_name: 'alice', device_name: 'nas' });
+    const root = tmp('communal-m2-share-');
+    writeFileSync(join(root, 'report.pdf'), '%PDF-1.4 report');
+    await cli.post('/v1/shares', { name: 'Work', path: root });
+    await until(() => inSync(c, h), 10_000, 'sync');
+    await until(() => topics.has('hubs') && topics.has('index'), 5_000, 'hubs and index topics');
+
+    // Own files on this (online) device: available now, and say so.
+    const now = await cli.get<MergedSearch>('/v1/search?q=report&available=now');
+    expect(now.hits.map((x) => x.sources.map((s) => s.seen))).toEqual([['now']]);
+    // The Library lists this device, on the one hub, as its owner's.
+    const lib = await cli.get<{
+      devices: { device_id: string; online: boolean; user: { display_name: string } }[];
+    }>('/v1/library');
+    expect(lib.devices).toEqual([
+      expect.objectContaining({
+        device_id: c.deviceId,
+        online: true,
+        user: expect.objectContaining({ display_name: 'alice' }),
+      }),
+    ]);
+    await expect(cli.get('/v1/search?q=report&available=older')).rejects.toMatchObject({
+      status: 400,
     });
   });
 });

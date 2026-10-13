@@ -31,6 +31,12 @@ These came from the owner during development. Don't revert them to the spec's wo
 - Subscriptions: `communal subscribe <device> <path> [--mirror-deletes|--no-mirror-deletes] [--dest]`, `communal subscriptions [list|set|remove]`.
 - Devices (M8): `communal devices [list|add|requests|approve|deny|revoke]`, `communal link <code> --hub <url>` (fresh device), `communal restore <file>|--words [--hub]`, `communal recovery export --out <file>|--words`. `link`, `restore` and `recovery export` also work with the daemon stopped. Passphrases come from the terminal or `COMMUNAL_RECOVERY_PASSPHRASE`.
 - Network: `communal netcheck` (NAT type per hub, UPnP/NAT-PMP mapping, IPv6, CGNAT). The daemon maps its UDP port on the router unless `COMMUNAL_UPNP=false`.
+- Desktop (M9): `pnpm --filter @communal/desktop... run build`, then `COMMUNAL_BUILD=dev COMMUNAL_DEV_TLS=self-signed pnpm --filter @communal/desktop start` against a dev hub.
+  - The app loads `@communal/core` from its compiled `dist/`, so rebuild core after changing it.
+  - `COMMUNAL_USER_DATA` gives a separate profile, so two instances can run side by side. `COMMUNAL_DOWNLOADS` keeps test downloads out of `~/Downloads`.
+  - `pnpm --filter @communal/desktop smoke` starts it with no window and checks the core.
+  - `pnpm --filter @communal/desktop package` builds installers and smoke-tests them. Use `-- --dir` for the unpacked app only. `CSC_IDENTITY_AUTO_DISCOVERY=false` keeps a local signing identity out of the build.
+- Headless release: `pnpm --filter @communal/cli package` (a tarball with `install.sh` and `communal.service`). `communal check` runs the install self-check.
 - Hub admin: `communal-hub users | approve <user_id> | ban <user_id> [--reason] | unban <user_id> | set join_mode open|approval`. These commands work directly on the SQLite database, so they run alongside a live hub.
 
 Shell notes for this machine:
@@ -82,6 +88,13 @@ How the pieces connect:
   - **Losing access must never look like a deletion.** Hidden files simply stop being mentioned.
   - Core `subscriptions.ts` applies events one at a time per subscription and only moves the cursor once an event is fully applied. Deleted files go to the OS trash (`trash`), never `rm`. Local copies the user changed are never touched.
   - Tests inject `subscriptions.trash` so they never touch the real trash.
+- **Desktop** (ADR 0016):
+  - `apps/desktop/src/main` is the Electron main process: window, tray, `safeStorage` keys, updater. `core-host.ts` runs the core in a `utilityProcess` and must never import Electron.
+  - The renderer (`src/renderer`, React + TanStack Query) reaches the API only through `communal://api/...`. Main adds the token, and the renderer never sees it.
+  - Queries are tagged with API topics. `/v1/events` hints invalidate them, so prefer topics over polling.
+  - Renderer wire types live in `src/renderer/src/api.ts`. Keep them in step with `packages/core/src/api/server.ts`.
+  - The page CSP allows only bundled scripts. Fonts are bundled (`@fontsource-variable/...`).
+  - No asar: the core spawns ffmpeg and the trash helper by path.
 - **Hub visibility** is decided in exactly one place, `Catalog.visible()` in `apps/hub/src/catalog.ts`. Never filter access in individual queries. Each entry carries its governing rule (`entries.rule_path`), which `HubDb` re-tags whenever rules change (ADR 0009).
 - **Access rules are per hub, and the client's copy is authoritative** (core `index.db` table `acl`). It's pushed whole with `acl.replace` on every sign-in. List grants only work while the two users are connected.
 - **Clients never trust a hub's claims about identity:** run `checkSummary` on every `UserSummary` (core `people.ts`).

@@ -199,6 +199,43 @@ describe('access matrix (HANDOFF §6)', () => {
   });
 });
 
+describe('access control: library', () => {
+  type Listing = { devices: { device_id: string; user: { user_id: string }; online: boolean }[] };
+  const devices = async (c: Client) =>
+    body<Listing>(await c.request('library', {}))
+      .devices.map((d) => d.device_id)
+      .sort();
+
+  it('lists own devices and devices holding something visible, nothing else', async () => {
+    const w = await world();
+    const laptop = (await w.own.request('library', {})).body as Listing;
+    // Own devices, the empty one included, and with the user's summary.
+    expect(laptop.devices.map((d) => d.device_id).sort()).toEqual(
+      [w.alice.deviceId, ...t.db.listDevices(w.alice.userId).map((d) => d.id)]
+        .filter((d, i, a) => a.indexOf(d) === i)
+        .sort(),
+    );
+    expect(laptop.devices.every((d) => d.user.user_id === w.alice.userId)).toBe(true);
+    // Everyone else sees alice's device (it shares with the hub), but not her empty laptop, and
+    // not each other's devices: they share nothing.
+    for (const p of [w.bob, w.dave, w.carol, w.erin])
+      expect(await devices(p.c)).toEqual([p.deviceId, w.alice.deviceId].sort());
+  });
+
+  it('drops a device once nothing on it is visible, and hides banned owners', async () => {
+    const w = await world();
+    // Only bob's list rule and group rule left: dave (connected, not granted) loses the device.
+    await w.alice.c.request('acl.replace', {
+      device_id: w.alice.deviceId,
+      rules: [{ path: 'S/users/', audience: { users: [w.bob.userId] } }],
+    });
+    expect(await devices(w.dave.c)).toEqual([w.dave.deviceId]);
+    expect(await devices(w.bob.c)).toEqual([w.bob.deviceId, w.alice.deviceId].sort());
+    t.db.raw.prepare('UPDATE users SET banned_at = 1 WHERE id = ?').run(w.alice.userId);
+    expect(await devices(w.bob.c)).toEqual([w.bob.deviceId]);
+  });
+});
+
 describe('access control: acl.set / acl.replace', () => {
   it('only lets a device set rules for itself, with groups it owns', async () => {
     const w = await world();

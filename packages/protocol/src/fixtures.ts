@@ -41,7 +41,13 @@ const candidates = [
 ];
 const token = { claims: { session_id: sid, from: did, to: did2, hash, exp: 1_700_000_300 }, sig };
 const client = { name: 'communal-cli', version: '0.0.0' };
-const source = { device_id: did2, owner: uid2, path: 'Movies/Alien (1979).mkv', online: true };
+const source = {
+  device_id: did2,
+  owner: uid2,
+  path: 'Movies/Alien (1979).mkv',
+  online: true,
+  seen: 'now' as const,
+};
 
 export const clientFixtures: { [T in ClientType]: ClientBody<T> } = {
   auth: { device_id: did, sig, client },
@@ -93,7 +99,8 @@ export const clientFixtures: { [T in ClientType]: ClientBody<T> } = {
   'acl.replace': { device_id: did, rules: [{ path: 'Photos/', audience: 'hub' }] },
   'index.snapshot': { rev: 3, page: 0, last: true, entries: [entry] },
   'index.delta': { base_rev: 3, rev: 4, upsert: [{ ...entry, hash }], remove: ['Movies/old.mkv'] },
-  search: { q: 'alien', kind: 'video', min_size: 1_000_000, limit: 50 },
+  library: {},
+  search: { q: 'alien', kind: 'video', min_size: 1_000_000, available: 'week', limit: 50 },
   browse: { device_id: did2, path: 'Movies/' },
   sources: { hash },
   watch: { device_id: did2, path: 'Photos/', recursive: true, mirror_deletes: false, since_rev: 0 },
@@ -163,6 +170,9 @@ export const hubFixtures: { [T in HubType]: HubBody<T> } = {
   },
   'browse.listing': { online: true, dirs: [{ name: '2024' }], files: [entry] },
   'sources.list': { hash, sources: [source] },
+  'library.listing': {
+    devices: [{ device_id: did2, device_name: 'bob-laptop', user, online: false, seen: 'week' }],
+  },
   'watch.event': { device_id: did2, path: 'Photos/', rev: 9, added: [entry], removed: [] },
   presence: { device_id: did2, user_id: uid2, online: false },
   'connect.offer': {

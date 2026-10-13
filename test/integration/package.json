@@ -11,9 +11,11 @@
     "@communal/crypto": "workspace:*",
     "@communal/hub": "workspace:*",
     "@communal/protocol": "workspace:*",
-    "pino": "^10.4.0"
+    "pino": "^10.4.0",
+    "ws": "^8.22.0"
   },
   "devDependencies": {
+    "@types/ws": "^8.18.2",
     "sharp": "^0.35.5"
   }
 }

@@ -94,6 +94,24 @@ export class ThumbCache {
     return true;
   }
 
+  /** Bytes the cache holds now. */
+  usage(): number {
+    return this.store.cacheTotal();
+  }
+
+  /** Changes the cap and evicts down to it. */
+  async setCap(bytes: number) {
+    this.capBytes = bytes;
+    await this.evict();
+  }
+
+  /** Empties the cache; thumbnails are fetched again when next shown. */
+  async clear() {
+    const cap = this.capBytes;
+    await this.setCap(0);
+    this.capBytes = cap;
+  }
+
   private async evict() {
     let total = this.store.cacheTotal();
     while (total > this.capBytes) {

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { HubMessage } from '@communal/protocol';
-import { ftsQuery } from './catalog.js';
+import { Catalog, ftsQuery, seenBucket } from './catalog.js';
 import { signUp, startTestHub, type TestHub } from './testing.js';
 
 let t: TestHub;
@@ -236,6 +236,103 @@ describe('search hit naming', () => {
       await a.c.request('search', { q: 'holiday', limit: 5 }),
     );
     expect(r.hits.map((x) => x.name)).toEqual(['Holiday photo.png']);
+  });
+});
+
+describe('source availability (ADR 0015)', () => {
+  const T = 1_800_000_000;
+  const DAY = 86_400;
+
+  /**
+   * Four public copies of the same kind of file, one per user: bob online, carol seen 3 days
+   * ago, dave 20 days ago, frank never. The catalog gets fake presence and a fixed clock.
+   */
+  async function world() {
+    const names = ['bob', 'carol', 'dave', 'frank'];
+    const users = await Promise.all(names.map((n) => signUp(t.url, n)));
+    const viewer = await signUp(t.url, 'erin');
+    for (const [i, u] of users.entries()) {
+      await snapshot(u.c, 1, [entry(`S/${names[i]} alien.mkv`, h(i + 1))]);
+      await u.c.request('acl.set', { device_id: u.deviceId, path: 'S/', audience: 'hub' });
+    }
+    const [bob, carol, dave, frank] = users as [
+      (typeof users)[0],
+      (typeof users)[0],
+      (typeof users)[0],
+      (typeof users)[0],
+    ];
+    t.db.touchDevice(carol.deviceId, T - 3 * DAY);
+    t.db.touchDevice(dave.deviceId, T - 20 * DAY);
+    t.db.raw.prepare('UPDATE devices SET last_seen = NULL WHERE id = ?').run(frank.deviceId);
+    const online = new Set([bob.deviceId, viewer.deviceId]);
+    const catalog = new Catalog(
+      t.db,
+      { isOnline: (d) => online.has(d), onlineDevices: () => [...online] },
+      () => T,
+    );
+    return { bob, carol, dave, frank, viewer, catalog };
+  }
+
+  it('rounds last_seen into buckets', () => {
+    expect(seenBucket(null, T)).toBe('older');
+    expect(seenBucket(T - 60, T)).toBe('today');
+    expect(seenBucket(T - DAY, T)).toBe('week');
+    expect(seenBucket(T - 6 * DAY, T)).toBe('week');
+    expect(seenBucket(T - 7 * DAY, T)).toBe('month');
+    expect(seenBucket(T - 30 * DAY, T)).toBe('older');
+  });
+
+  it('ranks hits by availability and says when each source was seen', async () => {
+    const w = await world();
+    const r = w.catalog.search(w.viewer.userId, { q: 'alien', limit: 10 });
+    const got = r.hits.map((x) => x.sources.map((s) => [s.owner, s.online, s.seen]));
+    expect(got.slice(0, 2)).toEqual([
+      [[w.bob.userId, true, 'now']],
+      [[w.carol.userId, false, 'week']],
+    ]);
+    // dave and frank are both stale, so relevance decides between them.
+    expect(got.slice(2).sort()).toEqual(
+      [[[w.dave.userId, false, 'month']], [[w.frank.userId, false, 'older']]].sort(),
+    );
+    expect(w.catalog.sources(w.viewer.userId, h(2)).sources).toEqual([
+      expect.objectContaining({ device_id: w.carol.deviceId, online: false, seen: 'week' }),
+    ]);
+  });
+
+  it('filters by availability inside the query, so paging still works', async () => {
+    const w = await world();
+    const owners = (available?: 'now' | 'today' | 'week' | 'month') =>
+      w.catalog
+        .search(w.viewer.userId, { q: 'alien', limit: 10, ...(available ? { available } : {}) })
+        .hits.map((x) => x.sources[0]!.owner);
+    expect(owners('now')).toEqual([w.bob.userId]);
+    expect(owners('today')).toEqual([w.bob.userId]);
+    expect(owners('week')).toEqual([w.bob.userId, w.carol.userId]);
+    expect(owners('month')).toEqual([w.bob.userId, w.carol.userId, w.dave.userId]);
+    expect(owners()).toHaveLength(4);
+
+    const page1 = w.catalog.search(w.viewer.userId, { q: 'alien', available: 'month', limit: 2 });
+    expect(page1.hits.map((x) => x.sources[0]!.owner)).toEqual([w.bob.userId, w.carol.userId]);
+    const page2 = w.catalog.search(w.viewer.userId, {
+      q: 'alien',
+      available: 'month',
+      limit: 2,
+      cursor: page1.cursor!,
+    });
+    expect(page2.hits.map((x) => x.sources[0]!.owner)).toEqual([w.dave.userId]);
+    expect(page2.cursor).toBeUndefined();
+  });
+
+  it('filters only what the viewer may see, and sends seen over the wire', async () => {
+    const w = await world();
+    // A private file on an online device stays hidden whatever the filter.
+    await snapshot(w.bob.c, 2, [entry('P/alien private.mkv', h(9))]);
+    const r = body<{ hits: { hash: string; sources: { seen: string }[] }[] }>(
+      await w.viewer.c.request('search', { q: 'alien', available: 'now', limit: 10 }),
+    );
+    expect(r.hits.map((x) => x.hash)).not.toContain(h(9));
+    // Over the wire, the real hub's presence applies: everyone in world() is still connected.
+    expect(r.hits.every((x) => x.sources.every((s) => s.seen === 'now'))).toBe(true);
   });
 });
 

@@ -49,6 +49,20 @@ interface Peer {
   strikes: number;
 }
 
+/** A source of a running download, for the Transfers screen (HANDOFF §11 per-source speeds). */
+export interface LiveSource {
+  hub: string;
+  device_id: string;
+  /** Verified bytes received from this source in the current run. */
+  bytes: number;
+  /** Bytes per second over roughly the last second or two. */
+  rate: number;
+}
+
+interface SourceStat extends LiveSource {
+  mark: { at: number; bytes: number };
+}
+
 class Retryable extends Error {
   constructor(
     message: string,
@@ -87,6 +101,7 @@ export class Downloads extends EventEmitter<DownloadEvents> {
   private readonly log: Logger;
   private readonly running = new Map<string, AbortController>();
   private readonly retryTimers = new Map<string, NodeJS.Timeout>();
+  private readonly live = new Map<string, Map<string, SourceStat>>();
   private stopped = false;
 
   constructor(opts: DownloadOptions) {
@@ -150,6 +165,16 @@ export class Downloads extends EventEmitter<DownloadEvents> {
 
   list(): TransferRow[] {
     return this.o.store.transfers();
+  }
+
+  /** The sources a running download is fetching from right now, with their speeds. */
+  liveSources(id: string): LiveSource[] {
+    const now = Date.now();
+    // A source that has gone quiet shows 0, not its last speed.
+    return [...(this.live.get(id)?.values() ?? [])].map(({ mark, ...s }) => ({
+      ...s,
+      rate: now - mark.at > 3_000 ? 0 : s.rate,
+    }));
   }
 
   private schedule(id: string, delayMs: number) {
@@ -373,12 +398,30 @@ export class Downloads extends EventEmitter<DownloadEvents> {
     /** Peers that sent bad data for a chunk; it's re-fetched elsewhere when possible. */
     const badFrom = new Map<number, Set<string>>();
     let lastProgress = 0;
+    const stats = new Map<string, SourceStat>();
+    this.live.set(t.id, stats);
+    const stat = (p: Peer) => {
+      let st = stats.get(p.key);
+      if (!st) {
+        st = {
+          hub: p.source.hub,
+          device_id: p.source.device,
+          bytes: 0,
+          rate: 0,
+          mark: { at: Date.now(), bytes: 0 },
+        };
+        stats.set(p.key, st);
+      }
+      return st;
+    };
+    for (const p of peers) stat(p);
 
     return new Promise<void>((resolve, reject) => {
       let finished = false;
       const finish = (err?: Error) => {
         if (finished) return;
         finished = true;
+        this.live.delete(t.id);
         clearInterval(watchdog);
         for (const p of peers) p.channel.removeAllListeners('frame');
         if (err) reject(err);
@@ -422,6 +465,7 @@ export class Downloads extends EventEmitter<DownloadEvents> {
         for (const i of p.inflight) requestedAt.delete(i);
         p.inflight.clear();
         p.channel.close();
+        stats.delete(p.key);
         this.log.info({ transfer_id: t.id, source: p.key, why }, 'dropped source');
         if (peers.length === 0) return finish(new Retryable(`all sources gone (${why})`));
         for (const q of peers) assign(q);
@@ -456,6 +500,13 @@ export class Downloads extends EventEmitter<DownloadEvents> {
             return;
           }
           pending.delete(i);
+          const st = stat(p);
+          st.bytes += payload.length;
+          const at = Date.now();
+          if (at - st.mark.at >= 1_000) {
+            st.rate = Math.round(((st.bytes - st.mark.bytes) * 1_000) / (at - st.mark.at));
+            st.mark = { at, bytes: st.bytes };
+          }
           try {
             await x.onChunk(i, payload);
           } catch (err) {

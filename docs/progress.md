@@ -2,36 +2,69 @@
 
 ## Next up
 
-**M9 — Desktop app + packaging.** HANDOFF §11, §12. Everything the screens need is in the local API; see the notes below.
+**v1 is feature-complete.** What's left needs the owner:
 
-**Still open from M0:** the 1 GiB transfer between two physical machines on a LAN. It needs the owner's second machine.
+- **Hands-on test of the M9 done criterion:** a non-technical person installs the app, joins, shares a folder and downloads a file without reading docs. The flow was walked through end to end by driving the app (below), but not by a person.
+- **The 1 GiB transfer between two physical machines on a LAN** (open since M0). It needs a second machine.
+- **Release decisions** (ADR 0016 "Not done"): the update-feed location, code-signing certificates, version numbers.
+- The NAT lab (`docker/nat/test.sh`) and the CI `desktop` / release workflows haven't run since M9. Linux packaging was checked locally in Docker (below). Windows packaging hasn't been run anywhere yet.
+- After v1: the hub web admin UI (`docs/questions.md`) and a retention setting for long-unseen devices (ADR 0015).
 
-**Notes for M9 (desktop):**
+## M9 — Desktop app + packaging (2026-10-12)
 
-- `better-sqlite3` and `udx-native` are native modules. They need an Electron rebuild (or matching prebuilds) and a smoke test inside Electron's `utilityProcess`.
-- `trash` runs bundled binaries on macOS and Windows (`macos-trash`, `windows-trash.exe`). They must be unpacked from the asar (ADR 0013).
-- Settings needs a hub list (ADR 0007).
-- The access UI must show which hub each rule applies to.
-- Turn on the router port mapper (`RouterPortMapper`) the way the CLI daemon does. Settings → Network shows `GET /v1/network` and re-runs `POST /v1/network/check`. Transfers show `diagnosis.message`, `tips` and `fix` (ADR 0011).
-- The Subscribe button must ask about mirroring deletions, with "no" as the default. The API requires the answer.
-- First launch (ADR 0014):
-  - **New** is `POST /v1/hubs`.
-  - **Existing account** is `POST /v1/account/link`. It waits up to 10 minutes for approval, so show the new device's id while it waits.
-  - **Restore** is `POST /v1/account/restore`.
-- Settings → Devices:
-  - `GET /v1/devices`, plus `POST /v1/link/codes` and polling `GET /v1/link/requests` for approvals. Show the requesting `device_id` so the person can compare it with the new device.
-  - Revoking is `POST /v1/devices/:id/revoke`. The first device has no revoke button.
-- Settings → Account: export the recovery key with `POST /v1/recovery`. It only works on a device where `GET /v1/account` says `holds_root_key`; elsewhere, say which device to use.
-  - Store `root.key` with `safeStorage`, and pass it as `CoreOptions.root`.
+**Status: done, pending the owner's hands-on test.** Details and decisions are in ADR 0015 (source availability) and ADR 0016 (desktop app and packaging).
 
-**Do in M9: source availability in search.** Today an offline device's entries stay in the hub index indefinitely. Search and browse still return them with `online: false`, and the ranking ignores whether a source is online. A download of a file with no online source sits in `waiting` (`peer_offline`) until a source comes back. A file whose owner has been gone for weeks looks the same as one whose owner went to lunch. `devices.last_seen` is recorded but only shown to the owner. Planned changes:
+### What exists
 
-- Add `last_seen` to each source in `search` and `sources.list`, so the UI can say "offline · seen 3 weeks ago". These are new fields, so record them in ADR 0004.
-- Add an availability filter to `search`: any (the default), online now, or seen within N days. It belongs in the search query, not in `Catalog.visible()`, because it's about relevance, not access. Online state lives in memory, so pass the online device ids into the SQL rather than filtering after the query (which breaks paging).
-- Rank by availability within relevance: online, then recently seen, then stale.
-- Desktop search gets a "Show only available files" toggle, and each hit shows when its sources were last seen. The CLI gets matching `search` flags.
-- Decide before building: `last_seen` reveals when someone was last active. Presence already shows online/offline, so this adds history. Consider rounding to "today / this week / this month / longer" instead of sending exact timestamps, and record the choice in an ADR.
-- Later, with the hub admin UI: a retention setting that hides a device's entries after X days unseen. Its next snapshot would restore them.
+- **Source availability in search (ADR 0015):**
+  - Every source in `search.results` and `sources.list` carries a rounded `seen` (`now | today | week | month | older`), not a timestamp.
+  - `search.available` filters on the same buckets. It sits inside the SQL (online device ids are passed as JSON), so paging still works.
+  - Ranking is availability tier, then relevance. The client keeps the tiers when it merges results from several hubs.
+  - CLI: `communal search --online | --seen today|week|month`.
+- **Hub:** `library` / `library.listing` lists the devices a viewer can browse, through `Catalog.visible()`, with access-control tests.
+- **Core / local API:**
+  - `GET /v1/events`: a WebSocket of topic hints.
+  - `GET /v1/library`.
+  - Per-source speeds in `GET /v1/downloads`.
+  - `status().hubs[].problem`.
+  - Settings persisted in `settings.json`, plus thumbnail-cache controls (`/v1/settings/storage`).
+  - `GET /v1/self-check` (`communal check`).
+  - `listen()` fails with a clear error instead of crashing.
+- **Desktop app (`apps/desktop`):**
+  - Electron 44 with a React 19 renderer. The core runs in a `utilityProcess`.
+  - Keys are stored with `safeStorage`. The API is proxied through `communal://api`, so the renderer never sees the token.
+  - Every §11 screen, a tray icon, auto-update, and light and dark themes.
+- **Packaging:**
+  - `pnpm --filter @communal/desktop package`: electron-builder (dmg/zip, NSIS, AppImage/deb) with signing and notarizing hooks, followed by a smoke test of the packaged app.
+  - `pnpm --filter @communal/cli package`: a tarball with `install.sh` and a hardened `communal.service`.
+  - `.github/workflows/release.yml` on `v*` tags.
+  - The CI `desktop` job smoke-tests Electron on all three OSes.
+
+### Done criteria
+
+- [x] **All §11 screens.** They were checked in the running app with two instances (alice, bob) against a dev hub, driven over the DevTools protocol with screenshots:
+  1. First launch: join.
+  2. People: search, request; the other side sees it live with a badge, and accepts.
+  3. My shares: an audience picker scoped to one hub.
+  4. Library: people → computer → folders, with video, photo and PDF thumbnails, a text preview, and download.
+  5. Search, with the availability state shown.
+  6. Transfers, Subscriptions (the mirror-deletes question with "No" preselected) and Activity (names resolved).
+  7. Settings: link code, network.
+  8. Light and dark themes, and a narrow window.
+- [x] **electron-builder for each OS, with code-signing hooks and auto-update.** The macOS dmg and zip were built and the packaged app passed its smoke test: SQLite, UDP transport, sharp, canvas, pdf.js, ffmpeg and trash all work in the packaged utility process. In a Debian (arm64) container, the dev-build smoke test passed, the AppImage and deb (`Package: communal`) were built, and the packaged app passed its smoke test. Windows will only run in CI.
+- [x] **Headless packaging and systemd unit.** The tarball was built on macOS and Linux (arm64), and its daemon passed the self-check on macOS. `systemd-analyze verify` accepts the unit, and `install.sh` passes `sh -n`. Neither has been run on a real systemd host.
+- [x] **Hub Docker image:** unchanged since M1, still built in CI.
+- [ ] **A non-technical user can install, join, share a folder and download a file without reading docs.** This needs a person (see Next up).
+
+### Demo
+
+```sh
+pnpm --filter @communal/hub dev                 # a hub on wss://localhost:8443/v1
+pnpm --filter @communal/desktop... run build
+COMMUNAL_BUILD=dev COMMUNAL_DEV_TLS=self-signed pnpm --filter @communal/desktop start
+# A second instance: COMMUNAL_USER_DATA=/tmp/bob … pnpm --filter @communal/desktop start
+pnpm --filter @communal/desktop package         # installers in apps/desktop/release
+```
 
 ## M8 — Devices and recovery (2026-10-12)
 

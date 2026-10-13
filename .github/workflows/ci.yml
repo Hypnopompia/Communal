@@ -24,6 +24,30 @@ jobs:
       - name: Transport spike (loopback, 256 MiB)
         run: pnpm --filter @communal/spike-transport exec tsx --conditions=@communal/source src/bench.ts local --bytes 256M
 
+  desktop:
+    # M9: the Electron app builds, and the core starts in its utilityProcess with every native
+    # piece working (better-sqlite3, udx-native, sharp, canvas, ffmpeg, trash).
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version-file: .nvmrc }
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @communal/desktop... run build
+      - name: Smoke test (Linux, under Xvfb)
+        if: runner.os == 'Linux'
+        run: |
+          # Ubuntu 24.04 blocks the unprivileged user namespaces Chromium's sandbox needs.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          xvfb-run -a node apps/desktop/scripts/smoke.mjs
+      - name: Smoke test
+        if: runner.os != 'Linux'
+        run: node apps/desktop/scripts/smoke.mjs
+
   docker:
     runs-on: ubuntu-latest
     steps:

@@ -96,6 +96,11 @@ export interface CoreOptions {
 
 export { CoreError };
 
+export interface SavedSettings {
+  uploads?: Partial<UploadLimits>;
+  thumb_cache_bytes?: number;
+}
+
 /** A link request waiting for this device's approval (ADR 0014). */
 export interface PendingLink {
   request_id: string;
@@ -136,6 +141,7 @@ export class CommunalCore {
   uploadLimits: UploadLimits;
   readonly log: Logger;
   private readonly hubsFile: string;
+  private readonly settingsFile: string;
   private readonly accountFile: AccountFile;
   private accountId?: AccountIdentity;
   private rootSecretKept?: Uint8Array;
@@ -197,7 +203,9 @@ export class CommunalCore {
       this.revocations,
       this.log,
     );
-    this.uploadLimits = { ...DEFAULT_UPLOAD_LIMITS, ...o.uploads };
+    this.settingsFile = join(o.dataDir, 'settings.json');
+    const saved = this.loadSettings();
+    this.uploadLimits = { ...DEFAULT_UPLOAD_LIMITS, ...o.uploads, ...saved.uploads };
     this.uploader = new Uploader({
       store: this.store,
       hubs: this.hubs,
@@ -221,7 +229,7 @@ export class CommunalCore {
     this.thumbCache = new ThumbCache(
       join(o.dataDir, 'thumb-cache'),
       this.store,
-      o.media?.thumbCacheBytes ?? 256 * 1024 * 1024,
+      saved.thumb_cache_bytes ?? o.media?.thumbCacheBytes ?? 256 * 1024 * 1024,
     );
     this.subscriptions = new Subscriptions({
       store: this.store,
@@ -768,6 +776,42 @@ export class CommunalCore {
     return reply.body;
   }
 
+  // ── settings ──────────────────────────────────────────────────────────────
+
+  /**
+   * Settings changed through the local API (Settings screen, ADR 0016). They're kept in
+   * `settings.json` and take precedence over the host's defaults (CLI environment variables).
+   */
+  async updateSettings(change: SavedSettings) {
+    const saved = this.loadSettings();
+    if (change.uploads) {
+      saved.uploads = { ...saved.uploads, ...change.uploads };
+      this.uploadLimits = { ...this.uploadLimits, ...change.uploads };
+    }
+    if (change.thumb_cache_bytes !== undefined) {
+      saved.thumb_cache_bytes = change.thumb_cache_bytes;
+      await this.thumbCache.setCap(change.thumb_cache_bytes);
+    }
+    const tmp = this.settingsFile + '.tmp';
+    writeFileSync(tmp, JSON.stringify(saved, null, 2), { mode: 0o600 });
+    renameSync(tmp, this.settingsFile);
+  }
+
+  storage() {
+    return {
+      thumb_cache: { bytes: this.thumbCache.usage(), cap: this.thumbCache.capBytes },
+      own_thumbs: this.store.mediaCounts().thumbs,
+    };
+  }
+
+  private loadSettings(): SavedSettings {
+    try {
+      return JSON.parse(readFileSync(this.settingsFile, 'utf8')) as SavedSettings;
+    } catch {
+      return {};
+    }
+  }
+
   status() {
     return {
       device_id: this.deviceId,
@@ -776,6 +820,7 @@ export class CommunalCore {
         id: h.id,
         url: h.url,
         ready: h.ready,
+        problem: h.problem,
         registered: h.state.registered,
         user_id: h.state.userId ?? null,
         network: this.network.profile(h.id) ?? null,

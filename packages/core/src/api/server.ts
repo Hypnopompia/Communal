@@ -2,8 +2,10 @@ import { chmodSync, rmSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
+import type { Duplex } from 'node:stream';
+import { WebSocketServer, type WebSocket } from 'ws';
 import { z } from 'zod';
-import { Kind } from '@communal/protocol';
+import { Kind, Seen } from '@communal/protocol';
 import {
   importRecoveryFile,
   RecoveryError,
@@ -14,6 +16,7 @@ import { CoreError, type CommunalCore } from '../core.js';
 import { HubError } from '../hub-client.js';
 import { PeopleError } from '../people.js';
 import { explain } from '../transfer/diagnosis.js';
+import { selfCheck } from '../selfcheck.js';
 import { iconFor } from '../media/icons.js';
 import type { Kind as KindT } from '../index/detect.js';
 
@@ -100,9 +103,31 @@ const ExportRecovery = z.union([
 
 type Handler = (req: IncomingMessage, url: URL, body: unknown) => Promise<unknown>;
 
+/**
+ * What `GET /v1/events` (WebSocket) announces: which parts of the state changed, never the data
+ * itself. Clients refetch what they show. Sent as `{"topics": [...]}`, at most every 250 ms.
+ */
+export type ApiTopic =
+  'hubs' | 'presence' | 'people' | 'devices' | 'transfers' | 'index' | 'subscriptions';
+
+const HUB_EVENT_TOPIC: Partial<Record<string, ApiTopic>> = {
+  'connection.request': 'people',
+  'connection.accept': 'people',
+  'connection.remove': 'people',
+  'link.request': 'devices',
+  'link.done': 'devices',
+  'link.denied': 'devices',
+  'device.revoked': 'devices',
+  'watch.event': 'subscriptions',
+};
+
 export class LocalApi {
   private server?: Server;
   private readonly routes: { method: string; pattern: RegExp; handler: Handler }[] = [];
+  private readonly sockets = new WebSocketServer({ noServer: true, maxPayload: 1024 });
+  private readonly pending = new Set<ApiTopic>();
+  private flushTimer?: NodeJS.Timeout;
+  private unsubscribe?: () => void;
 
   constructor(private readonly core: CommunalCore) {
     const route = (method: string, path: string, handler: Handler) =>
@@ -117,6 +142,11 @@ export class LocalApi {
     };
 
     route('GET', '/v1/status', async () => this.core.status());
+    // Platform pieces (native modules, ffmpeg, trash helper) load and run here.
+    route('GET', '/v1/self-check', async () => {
+      const checks = await selfCheck(this.core);
+      return { ok: Object.values(checks).every((c) => c.ok), checks };
+    });
 
     route('GET', '/v1/hubs', async () => ({ hubs: this.core.status().hubs }));
     route('POST', '/v1/hubs', async (_req, _url, body) => {
@@ -232,6 +262,7 @@ export class LocalApi {
     route('GET', '/v1/people', async (_req, url) => ({
       connections: await people.connections(HubQuery.parse(q(url)).hub),
     }));
+    route('GET', '/v1/library', async () => people.library());
     route('GET', '/v1/people/search', async (_req, url) => {
       const p = HubQuery.extend({ q: z.string().trim().min(1).max(64) }).parse(q(url));
       return { users: await people.search(p.hub, p.q) };
@@ -267,9 +298,11 @@ export class LocalApi {
 
     // A failed connection's diagnosis comes with its user message, tips and whose side to fix.
     route('GET', '/v1/downloads', async () => ({
-      downloads: this.core.downloads
-        .list()
-        .map((d) => ({ ...d, diagnosis: d.diagnosis && explain(d.diagnosis) })),
+      downloads: this.core.downloads.list().map((d) => ({
+        ...d,
+        diagnosis: d.diagnosis && explain(d.diagnosis),
+        sources: this.core.downloads.liveSources(d.id),
+      })),
     }));
     route('POST', '/v1/downloads', async (_req, _url, body) => {
       const b = z
@@ -353,8 +386,26 @@ export class LocalApi {
         })
         .partial()
         .parse(body);
-      this.core.uploadLimits = { ...this.core.uploadLimits, ...b };
+      await this.core.updateSettings({ uploads: b });
       return this.core.uploadLimits;
+    });
+    route('GET', '/v1/settings/storage', async () => this.core.storage());
+    route('PUT', '/v1/settings/storage', async (_req, _url, body) => {
+      const b = z
+        .object({
+          thumb_cache_bytes: z
+            .number()
+            .int()
+            .min(16 * 1024 * 1024)
+            .max(64 * 1024 ** 3),
+        })
+        .parse(body);
+      await this.core.updateSettings(b);
+      return this.core.storage();
+    });
+    route('POST', '/v1/settings/storage/clear', async () => {
+      await this.core.thumbCache.clear();
+      return this.core.storage();
     });
 
     route('GET', '/v1/search', async (_req, url) => {
@@ -364,6 +415,7 @@ export class LocalApi {
           q: z.string().max(256).default(''),
           kind: Kind.optional(),
           min_size: z.coerce.number().int().nonnegative().optional(),
+          available: Seen.exclude(['older']).optional(),
           limit: z.coerce.number().int().min(1).max(500).default(50),
           cursors: z
             .string()
@@ -451,19 +503,102 @@ export class LocalApi {
   async listen(on: ListenOn): Promise<string> {
     const token = on.token ? Buffer.from(on.token) : undefined;
     this.server = createServer((req, res) => void this.handle(req, res, token));
+    this.server.on('upgrade', (req, socket, head) => this.upgrade(req, socket, head, token));
+    this.unsubscribe = this.watchCore();
     if ('socketPath' in on) {
       rmSync(on.socketPath, { force: true });
-      await new Promise<void>((r) => this.server!.listen(on.socketPath, r));
+      // Unix socket paths are short (104 bytes on macOS, 108 on Linux): say so, don't crash.
+      if (Buffer.byteLength(on.socketPath) > 103)
+        throw new Error(
+          `the API socket path is too long for this OS (${on.socketPath.length} characters); ` +
+            'use a shorter data directory or set COMMUNAL_API_SOCKET',
+        );
+      await this.listenOn((r) => this.server!.listen(on.socketPath, r));
       chmodSync(on.socketPath, 0o600);
       return on.socketPath;
     }
-    await new Promise<void>((r) => this.server!.listen(on.port, on.host, r));
+    await this.listenOn((r) => this.server!.listen(on.port, on.host, r));
     const a = this.server.address() as AddressInfo;
     return `http://${on.host}:${a.port}`;
   }
 
+  /** Starts listening; a failure (port in use, bad path) rejects instead of crashing. */
+  private listenOn(start: (ready: () => void) => void): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.server!.once('error', reject);
+      start(() => {
+        this.server!.off('error', reject);
+        resolve();
+      });
+    });
+  }
+
   async close() {
+    this.unsubscribe?.();
+    clearTimeout(this.flushTimer);
+    for (const ws of this.sockets.clients) ws.terminate();
     await new Promise<void>((r) => (this.server ? this.server.close(() => r()) : r()));
+  }
+
+  private authorized(req: IncomingMessage, token?: Buffer): boolean {
+    if (!token) return true;
+    const got = Buffer.from((req.headers.authorization ?? '').replace(/^Bearer /, ''));
+    return got.length === token.length && timingSafeEqual(got, token);
+  }
+
+  private upgrade(req: IncomingMessage, socket: Duplex, head: Buffer, token?: Buffer) {
+    const url = new URL(req.url ?? '/', 'http://local');
+    if (url.pathname !== '/v1/events' || !this.authorized(req, token)) {
+      socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      return;
+    }
+    this.sockets.handleUpgrade(req, socket, head, (ws: WebSocket) => {
+      // Incoming messages are ignored; the channel only goes one way.
+      ws.on('error', () => ws.terminate());
+    });
+  }
+
+  /** Turns core events into topic hints for `/v1/events`. Returns the unsubscribe function. */
+  private watchCore(): () => void {
+    const offs: (() => void)[] = [];
+    const on = <
+      E extends { on(e: string, f: () => void): unknown; off(e: string, f: () => void): unknown },
+    >(
+      emitter: E,
+      events: string[],
+      topic: ApiTopic,
+    ) => {
+      const f = () => this.notify(topic);
+      for (const e of events) {
+        emitter.on(e, f);
+        offs.push(() => emitter.off(e, f));
+      }
+    };
+    const c = this.core;
+    on(c.hubs, ['ready', 'disconnected', 'fatal', 'pending_approval', 'enrolled'], 'hubs');
+    on(c.hubs, ['presence'], 'presence');
+    on(c.downloads, ['progress', 'done', 'waiting', 'failed'], 'transfers');
+    on(c.indexer, ['changed', 'scanned'], 'index');
+    on(c.media, ['changed'], 'index');
+    const hubEvent = ({ msg }: { msg: { t: string } }) => {
+      const topic = HUB_EVENT_TOPIC[msg.t];
+      if (topic) this.notify(topic);
+    };
+    c.hubs.on('event', hubEvent);
+    offs.push(() => c.hubs.off('event', hubEvent));
+    return () => offs.forEach((f) => f());
+  }
+
+  /** Something changed; tell event listeners soon, coalescing bursts (progress, scans). */
+  notify(topic: ApiTopic) {
+    if (this.sockets.clients.size === 0) return;
+    this.pending.add(topic);
+    this.flushTimer ??= setTimeout(() => {
+      this.flushTimer = undefined;
+      const msg = JSON.stringify({ topics: [...this.pending] });
+      this.pending.clear();
+      for (const ws of this.sockets.clients) if (ws.readyState === ws.OPEN) ws.send(msg);
+    }, 250);
   }
 
   private async sendRaw(res: ServerResponse, r: RawReply) {
@@ -491,11 +626,7 @@ export class LocalApi {
       res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify(body));
     };
-    if (token) {
-      const got = Buffer.from((req.headers.authorization ?? '').replace(/^Bearer /, ''));
-      if (got.length !== token.length || !timingSafeEqual(got, token))
-        return send(401, { error: 'unauthorized' });
-    }
+    if (!this.authorized(req, token)) return send(401, { error: 'unauthorized' });
     const url = new URL(req.url ?? '/', 'http://local');
     const route = this.routes.find((r) => r.method === req.method && r.pattern.test(url.pathname));
     if (!route) return send(404, { error: 'not_found' });

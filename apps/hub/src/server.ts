@@ -181,7 +181,10 @@ export class HubServer {
   constructor(opts: HubOptions) {
     this.opts = { ...DEFAULTS, ...opts };
     this.db = opts.db;
-    this.catalog = new Catalog(this.db, (d) => this.isOnline(d));
+    this.catalog = new Catalog(this.db, {
+      isOnline: (d) => this.isOnline(d),
+      onlineDevices: () => [...this.online.keys(), ...this.goingOffline.keys()],
+    });
     this.log = opts.log ?? pino({ name: 'hub' });
   }
 
@@ -430,6 +433,17 @@ export class HubServer {
           if (!listing) return this.fail(s, 'not_found', 'no such device', msg.id);
           return this.send(s, 'browse.listing', listing, msg.id);
         }
+        case 'library':
+          return this.send(
+            s,
+            'library.listing',
+            {
+              devices: this.catalog
+                .library(s.user!)
+                .map(({ user, ...d }) => ({ ...d, user: this.summary(user) })),
+            },
+            msg.id,
+          );
         case 'user.search':
           return this.send(
             s,
