@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.1.2",
+    "date": "2026-10-13",
+    "changes": [
+      "Computers you've removed from your account no longer clutter Settings › Devices. Show them again with the button below the list.",
+      "A computer that was removed from your account now says so, and can start over to be added again with a new code. Its old data is kept in a backup folder.",
+      "Leaving your last hub now takes you to a screen where you can join one again, instead of an empty window."
+    ]
+  },
+  {
     "version": "0.1.1",
     "date": "2026-10-13",
     "changes": [
