@@ -85,13 +85,23 @@ const acct = (n: string) => ({
   platform: 'linux' as const,
 });
 
-/** Lists a folder tree as sorted relative paths → contents. */
+/**
+ * Lists a folder tree as sorted relative paths → contents. A download in progress can rename
+ * its `.part` file between listing and reading; such a file is skipped, and polling callers see
+ * the finished file next time.
+ */
 function tree(dir: string): Record<string, string> {
   const out: Record<string, string> = {};
   const walk = (d: string, rel: string) => {
     for (const e of readdirSync(d, { withFileTypes: true })) {
       if (e.isDirectory()) walk(join(d, e.name), `${rel}${e.name}/`);
-      else out[`${rel}${e.name}`] = readFileSync(join(d, e.name), 'utf8');
+      else {
+        try {
+          out[`${rel}${e.name}`] = readFileSync(join(d, e.name), 'utf8');
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+        }
+      }
     }
   };
   if (existsSync(dir)) walk(dir, '');

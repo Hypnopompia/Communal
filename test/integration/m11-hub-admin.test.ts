@@ -9,6 +9,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { pino } from 'pino';
 import { generateKeyPair } from '@communal/crypto';
 import { CommunalCore, LocalApi, LocalApiClient, type AdminGraph } from '@communal/core';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { createServer } from '@communal/mcp';
 import { HubDb } from '@communal/hub';
 import { sleep, startTestHub } from '@communal/hub/testing';
 
@@ -51,6 +54,29 @@ async function node(name: string) {
     await core.stop();
   });
   return { core, api: new LocalApiClient({ url, token: 'sekret-token-123' }) };
+}
+
+/** An AI agent driving a core through the MCP server (ADR 0017). */
+async function agentFor(api: LocalApiClient) {
+  const server = createServer(
+    async () => api,
+    () => 'test core',
+  );
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a);
+  const agent = new Client({ name: 'test-agent', version: '0' });
+  await agent.connect(b);
+  cleanups.push(() => agent.close());
+  const call = async (name: string, args: Record<string, unknown> = {}) => {
+    const r = (await agent.callTool({ name, arguments: args })) as {
+      isError?: boolean;
+      content: { text: string }[];
+    };
+    const text = r.content[0]!.text;
+    if (r.isError) throw new Error(text);
+    return JSON.parse(text) as unknown;
+  };
+  return { agent, call };
 }
 
 async function until(cond: () => boolean | Promise<boolean>, ms: number, label: string) {
@@ -158,5 +184,44 @@ describe('M11: hub admin from the client', () => {
       status: 403,
       message: expect.stringContaining('any more'),
     });
+  });
+
+  it('gives an agent the admin tools, refused by the hub for anyone else', async () => {
+    const h = await hub();
+    const alice = await node('alice');
+    const bob = await node('bob');
+    const ha = (await alice.core.addHub(h.url, acct('alice'))).hub.id;
+    const hb = (await bob.core.addHub(h.url, acct('bob'))).hub.id;
+    const aliceAgent = await agentFor(alice.api);
+    const bobAgent = await agentFor(bob.api);
+
+    const { tools } = await aliceAgent.agent.listTools();
+    const ann = (n: string) => tools.find((t) => t.name === n)?.annotations;
+    expect(ann('list_hub_users')).toMatchObject({ readOnlyHint: true });
+    expect(ann('ban_hub_user')).toMatchObject({ destructiveHint: true });
+    expect(ann('set_hub_settings')).toMatchObject({ destructiveHint: true });
+
+    await expect(bobAgent.call('list_hub_users', { hub: hb })).rejects.toThrow(/forbidden/);
+    await aliceAgent.call('set_hub_settings', { hub: ha, join_mode: 'approval', name: 'Ours' });
+    expect(await aliceAgent.call('get_hub_settings', { hub: ha })).toEqual({
+      join_mode: 'approval',
+      name: 'Ours',
+    });
+
+    const carol = await node('carol');
+    const joined = await carol.core.addHub(h.url, acct('carol'));
+    expect(joined.status).toBe('pending_approval');
+    const users = (await aliceAgent.call('list_hub_users', { hub: ha })) as {
+      users: { user_id: string; status: string }[];
+    };
+    const waiting = users.users.filter((u) => u.status === 'pending').map((u) => u.user_id);
+    expect(waiting).toEqual([joined.hub.state.userId]);
+    await aliceAgent.call('approve_hub_user', { hub: ha, user_id: waiting[0] });
+    await until(async () => (await hubStatus(carol.api)).problem === null, 5_000, 'carol in');
+
+    const log = (await aliceAgent.call('get_hub_admin_log', { hub: ha, limit: 3 })) as {
+      entries: { action: string }[];
+    };
+    expect(log.entries.map((e) => e.action)).toEqual(['approve', 'set', 'set']);
   });
 });

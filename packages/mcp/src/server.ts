@@ -3,7 +3,9 @@
  * running core's local API (the headless daemon, or the open desktop app). Everything a person
  * can do in the app is here except handling secrets and trust: exporting the recovery key,
  * linking, approving or removing devices, and marking a person as verified (that needs two
- * people comparing a code). Changes are annotated so clients ask before running them.
+ * people comparing a code). Hub admins also get tools to manage their hub (ADR 0020), but
+ * nothing here can make or remove admins: that's done on the hub's server. Changes are
+ * annotated so clients ask before running them.
  */
 import { readFileSync } from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -64,7 +66,10 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
         'identified by content hash. Paths on hubs look like "ShareName/folder/file". ' +
         'Changing who can see something (set_access, share_folder) exposes files to other ' +
         'people: confirm the audience with the user first. show_in_app moves the open ' +
-        'desktop window to a screen so the user can see what you did.',
+        'desktop window to a screen so the user can see what you did. On hubs where list_hubs ' +
+        'says admin: true, the *_hub_* tools manage the hub (people waiting to join, bans, its ' +
+        'settings, connections and the admin log); confirm every ban, approval and settings ' +
+        'change with the user first. Admins are only made on the hub server, never here.',
     },
   );
 
@@ -435,10 +440,91 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
     (c, a) => c.put('/v1/settings/uploads', a),
   );
 
+  // ── hub admin (ADR 0020): only on hubs where list_hubs says admin: true ──
+  const admin = (hub: string, path: string) => `/v1/hubs/${enc(hub)}/admin${path}`;
+  tool(
+    'list_hub_users',
+    'Everyone on a hub I administer: status (active or waiting to join), banned or not, admin or not, and their computers with online state and how many files and bytes each shares. Never file names.',
+    { hub: Hub },
+    READ,
+    (c, a) => c.get(admin(a.hub, '/users')),
+  );
+  tool(
+    'approve_hub_user',
+    'Lets someone who is waiting to join into a hub I administer. Confirm with the user first.',
+    { hub: Hub, user_id: z.string() },
+    CHANGE,
+    (c, a) => c.post(admin(a.hub, `/users/${enc(a.user_id)}/approve`), {}),
+  );
+  tool(
+    'ban_hub_user',
+    'Bans someone from a hub I administer: their computers are signed out at once and their files disappear from that hub. Admins can’t be banned this way. Confirm with the user first.',
+    {
+      hub: Hub,
+      user_id: z.string(),
+      reason: z.string().max(200).optional().describe('Kept in the admin log; not sent to them'),
+    },
+    REMOVE,
+    (c, a) =>
+      c.post(admin(a.hub, `/users/${enc(a.user_id)}/ban`), a.reason ? { reason: a.reason } : {}),
+  );
+  tool(
+    'unban_hub_user',
+    'Lifts a ban on a hub I administer.',
+    { hub: Hub, user_id: z.string() },
+    CHANGE,
+    (c, a) => c.post(admin(a.hub, `/users/${enc(a.user_id)}/unban`), {}),
+  );
+  tool(
+    'get_hub_settings',
+    'A hub I administer: its name and join mode (open: anyone with the address; approval: people wait to be let in).',
+    { hub: Hub },
+    READ,
+    (c, a) => c.get(admin(a.hub, '/settings')),
+  );
+  tool(
+    'set_hub_settings',
+    'Changes the name or join mode of a hub I administer. "open" lets anyone with the address in. Confirm with the user first.',
+    {
+      hub: Hub,
+      join_mode: z.enum(['open', 'approval']).optional(),
+      name: z
+        .string()
+        .min(1)
+        .max(64)
+        .nullable()
+        .optional()
+        .describe('What people see instead of the address; null removes it'),
+    },
+    REMOVE,
+    (c, a) => {
+      const { hub, ...change } = a;
+      return c.put(admin(hub, '/settings'), change);
+    },
+  );
+  tool(
+    'get_hub_graph',
+    'Who is connected to whom on a hub I administer (accepted and pending). Never groups or who can see which files.',
+    { hub: Hub },
+    READ,
+    (c, a) => c.get(admin(a.hub, '/graph')),
+  );
+  tool(
+    'get_hub_admin_log',
+    'The admin log of a hub I administer, newest first: approvals, bans, settings changes and admin changes, from the app or the server. Page with before (an entry id).',
+    {
+      hub: Hub,
+      limit: z.number().int().min(1).max(500).optional(),
+      before: z.number().int().positive().optional(),
+    },
+    READ,
+    (c, a) => c.get(admin(a.hub, `/log${q({ limit: a.limit, before: a.before })}`)),
+  );
+
   // ── the app window ──
   tool(
     'show_in_app',
-    'Shows a screen in the open Communal desktop app (fails for the headless daemon). library takes hub, device and path to open a folder; search takes q; settings takes tab.',
+    'Shows a screen in the open Communal desktop app (fails for the headless daemon). library takes hub, device and path to open a folder; search takes q; settings takes tab; manage (a hub I administer) takes hub and tab people|connections|log|settings.',
     {
       screen: z.enum([
         'library',
@@ -449,6 +535,7 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
         'subscriptions',
         'activity',
         'settings',
+        'manage',
       ]),
       hub: z.string().optional(),
       device: z.string().optional(),
@@ -464,6 +551,9 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
           'downloads',
           'storage',
           'agents',
+          'people',
+          'connections',
+          'log',
         ])
         .optional(),
     },

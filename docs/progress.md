@@ -30,9 +30,6 @@ These need a person or hardware that CI doesn't have.
 
 ### Decided, ready to build
 
-- **Hub admin in the client** (ADR 0020). The hub side and core are done (see the dated section below). Still to do:
-  - CLI: `communal admin …` over the local API;
-  - MCP admin tools: list and log, approve, ban and unban, and settings. Destructive ones are marked, and none can make admins.
 - **Agents, first step** (ADR 0021, `docs/plans/agents.md`): thumbnails as MCP image content, then an access dry run. The dry run is shown to the person, never taken as confirmation.
 - **Re-share warning** (ADR 0021): say who will see the files before a download lands in a shared folder.
 - **People on several hubs** (ADR 0021): one person per `user_id` in People, named as on the first hub you joined. Actions stay per hub.
@@ -74,7 +71,7 @@ These are fine for now. Fix them if they start to bite.
 - **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
 - **From HANDOFF §15:** hubs caching thumbnails of hub-wide files, and mobile clients.
 
-## Hub admin: hub, core and desktop (2026-10-13)
+## Hub admin (2026-10-13)
 
 - **Admins (ADR 0020):** `users.admin_at`. The first account on a hub is its admin and is let in even in approval mode. On upgrade, an existing hub's oldest unbanned account becomes its admin. `communal-hub admin list|add|remove` changes admins, and only the shell can.
 - **Audit log:** an `admin_log` table. `approve`, `ban`, `unban`, `changeSettings` and `setAdmin` take an actor and log in the same transaction. `communal-hub log` prints the log.
@@ -91,6 +88,8 @@ These are fine for now. Fix them if they start to bite.
   - A banner says when people are waiting to join. Screens refresh on the `admin` topic.
   - `show_in_app` accepts `{screen: 'manage', hub, tab}`.
   - Checked in the running app against a dev hub with five headless clients: approval, ban, rename, graph, log, light and dark themes.
+- **CLI:** `communal admin users [--waiting|--banned] | approve | ban [--reason] | unban | settings [--join-mode] [--name|--clear-name] | graph | log [-n] [--before]`. It picks the one hub you administer when there's no `--hub`. Checked by hand against a dev hub.
+- **MCP** (amends ADR 0017): `list_hub_users`, `approve_hub_user`, `ban_hub_user`, `unban_hub_user`, `get_hub_settings`, `set_hub_settings`, `get_hub_graph` and `get_hub_admin_log`. Ban and settings tools are destructive, and the instructions say to confirm with the user. `show_in_app` opens Manage. `m11-hub-admin` drives them through an MCP client. The M9 test still forbids device approval and any admin-granting tool.
 - **Core:** `HubAdmin` (`core.admin`) and the `/v1/hubs/:id/admin/...` routes, `admin` in hub status, and an `admin` event topic. Renaming the hub updates the admin's own app at once. `m11-hub-admin` drives it all through the local API: only the first account can manage the hub, approval, the graph, a ban that signs someone out, the log, and removal by the shell mid-session.
 
 ## People, shares and a Linux installer (0.1.5, 2026-10-13)

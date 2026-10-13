@@ -189,6 +189,40 @@ sudo -u communal communal status</code></pre>
           </tr>
         </table>
 
+        <h2 id="admin">Managing a hub</h2>
+        <p>
+          On a hub you administer (the first account on a hub is its admin). Add
+          <code>--hub</code> if you administer more than one.
+        </p>
+        <table>
+          <tr>
+            <th>Command</th>
+            <th>What it does</th>
+          </tr>
+          <tr>
+            <td><code>communal admin users [--waiting|--banned]</code></td>
+            <td>Everyone on the hub, with their computers and how much each shares.</td>
+          </tr>
+          <tr>
+            <td><code>communal admin approve|unban &lt;user_id&gt;</code></td>
+            <td>Let in someone who’s waiting, or lift a ban.</td>
+          </tr>
+          <tr>
+            <td><code>communal admin ban &lt;user_id&gt; [--reason]</code></td>
+            <td>Sign someone out of the hub for good. Admins can’t be banned here.</td>
+          </tr>
+          <tr>
+            <td>
+              <code>communal admin settings [--join-mode open|approval] [--name|--clear-name]</code>
+            </td>
+            <td>Show or change the hub’s name and who can join.</td>
+          </tr>
+          <tr>
+            <td><code>communal admin graph</code>, <code>communal admin log</code></td>
+            <td>Who’s connected to whom, and every admin action.</td>
+          </tr>
+        </table>
+
         <h2 id="finding">Finding and downloading</h2>
         <table>
           <tr>

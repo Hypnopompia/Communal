@@ -46,6 +46,7 @@ These came from the owner during development. Don't revert them to the spec's wo
   3. Commit and push `main`, then run it.
   - It needs `gh` logged in, the Developer ID certificate in the keychain, and the App Store Connect API key in `.env` (see `.env.example`).
   - It signs and notarizes both Mac apps locally. GitHub Actions (`release.yml`) adds Windows, Linux and the tarballs to the draft, then the script publishes.
+- Hub admin from a client: `communal admin users|approve|ban|unban|settings|graph|log` (on hubs you administer).
 - AI agents: `communal mcp` (stdio MCP server). The desktop app serves its local socket only while Settings › AI agents allows it.
 - Site: `site/` (static HTML, deployed by `.github/workflows/pages.yml` to https://hypnopompia.github.io/Communal/). Screenshots in `site/screenshots/` come from two app profiles with generated demo data, never real files.
 - Hub admin: `communal-hub users | approve <user_id> | ban <user_id> [--reason] | unban <user_id> | set join_mode open|approval | set name "<readable name>" | admin [list|add|remove <user_id>] | log [-n N]`. These commands work directly on the SQLite database, so they run alongside a live hub. Every change goes in the audit log (`admin_log`) with `cli` as the actor.
@@ -111,7 +112,7 @@ How the pieces connect:
   - Renderer wire types live in `src/renderer/src/api.ts`. Keep them in step with `packages/core/src/api/server.ts`.
   - The page CSP allows only bundled scripts. Fonts are bundled (`@fontsource-variable/...`).
   - No asar: the core spawns ffmpeg and the trash helper by path.
-- **Agents** (ADR 0017): `packages/mcp` is an MCP server over the local API. It must never get tools for the recovery key, device linking or revoking, or verifying people. `discoverApi()` finds a running core (daemon, then the desktop app's control socket). `POST /v1/ui/show` moves the desktop window and is `not_found` when headless.
+- **Agents** (ADR 0017): `packages/mcp` is an MCP server over the local API. It must never get tools for the recovery key, device linking or revoking, verifying people, or making hub admins. Hub admin tools (`*_hub_*`) are fine: the hub checks admin on every call. `discoverApi()` finds a running core (daemon, then the desktop app's control socket). `POST /v1/ui/show` moves the desktop window and is `not_found` when headless.
 - **Hub admins** (ADR 0020): `users.admin_at`, checked by `HubDb.isAdmin()` on every `admin.*` message (a ban overrides it). The first account on a hub is its admin. Admin `HubDb` methods take an `actor` and write `admin_log` in the same transaction, so every front end is audited.
 - **Hub visibility** is decided in exactly one place, `Catalog.visible()` in `apps/hub/src/catalog.ts`. Never filter access in individual queries. Each entry carries its governing rule (`entries.rule_path`), which `HubDb` re-tags whenever rules change (ADR 0009).
 - **Access rules are per hub, and the client's copy is authoritative** (core `index.db` table `acl`). It's pushed whole with `acl.replace` on every sign-in. List grants only work while the two users are connected.

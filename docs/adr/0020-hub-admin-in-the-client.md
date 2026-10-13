@@ -1,6 +1,6 @@
 # ADR 0020 — Hub administration from the client
 
-- Status: accepted. Built: the hub side (protocol, database, handlers, `communal-hub admin` and `log`) and core (`HubAdmin`, the local API routes). The desktop screens are built too: Settings › Hubs › Manage. The CLI and MCP are next.
+- Status: accepted. Built: the hub side (protocol, database, handlers, `communal-hub admin` and `log`) and core (`HubAdmin`, the local API routes). Also built: the desktop screens (Settings › Hubs › Manage), `communal admin …` and the MCP admin tools.
 - Date: 2026-10-13
 
 Today a hub admin is anyone with a shell on the hub, using `communal-hub` (HANDOFF §10). The plan was a separate web admin UI after v1, with open questions about sign-in, graph privacy and where to serve it (`docs/questions.md`, now removed). The owner chose a different shape: admin lives in the clients.

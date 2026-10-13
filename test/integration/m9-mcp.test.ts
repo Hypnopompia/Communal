@@ -92,7 +92,16 @@ describe('M9: MCP server', () => {
       'show_in_app',
     ])
       expect(names).toContain(t);
-    for (const forbidden of [/recovery/, /revoke/, /approve/, /link/, /verify/]) {
+    // Hub admins may approve people onto their hub (ADR 0020), never devices onto an account,
+    // and nothing can make someone an admin.
+    for (const forbidden of [
+      /recovery/,
+      /revoke/,
+      /approve_(device|link)/,
+      /link/,
+      /verify/,
+      /admin_(add|remove)|make_admin/,
+    ]) {
       expect(names.filter((n) => forbidden.test(n))).toEqual([]);
     }
     // Reads say so; removals are marked destructive, so clients ask first.

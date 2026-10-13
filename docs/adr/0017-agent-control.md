@@ -28,7 +28,7 @@ The core's local API (`LocalApi`) is the only interface agents use, just as it i
   - Included: search, browse, preview text, download and transfers, the upload log, shares, access rules, connections, groups, subscriptions, hubs (join and leave), network, upload limits, and `show_in_app`.
   - **Excluded:** exporting the recovery key; creating link codes or approving, denying or revoking devices; account link and restore; and marking a person as verified, since that only means something when two people compare a code.
   - Excluded tools don't exist in the server at all, rather than being refused at call time.
-  - _Amended by ADR 0020:_ hub admin tools are added, refused by the hub unless the account is an admin. Making someone an admin stays shell only.
+  - _Amended by ADR 0020:_ hub admin tools are added: `list_hub_users`, `approve_hub_user`, `ban_hub_user`, `unban_hub_user`, `get_hub_settings`, `set_hub_settings`, `get_hub_graph` and `get_hub_admin_log`. The hub refuses them unless the account is an admin. Ban and settings changes are destructive. Making someone an admin stays shell only.
 - Tools carry MCP annotations (`readOnlyHint`, `destructiveHint`, `openWorldHint`), so clients ask before changes. The server instructions tell the agent to confirm audiences before opening files to other people.
 
 ### `show_in_app`

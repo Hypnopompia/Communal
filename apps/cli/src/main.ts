@@ -760,6 +760,219 @@ group
     }),
   );
 
+// ── hub admin (ADR 0020): only on hubs this account administers ───────────
+
+/**
+ * The hub an admin command applies to: --hub, else the only hub you administer. Admins
+ * themselves are added and removed on the hub's server (`communal-hub admin`), never here.
+ */
+async function pickAdminHub(c: LocalApiClient, hub?: string): Promise<string> {
+  if (hub) return pickHub(c, hub);
+  const { hubs } = await c.get<{ hubs: { id: string; url: string; admin: boolean }[] }>('/v1/hubs');
+  const mine = hubs.filter((h) => h.admin);
+  if (mine.length === 1) return mine[0]!.id;
+  if (mine.length === 0) throw new Error("you don't administer any of your hubs");
+  throw new Error(
+    `you administer ${mine.length} hubs; choose one with --hub (${mine.map((h) => h.id).join(', ')})`,
+  );
+}
+
+const adminPath = (hub: string, path: string) => `/v1/hubs/${encodeURIComponent(hub)}/admin${path}`;
+const when = (t: number | null) =>
+  t ? new Date(t * 1000).toISOString().slice(0, 16).replace('T', ' ') : 'never';
+
+type AdminUser = {
+  user_id: string;
+  display_name: string;
+  fingerprint: string;
+  status: 'active' | 'pending';
+  admin: boolean;
+  created_at: number;
+  banned_at: number | null;
+  ban_reason: string | null;
+  verified: boolean;
+  devices: {
+    device_id: string;
+    name: string;
+    online: boolean;
+    last_seen: number | null;
+    revoked_at: number | null;
+    files: number;
+    bytes: number;
+    nat?: { nat: string };
+  }[];
+};
+
+const admin = program
+  .command('admin')
+  .description('manage a hub you administer: people, settings, connections and the admin log');
+const adminHubOpt = ['--hub <id>', 'the hub (required if you administer several)'] as const;
+
+admin
+  .command('users')
+  .description("everyone on the hub, with their computers (counts only, never what's shared)")
+  .option(...adminHubOpt)
+  .option('--waiting', 'only people waiting to be let in')
+  .option('--banned', 'only banned people')
+  .option('--json', 'machine-readable output')
+  .action((opts: { hub?: string; waiting?: boolean; banned?: boolean; json?: boolean }) =>
+    viaDaemon(async (c) => {
+      const hub = await pickAdminHub(c, opts.hub);
+      const { users } = await c.get<{ users: AdminUser[] }>(adminPath(hub, '/users'));
+      const shown = users.filter((u) =>
+        opts.waiting ? u.status === 'pending' && !u.banned_at : opts.banned ? !!u.banned_at : true,
+      );
+      if (opts.json) return console.log(JSON.stringify(shown, null, 2));
+      if (shown.length === 0) return console.log('nobody');
+      for (const u of shown) {
+        const live = u.devices.filter((d) => !d.revoked_at);
+        const state = u.banned_at ? 'banned' : u.status === 'pending' ? 'waiting' : 'active';
+        const online = live.some((d) => d.online) ? 'online' : 'offline';
+        const files = live.reduce((n, d) => n + d.files, 0);
+        const bytes = live.reduce((n, d) => n + d.bytes, 0);
+        const tags = [u.admin && 'admin', u.verified && '✔ verified'].filter(Boolean).join(', ');
+        console.log(
+          `${u.user_id}  ${state.padEnd(7)}  ${online.padEnd(7)}  ${String(live.length).padStart(2)} computer(s)  ` +
+            `${String(files).padStart(6)} files ${humanSize(bytes).padStart(9)}  ${u.display_name}` +
+            (tags ? `  [${tags}]` : '') +
+            (u.ban_reason ? `  (${u.ban_reason})` : ''),
+        );
+      }
+    }),
+  );
+
+for (const [action, verb, help] of [
+  ['approve', 'let in', 'let in someone waiting to join'],
+  ['unban', 'unbanned', 'lift a ban'],
+] as const) {
+  admin
+    .command(`${action} <user_id>`)
+    .description(help)
+    .option(...adminHubOpt)
+    .action((user: string, opts: { hub?: string }) =>
+      viaDaemon(async (c) => {
+        const hub = await pickAdminHub(c, opts.hub);
+        await c.post(adminPath(hub, `/users/${encodeURIComponent(user)}/${action}`), {});
+        console.log(`${verb} ${user}`);
+      }),
+    );
+}
+
+admin
+  .command('ban <user_id>')
+  .description('ban someone: their computers are signed out of this hub at once (not admins)')
+  .option(...adminHubOpt)
+  .option('--reason <text>', 'kept in the admin log, not sent to them')
+  .action((user: string, opts: { hub?: string; reason?: string }) =>
+    viaDaemon(async (c) => {
+      const hub = await pickAdminHub(c, opts.hub);
+      await c.post(
+        adminPath(hub, `/users/${encodeURIComponent(user)}/ban`),
+        opts.reason ? { reason: opts.reason } : {},
+      );
+      console.log(`banned ${user}`);
+    }),
+  );
+
+admin
+  .command('settings')
+  .description("show or change the hub's name and who can join")
+  .option(...adminHubOpt)
+  .option('--join-mode <mode>', 'open (anyone with the address) or approval (you let people in)')
+  .option('--name <name>', 'what people see instead of the address')
+  .option('--clear-name', 'remove the name')
+  .action((opts: { hub?: string; joinMode?: string; name?: string; clearName?: boolean }) =>
+    viaDaemon(async (c) => {
+      const hub = await pickAdminHub(c, opts.hub);
+      if (opts.joinMode && opts.joinMode !== 'open' && opts.joinMode !== 'approval')
+        throw new Error('--join-mode is open or approval');
+      const change = {
+        ...(opts.joinMode ? { join_mode: opts.joinMode } : {}),
+        ...(opts.clearName ? { name: null } : opts.name ? { name: opts.name } : {}),
+      };
+      const s = Object.keys(change).length
+        ? await c.put<{ join_mode: string; name: string | null }>(
+            adminPath(hub, '/settings'),
+            change,
+          )
+        : await c.get<{ join_mode: string; name: string | null }>(adminPath(hub, '/settings'));
+      console.log(`join_mode = ${s.join_mode}`);
+      console.log(`name = ${s.name ?? '(none: people see the address)'}`);
+    }),
+  );
+
+admin
+  .command('graph')
+  .description('who is connected to whom on the hub (never groups or who can see what)')
+  .option(...adminHubOpt)
+  .option('--json', 'machine-readable output')
+  .action((opts: { hub?: string; json?: boolean }) =>
+    viaDaemon(async (c) => {
+      const hub = await pickAdminHub(c, opts.hub);
+      const g = await c.get<{
+        people: { user_id: string; display_name: string }[];
+        connections: { a: string; b: string; state: string; requested_by: string }[];
+      }>(adminPath(hub, '/graph'));
+      if (opts.json) return console.log(JSON.stringify(g, null, 2));
+      const name = new Map(g.people.map((p) => [p.user_id, p.display_name]));
+      const n = (id: string) => name.get(id) ?? id;
+      for (const e of g.connections) {
+        const other = e.requested_by === e.a ? e.b : e.a;
+        console.log(
+          e.state === 'accepted'
+            ? `${n(e.a)} ↔ ${n(e.b)}`
+            : `${n(e.requested_by)} → ${n(other)}  (not accepted yet)`,
+        );
+      }
+      const linked = new Set(g.connections.flatMap((e) => [e.a, e.b]));
+      const alone = g.people.filter((p) => !linked.has(p.user_id)).map((p) => p.display_name);
+      console.log(
+        `${g.people.length} people, ${g.connections.filter((e) => e.state === 'accepted').length} connections` +
+          (alone.length ? `; with nobody: ${alone.join(', ')}` : ''),
+      );
+    }),
+  );
+
+admin
+  .command('log')
+  .description('the admin log: every admin action, from the app or the server, newest first')
+  .option(...adminHubOpt)
+  .option('-n, --limit <n>', 'how many entries', '50')
+  .option('--before <id>', 'entries older than this one')
+  .option('--json', 'machine-readable output')
+  .action((opts: { hub?: string; limit: string; before?: string; json?: boolean }) =>
+    viaDaemon(async (c) => {
+      const hub = await pickAdminHub(c, opts.hub);
+      const q = new URLSearchParams({ limit: String(Math.max(1, Number(opts.limit) || 50)) });
+      if (opts.before) q.set('before', opts.before);
+      const [log, { users }] = await Promise.all([
+        c.get<{
+          entries: {
+            id: number;
+            at: number;
+            actor: string;
+            action: string;
+            target: string | null;
+            details: string | null;
+          }[];
+          more: boolean;
+        }>(adminPath(hub, `/log?${q}`)),
+        c.get<{ users: AdminUser[] }>(adminPath(hub, '/users')),
+      ]);
+      if (opts.json) return console.log(JSON.stringify(log, null, 2));
+      const names = new Map(users.map((u) => [u.user_id, u.display_name]));
+      const who = (id: string | null) => (id ? (names.get(id) ?? id) : '');
+      for (const e of log.entries) {
+        const details = e.details ? `  (${e.details})` : '';
+        console.log(
+          `${String(e.id).padStart(5)}  ${when(e.at)}  ${who(e.actor).padEnd(16)}  ${e.action.padEnd(12)}  ${who(e.target)}${details}`,
+        );
+      }
+      if (log.entries.length === 0) console.log('no admin actions yet');
+      if (log.more) console.log(`older entries: --before ${log.entries.at(-1)!.id}`);
+    }),
+  );
+
 // ── transfers ───────────────────────────────────────────────────────────────
 
 type Download = {
