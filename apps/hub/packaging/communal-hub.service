@@ -1,6 +1,6 @@
 # Communal hub (HANDOFF §10). Installed by packaging/install.sh.
 # Admin commands work on the database alongside the running hub:
-#   sudo -u communal-hub env COMMUNAL_HUB_DATA=/var/lib/communal-hub communal-hub users
+#   sudo -u communal-hub env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub users
 [Unit]
 Description=Communal hub
 After=network-online.target

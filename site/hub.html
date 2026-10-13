@@ -119,10 +119,10 @@ sudo certbot certonly --standalone -d hub.example.com \
           A new hub starts in <b>approval</b> mode: each new account waits until you let it in.
           Admin commands work on the database while the hub runs:
         </p>
-        <pre><code>sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub communal-hub users
-sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub communal-hub approve &lt;user_id&gt;
-sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub communal-hub ban &lt;user_id&gt; --reason "…"
-sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub communal-hub set join_mode open</code></pre>
+        <pre><code>sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub users
+sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub approve &lt;user_id&gt;
+sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub ban &lt;user_id&gt; --reason "…"
+sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub set join_mode open</code></pre>
         <p>
           With <code>join_mode open</code> anyone who knows the address can join. Since accounts
           need no email, a banned person can come back with a new key on an open hub; use approval
