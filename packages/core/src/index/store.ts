@@ -80,6 +80,8 @@ export interface SubscriptionRow {
   rev: number;
   /** `no_access` when the hub last refused the watch (the folder is gone or not shared). */
   status: 'ok' | 'no_access';
+  /** Part of the synced folder (ADR 0019): one of your devices' `Communal` folders. */
+  sync: boolean;
   created_at: number;
 }
 
@@ -105,6 +107,8 @@ export interface SubFileRow {
   local: LocalStamp | null;
   /** The previous version's local copy, replaced once the new one is in (ADR 0013). */
   prev: LocalStamp | null;
+  /** The source's modification time (seconds), kept on synced files (ADR 0019). */
+  mtime?: number | null;
 }
 
 export interface Change {
@@ -260,20 +264,28 @@ const MIGRATIONS = [
     PRIMARY KEY (user_id, device_id)
   );
   `,
+  `
+  -- The synced folder (ADR 0019): subscriptions between your devices' Communal folders, and
+  -- the source's modification time of each file, which synced copies keep.
+  ALTER TABLE subscriptions ADD COLUMN sync INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE sub_files ADD COLUMN mtime INTEGER;
+  `,
 ];
 
 const now = () => Math.floor(Date.now() / 1000);
 
-type RawSub = Omit<SubscriptionRow, 'recursive' | 'mirror_deletes' | 'paused'> & {
+type RawSub = Omit<SubscriptionRow, 'recursive' | 'mirror_deletes' | 'paused' | 'sync'> & {
   recursive: number;
   mirror_deletes: number;
   paused: number;
+  sync: number;
 };
 const parseSub = (r: RawSub): SubscriptionRow => ({
   ...r,
   recursive: r.recursive === 1,
   mirror_deletes: r.mirror_deletes === 1,
   paused: r.paused === 1,
+  sync: r.sync === 1,
 });
 type RawSubFile = Omit<SubFileRow, 'local' | 'prev'> & {
   local: string | null;
@@ -677,28 +689,33 @@ export class IndexStore {
 
   // ── subscriptions (M7) ────────────────────────────────────────────────────
 
-  addSubscription(s: Omit<SubscriptionRow, 'paused' | 'rev' | 'status' | 'created_at'>) {
+  addSubscription(
+    s: Omit<SubscriptionRow, 'paused' | 'rev' | 'status' | 'created_at' | 'sync'> & {
+      sync?: boolean;
+    },
+  ) {
     this.raw
       .prepare(
-        `INSERT INTO subscriptions (id, hub, device_id, path, recursive, dest_dir, mirror_deletes, created_at)
-         VALUES (@id, @hub, @device_id, @path, @recursive, @dest_dir, @mirror_deletes, @at)`,
+        `INSERT INTO subscriptions (id, hub, device_id, path, recursive, dest_dir, mirror_deletes, sync, created_at)
+         VALUES (@id, @hub, @device_id, @path, @recursive, @dest_dir, @mirror_deletes, @sync, @at)`,
       )
       .run({
         ...s,
         recursive: s.recursive ? 1 : 0,
         mirror_deletes: s.mirror_deletes ? 1 : 0,
+        sync: s.sync ? 1 : 0,
         at: now(),
       });
   }
 
   updateSubscription(
     id: string,
-    patch: Partial<Pick<SubscriptionRow, 'mirror_deletes' | 'paused' | 'rev' | 'status'>>,
+    patch: Partial<Pick<SubscriptionRow, 'mirror_deletes' | 'paused' | 'rev' | 'status' | 'sync'>>,
   ) {
     const cols = Object.keys(patch);
     if (cols.length === 0) return;
     const values: Record<string, unknown> = { ...patch, id };
-    for (const k of ['mirror_deletes', 'paused'] as const)
+    for (const k of ['mirror_deletes', 'paused', 'sync'] as const)
       if (patch[k] !== undefined) values[k] = patch[k] ? 1 : 0;
     this.raw
       .prepare(
@@ -747,10 +764,50 @@ export class IndexStore {
     return r && parseSubFile(r);
   }
 
-  subFileByTransfer(transferId: string): SubFileRow | undefined {
-    const r = this.raw.prepare('SELECT * FROM sub_files WHERE transfer_id = ?').get(transferId) as
-      RawSubFile | undefined;
+  /** The files waiting for this download: one, or several synced-folder sources sharing it. */
+  subFilesByTransfer(transferId: string): SubFileRow[] {
+    return (
+      this.raw
+        .prepare('SELECT * FROM sub_files WHERE transfer_id = ?')
+        .all(transferId) as RawSubFile[]
+    ).map(parseSubFile);
+  }
+
+  /** A synced-folder download already under way for this content at this path, if any. */
+  syncPending(hash: string, path: string): SubFileRow | undefined {
+    const r = this.raw
+      .prepare(
+        `SELECT f.* FROM sub_files f JOIN subscriptions s ON s.id = f.sub_id
+         WHERE s.sync = 1 AND f.state = 'pending' AND f.transfer_id IS NOT NULL
+           AND f.hash = ? AND f.path = ?`,
+      )
+      .get(hash, path) as RawSubFile | undefined;
     return r && parseSubFile(r);
+  }
+
+  /** Whether another synced-folder source already gave us this version of this file. */
+  syncHad(path: string, hash: string, exceptSub: string): boolean {
+    return (
+      this.raw
+        .prepare(
+          `SELECT 1 FROM sub_files f JOIN subscriptions s ON s.id = f.sub_id
+           WHERE s.sync = 1 AND f.state = 'done' AND f.path = ? AND f.hash = ? AND f.sub_id != ?`,
+        )
+        .get(path, hash, exceptSub) !== undefined
+    );
+  }
+
+  /** What synced-folder subscriptions last wrote or saw at this local path. */
+  syncStampsAt(localPath: string): LocalStamp[] {
+    return (
+      this.raw
+        .prepare(
+          `SELECT f.local FROM sub_files f JOIN subscriptions s ON s.id = f.sub_id
+           WHERE s.sync = 1 AND f.local IS NOT NULL AND json_extract(f.local, '$.path') = ?`,
+        )
+        .pluck()
+        .all(localPath) as string[]
+    ).map((l) => JSON.parse(l) as LocalStamp);
   }
 
   /** Files of any subscription with this content that we have locally. */
@@ -772,11 +829,12 @@ export class IndexStore {
   putSubFile(f: SubFileRow) {
     this.raw
       .prepare(
-        `INSERT OR REPLACE INTO sub_files (sub_id, path, hash, state, transfer_id, local, prev)
-         VALUES (@sub_id, @path, @hash, @state, @transfer_id, @local, @prev)`,
+        `INSERT OR REPLACE INTO sub_files (sub_id, path, hash, state, transfer_id, local, prev, mtime)
+         VALUES (@sub_id, @path, @hash, @state, @transfer_id, @local, @prev, @mtime)`,
       )
       .run({
         ...f,
+        mtime: f.mtime ?? null,
         local: f.local ? JSON.stringify(f.local) : null,
         prev: f.prev ? JSON.stringify(f.prev) : null,
       });

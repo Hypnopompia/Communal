@@ -106,9 +106,10 @@ function start() {
   });
   ipcMain.handle('clipboard:write', (_e, text: string) => clipboard.writeText(text));
   ipcMain.handle('app:device-name', () => hostname().split('.')[0] || hostname());
-  ipcMain.handle('dialog:folder', async (_e, title: string) => {
+  ipcMain.handle('dialog:folder', async (_e, title: string, start?: string) => {
     const r = await dialog.showOpenDialog(win!, {
       title,
+      ...(typeof start === 'string' ? { defaultPath: start } : {}),
       properties: ['openDirectory', 'createDirectory'],
     });
     return r.canceled ? null : (r.filePaths[0] ?? null);

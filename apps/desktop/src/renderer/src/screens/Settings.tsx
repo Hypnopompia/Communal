@@ -4,7 +4,14 @@
  */
 import { useEffect, useState } from 'react';
 import type { AgentsState } from '../../../shared/bridge';
-import { api, type Device, type LinkRequest, type NetworkSummary, type UploadLimits } from '../api';
+import {
+  api,
+  type Device,
+  type DownloadSettings,
+  type LinkRequest,
+  type NetworkSummary,
+  type UploadLimits,
+} from '../api';
 import { ago, hubName, plural, size } from '../format';
 import { hubUrl } from '../format';
 import { useHubs, useStatus } from '../hubs';
@@ -19,6 +26,7 @@ const TABS: { tab: SettingsTab; label: string }[] = [
   { tab: 'hubs', label: 'Hubs' },
   { tab: 'network', label: 'Network' },
   { tab: 'bandwidth', label: 'Sharing speed' },
+  { tab: 'downloads', label: 'Downloads' },
   { tab: 'storage', label: 'Storage' },
   { tab: 'agents', label: 'AI agents' },
 ];
@@ -56,6 +64,7 @@ export function Settings({ tab }: { tab: SettingsTab }) {
       {tab === 'hubs' && <Hubs />}
       {tab === 'network' && <Network />}
       {tab === 'bandwidth' && <Bandwidth />}
+      {tab === 'downloads' && <Downloads />}
       {tab === 'storage' && <Storage />}
       {tab === 'agents' && <Agents />}
     </div>
@@ -753,6 +762,56 @@ function Bandwidth() {
           Save
         </button>
       </div>
+    </div>
+  );
+}
+
+// ── downloads (ADR 0018) ──
+
+function Downloads() {
+  const st = useApi<DownloadSettings>([], '/v1/settings/downloads');
+  const set = useAction(
+    (dir: string | null) => api.put<DownloadSettings>('/v1/settings/downloads', { dir }),
+    { done: 'Saved', onDone: () => void st.refetch() },
+  );
+  if (!st.data) return <ErrorNote error={st.error} />;
+  const { dir, default_dir } = st.data;
+  const pick = async () => {
+    const d = await window.communal.pickFolder('Save downloads to', dir);
+    if (d) void set.run(d);
+  };
+  return (
+    <div className="panel panel-pad section" style={{ maxWidth: 560 }}>
+      <h2>Where downloads go</h2>
+      <p className="muted">
+        Download saves files here. To put one somewhere else, use Save to… instead.
+      </p>
+      <div className="field">
+        <span>Downloads folder</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span
+            className="muted"
+            style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            title={dir}
+          >
+            {dir}
+          </span>
+          <button className="btn small" onClick={() => void window.communal.openPath(dir)}>
+            Open
+          </button>
+          <button className="btn small" disabled={set.busy} onClick={() => void pick()}>
+            Change…
+          </button>
+        </div>
+      </div>
+      <ErrorNote error={set.error} />
+      {dir !== default_dir && (
+        <div>
+          <button className="btn" disabled={set.busy} onClick={() => void set.run(null)}>
+            Use the usual folder
+          </button>
+        </div>
+      )}
     </div>
   );
 }

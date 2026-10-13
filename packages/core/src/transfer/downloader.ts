@@ -18,7 +18,8 @@ export interface DownloadOptions {
   hubs: HubManager;
   broker: PeerBroker;
   myDevice: string;
-  downloadsDir: string;
+  /** Where downloads land unless told otherwise (read on each download: it's a setting). */
+  downloadsDir: () => string;
   /** Peers downloaded from at once (HANDOFF §7 multi-source). */
   maxPeers?: number;
   /** Chunks requested ahead per peer (~32, HANDOFF §7). */
@@ -138,7 +139,7 @@ export class Downloads extends EventEmitter<DownloadEvents> {
 
   add(req: { hash: string; name: string; destDir?: string }): TransferRow {
     const id = newTransferId();
-    const dest = req.destDir ?? this.o.downloadsDir;
+    const dest = req.destDir ?? this.o.downloadsDir();
     mkdirSync(dest, { recursive: true });
     this.o.store.addTransfer({
       id,

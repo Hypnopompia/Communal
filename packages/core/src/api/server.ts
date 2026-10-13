@@ -118,7 +118,16 @@ export const UiRoute = z.discriminatedUnion('screen', [
   z.object({
     screen: z.literal('settings'),
     tab: z
-      .enum(['account', 'devices', 'hubs', 'network', 'bandwidth', 'storage', 'agents'])
+      .enum([
+        'account',
+        'devices',
+        'hubs',
+        'network',
+        'bandwidth',
+        'downloads',
+        'storage',
+        'agents',
+      ])
       .optional(),
   }),
 ]);
@@ -354,6 +363,22 @@ export class LocalApi {
         .parse(body);
       return { download: await this.core.download(b.hash, { name: b.name, destDir: b.dest }) };
     });
+    // A folder and its subfolders, once (ADR 0018).
+    route('POST', '/v1/downloads/folder', async (_req, _url, body) => {
+      const b = z
+        .object({
+          hub: z.string(),
+          device: z.string(),
+          path: z.string().min(1).max(4096),
+          dest: z.string().min(1).max(4096).optional(),
+        })
+        .parse(body);
+      return {
+        folder: await this.core.downloadFolder(b.hub, b.device, b.path, {
+          ...(b.dest ? { destDir: b.dest } : {}),
+        }),
+      };
+    });
     route('DELETE', '/v1/downloads/:id', async (req, url) => {
       if (!this.core.downloads.cancel(param(req, url, 1)))
         throw new CoreError('not_found', 'no such download');
@@ -399,6 +424,17 @@ export class LocalApi {
       return { ok: true };
     });
 
+    // ── the synced folder (ADR 0019) ──
+    route('GET', '/v1/sync', async () => this.core.syncFolder.state());
+    route('PUT', '/v1/sync', async (_req, _url, body) => {
+      const b = z.object({ path: z.string().min(1).max(4096).optional() }).parse(body ?? {});
+      return this.core.syncFolder.enable(b.path);
+    });
+    route('DELETE', '/v1/sync', async () => {
+      await this.core.syncFolder.disable();
+      return this.core.syncFolder.state();
+    });
+
     route('GET', '/v1/uploads/log', async (_req, url) => {
       const p = z
         .object({
@@ -428,6 +464,17 @@ export class LocalApi {
         .parse(body);
       await this.core.updateSettings({ uploads: b });
       return this.core.uploadLimits;
+    });
+    const downloadsSettings = () => ({
+      dir: this.core.downloadsDir,
+      default_dir: this.core.defaultDownloadsDir,
+    });
+    route('GET', '/v1/settings/downloads', async () => downloadsSettings());
+    route('PUT', '/v1/settings/downloads', async (_req, _url, body) => {
+      // null goes back to the app's own downloads folder.
+      const b = z.object({ dir: z.string().min(1).max(4096).nullable() }).parse(body);
+      await this.core.updateSettings({ downloads_dir: b.dir });
+      return downloadsSettings();
     });
     route('GET', '/v1/settings/storage', async () => this.core.storage());
     route('PUT', '/v1/settings/storage', async (_req, _url, body) => {

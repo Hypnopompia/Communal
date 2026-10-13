@@ -143,7 +143,8 @@ export function useAction<A extends unknown[], R>(
   fn: (...args: A) => Promise<R>,
   o: {
     topics?: Topic[];
-    done?: string | ((r: R) => string);
+    /** A toast on success; a function returning null shows none (e.g. the person cancelled). */
+    done?: string | ((r: R) => string | null);
     onDone?: (r: R) => void;
     /** Report failures as a toast too, for actions started from places with no room for errors. */
     toastErrors?: boolean;
@@ -163,7 +164,8 @@ export function useAction<A extends unknown[], R>(
       try {
         const r = await fn(...args);
         if (o.topics) invalidate(o.topics);
-        if (o.done) toast(typeof o.done === 'string' ? o.done : o.done(r));
+        const message = typeof o.done === 'function' ? o.done(r) : o.done;
+        if (message) toast(message);
         o.onDone?.(r);
         return r;
       } catch (err) {

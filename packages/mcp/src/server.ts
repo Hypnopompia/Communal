@@ -177,6 +177,36 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
     (c, a) => c.post('/v1/downloads', a),
   );
   tool(
+    'download_folder',
+    "Downloads a folder of another computer once, with its subfolders, into <dest or the downloads folder>/<folder name>. Content this computer already has is copied instead of downloaded. Answers with how many files were queued, copied, already there, or still being prepared on the owner's side.",
+    {
+      hub: z.string(),
+      device: z.string().describe('The device_id of the computer the folder is on'),
+      path: z.string().max(4096).describe('The folder, e.g. "Music/Albums/Blue/"'),
+      dest: z.string().max(4096).optional().describe('Folder to save into (absolute path)'),
+    },
+    CHANGE,
+    (c, a) => c.post('/v1/downloads/folder', a),
+  );
+  // ── the synced folder (ADR 0019) ──
+  tool(
+    'get_synced_folder',
+    "The folder kept the same on all the user's computers: whether it's on here, where, and which other computers it's in step with.",
+    {},
+    READ,
+    (c) => c.get('/v1/sync'),
+  );
+  tool(
+    'set_synced_folder',
+    'Turns the synced folder on (optionally at path, default ~/Communal; only the user can see it) or off on this computer. Turning it off deletes nothing.',
+    {
+      on: z.boolean(),
+      path: z.string().max(4096).optional().describe('Folder to sync (absolute path)'),
+    },
+    CHANGE,
+    (c, a) => (a.on ? c.put('/v1/sync', a.path ? { path: a.path } : {}) : c.delete('/v1/sync')),
+  );
+  tool(
     'list_transfers',
     "Downloads: queued, running (with per-source speeds), waiting, done and failed, with the diagnosis and tips when a source can't be reached.",
     {},
@@ -369,10 +399,24 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
   tool('check_network', 'Runs the network check again.', {}, READ, (c) =>
     c.post('/v1/network/check', {}),
   );
-  tool('get_settings', 'Upload limits and thumbnail-cache size.', {}, READ, async (c) => ({
-    uploads: await c.get('/v1/settings/uploads'),
-    storage: await c.get('/v1/settings/storage'),
-  }));
+  tool(
+    'get_settings',
+    'Upload limits, the downloads folder and the thumbnail-cache size.',
+    {},
+    READ,
+    async (c) => ({
+      uploads: await c.get('/v1/settings/uploads'),
+      downloads: await c.get('/v1/settings/downloads'),
+      storage: await c.get('/v1/settings/storage'),
+    }),
+  );
+  tool(
+    'set_downloads_folder',
+    'Where downloads land unless a dest is given (absolute path, created if needed). null goes back to the usual folder.',
+    { dir: z.string().max(4096).nullable() },
+    CHANGE,
+    (c, a) => c.put('/v1/settings/downloads', a),
+  );
   tool(
     'set_upload_limits',
     'Upload limits: speed in bytes per second (0 = none), people downloading at once, home-network only.',
@@ -405,7 +449,16 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
       path: z.string().optional(),
       q: z.string().optional(),
       tab: z
-        .enum(['account', 'devices', 'hubs', 'network', 'bandwidth', 'storage', 'agents'])
+        .enum([
+          'account',
+          'devices',
+          'hubs',
+          'network',
+          'bandwidth',
+          'downloads',
+          'storage',
+          'agents',
+        ])
         .optional(),
     },
     { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },

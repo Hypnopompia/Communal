@@ -247,6 +247,12 @@ function HitRow({ hit }: { hit: Hit }) {
             Preview
           </button>
         )}
+        <button
+          className="btn small quiet"
+          onClick={() => void download.run(hit.hash, hit.name, true)}
+        >
+          Save to…
+        </button>
         <button className="btn small" onClick={() => void download.run(hit.hash, hit.name)}>
           Download
         </button>
@@ -258,6 +264,9 @@ function HitRow({ hit }: { hit: Hit }) {
           device={best.device_id}
           onClose={() => setPreview(false)}
           onDownload={() => void download.run(hit.hash, hit.name).then(() => setPreview(false))}
+          onSaveTo={() =>
+            void download.run(hit.hash, hit.name, true).then((r) => r && setPreview(false))
+          }
         />
       )}
     </div>

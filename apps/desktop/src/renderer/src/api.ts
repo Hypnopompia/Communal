@@ -228,6 +228,36 @@ export interface Transfer {
   sources: { hub: string; device_id: string; bytes: number; rate: number }[];
 }
 
+/** `POST /v1/downloads/folder`: what a folder download started (ADR 0018). */
+export interface FolderDownload {
+  dest: string;
+  queued: number;
+  copied: number;
+  skipped: number;
+  unprepared: number;
+  bytes: number;
+}
+
+/** `GET /v1/sync`: the folder kept the same on all your computers (ADR 0019). */
+export interface SyncFolderState {
+  enabled: boolean;
+  path: string | null;
+  default_path: string;
+  devices: {
+    device_id: string;
+    name: string | null;
+    hub: string;
+    status: 'ok' | 'no_access' | 'paused';
+    files: { pending: number; done: number; failed: number; removed: number };
+  }[];
+}
+
+/** `GET /v1/settings/downloads`. */
+export interface DownloadSettings {
+  dir: string;
+  default_dir: string;
+}
+
 export interface Subscription {
   id: string;
   hub: string;
@@ -237,6 +267,8 @@ export interface Subscription {
   dest_dir: string;
   mirror_deletes: boolean;
   paused: boolean;
+  /** Part of the synced folder (shown there, not as a subscription). */
+  sync: boolean;
   rev: number;
   status: 'ok' | 'no_access';
   created_at: number;

@@ -15,7 +15,7 @@ import { pino } from 'pino';
 import { createBLAKE3 } from 'hash-wasm';
 import { detect, kindFor } from './detect.js';
 import { CHUNK_SIZE, hashFile } from './hasher.js';
-import { Indexer, isIgnored } from './indexer.js';
+import { Indexer, isIgnored, SYNC_MARKER } from './indexer.js';
 import { IndexStore } from './store.js';
 
 let dir: string;
@@ -162,6 +162,27 @@ describe('indexer', () => {
     expect(changes).toBeGreaterThan(0);
     await idx.stop();
     store.close();
+  });
+
+  it('hashes the files of a folder moved into the share', async () => {
+    const { root, store, idx } = setup();
+    writeFileSync(join(root, 'first.txt'), 'first');
+    await idx.start();
+    await until(() => store.counts().hashed === 1); // the watcher is up by now
+    // Built outside, then moved in whole: the watcher sees one new folder, not its files.
+    const outside = join(dir, 'album');
+    mkdirSync(join(outside, 'disc 2'), { recursive: true });
+    writeFileSync(join(outside, '01.mp3'), 'one');
+    writeFileSync(join(outside, 'disc 2', '02.mp3'), 'two');
+    renameSync(outside, join(root, 'album'));
+    await until(() => store.counts().files === 3 && store.counts().hashed === 3, 15_000);
+    await idx.stop();
+    store.close();
+  });
+
+  it('shares the synced-folder marker, the one dotfile that is', () => {
+    expect(isIgnored(SYNC_MARKER)).toBe(false);
+    expect(isIgnored('.communal-incoming')).toBe(true);
   });
 
   it('rescans on start and logs only what changed since last time', async () => {

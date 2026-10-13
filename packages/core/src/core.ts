@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { realpath, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, realpath, stat } from 'node:fs/promises';
+import { isAbsolute, join, resolve } from 'node:path';
 import { pino, type Logger } from 'pino';
 import {
   deviceId,
@@ -33,7 +33,9 @@ import {
 } from './transfer/uploader.js';
 import { Downloads, type DownloadOptions } from './transfer/downloader.js';
 import { Streams } from './transfer/stream.js';
+import { downloadFolder } from './transfer/folder.js';
 import { Subscriptions, type TrashFn } from './subscriptions.js';
+import { SyncFolder, SYNC_SHARE, type SyncFolderOptions } from './sync-folder.js';
 import { MediaWorker, type MediaOptions } from './media/worker.js';
 import { ThumbCache, ThumbStore } from './media/thumbs.js';
 import { Previews } from './media/previews.js';
@@ -84,6 +86,8 @@ export interface CoreOptions {
    * `retryMs` is how often refused folders are asked about again.
    */
   subscriptions?: { trash?: TrashFn; retryMs?: number };
+  /** The synced folder (ADR 0019): how often to look for other computers, its default place. */
+  syncFolder?: Omit<SyncFolderOptions, 'log'>;
   /**
    * The account's root secret on a device restored from a recovery key (ADR 0014), and how to
    * keep one that a restore produces. The first device's key is the root, so it needs neither.
@@ -99,6 +103,8 @@ export { CoreError };
 export interface SavedSettings {
   uploads?: Partial<UploadLimits>;
   thumb_cache_bytes?: number;
+  /** Where downloads land unless the person picks a folder (ADR 0018); null goes back. */
+  downloads_dir?: string | null;
 }
 
 /** A link request waiting for this device's approval (ADR 0014). */
@@ -137,6 +143,7 @@ export class CommunalCore {
   readonly previews: Previews;
   readonly streams: Streams;
   readonly subscriptions: Subscriptions;
+  readonly syncFolder: SyncFolder;
   readonly revocations: Revocations;
   uploadLimits: UploadLimits;
   readonly log: Logger;
@@ -145,6 +152,7 @@ export class CommunalCore {
   private readonly accountFile: AccountFile;
   private accountId?: AccountIdentity;
   private rootSecretKept?: Uint8Array;
+  private chosenDownloadsDir?: string;
   private readonly pendingLinks = new Map<string, PendingLink>();
   /** Per hub, the other device last browsed, which the hub tells us about (`browse.follow`). */
   private readonly following = new Map<string, string>();
@@ -212,6 +220,7 @@ export class CommunalCore {
     );
     this.settingsFile = join(o.dataDir, 'settings.json');
     const saved = this.loadSettings();
+    this.chosenDownloadsDir = saved.downloads_dir ?? undefined;
     this.uploadLimits = { ...DEFAULT_UPLOAD_LIMITS, ...o.uploads, ...saved.uploads };
     this.uploader = new Uploader({
       store: this.store,
@@ -230,7 +239,7 @@ export class CommunalCore {
       hubs: this.hubs,
       broker: this.broker,
       myDevice: this.deviceId,
-      downloadsDir: o.downloadsDir ?? join(o.dataDir, 'downloads'),
+      downloadsDir: () => this.downloadsDir,
       log: this.log,
     });
     this.thumbCache = new ThumbCache(
@@ -242,10 +251,11 @@ export class CommunalCore {
       store: this.store,
       hubs: this.hubs,
       downloads: this.downloads,
-      downloadsDir: o.downloadsDir ?? join(o.dataDir, 'downloads'),
+      downloadsDir: () => this.downloadsDir,
       ...o.subscriptions,
       log: this.log,
     });
+    this.syncFolder = new SyncFolder(this, { ...o.syncFolder, log: this.log });
     const answerTimeoutMs = o.downloads?.answerTimeoutMs;
     this.previews = new Previews({
       broker: this.broker,
@@ -262,6 +272,16 @@ export class CommunalCore {
     });
   }
 
+  /** Where downloads land unless a folder is given: the person's choice, else the host's. */
+  get downloadsDir(): string {
+    return this.chosenDownloadsDir ?? this.defaultDownloadsDir;
+  }
+
+  /** The host's downloads folder (desktop: ~/Downloads/Communal), used until one is chosen. */
+  get defaultDownloadsDir(): string {
+    return this.o.downloadsDir ?? join(this.o.dataDir, 'downloads');
+  }
+
   get deviceId(): string {
     return deviceId(this.o.device.publicKey);
   }
@@ -275,9 +295,11 @@ export class CommunalCore {
     this.media.start();
     this.downloads.start();
     this.subscriptions.start();
+    this.syncFolder.start();
   }
 
   async stop() {
+    await this.syncFolder.stop();
     await this.downloads.stop();
     await this.subscriptions.stop();
     this.streams.closeAll();
@@ -627,6 +649,7 @@ export class CommunalCore {
     this.store.addShare(name, root, targets);
     await this.indexer.addShare(name);
     this.sync.pushAll();
+    if (name === SYNC_SHARE) this.syncFolder.kick();
     return this.store.share(name)!;
   }
 
@@ -638,6 +661,7 @@ export class CommunalCore {
     this.store.dropRules({ share: name });
     for (const h of share.hubs) void this.pushRules(h);
     this.sync.pushAll();
+    if (name === SYNC_SHARE) this.syncFolder.kick();
   }
 
   /** Changes which hubs a share is published to; affected hubs get a fresh snapshot. */
@@ -714,7 +738,23 @@ export class CommunalCore {
       }
     }
     if (!name) throw new CoreError('not_found', 'no visible source has that file');
-    return this.downloads.add({ hash, name, ...(opts.destDir ? { destDir: opts.destDir } : {}) });
+    const destDir = opts.destDir ? await usableFolder(opts.destDir) : undefined;
+    return this.downloads.add({ hash, name, ...(destDir ? { destDir } : {}) });
+  }
+
+  /**
+   * Downloads a folder of another device (and its subfolders) once, into
+   * `<destDir or the downloads folder>/<folder name>`, keeping its structure (ADR 0018).
+   */
+  async downloadFolder(hub: string, device: string, path: string, opts: { destDir?: string } = {}) {
+    if (device === this.deviceId)
+      throw new CoreError('bad_request', 'those files are already on this computer');
+    return downloadFolder(this, {
+      hub,
+      device,
+      path,
+      destDir: opts.destDir ? await usableFolder(opts.destDir) : this.downloadsDir,
+    });
   }
 
   // ── previews (M6) ─────────────────────────────────────────────────────────
@@ -810,6 +850,11 @@ export class CommunalCore {
       saved.uploads = { ...saved.uploads, ...change.uploads };
       this.uploadLimits = { ...this.uploadLimits, ...change.uploads };
     }
+    if (change.downloads_dir !== undefined) {
+      const dir = change.downloads_dir === null ? null : await usableFolder(change.downloads_dir);
+      saved.downloads_dir = dir;
+      this.chosenDownloadsDir = dir ?? undefined;
+    }
     if (change.thumb_cache_bytes !== undefined) {
       saved.thumb_cache_bytes = change.thumb_cache_bytes;
       await this.thumbCache.setCap(change.thumb_cache_bytes);
@@ -853,6 +898,19 @@ export class CommunalCore {
       shares: this.store.shares().map((s) => ({ name: s.name, hubs: s.hubs })),
     };
   }
+}
+
+/** A folder to save into: an absolute path, created if needed. */
+async function usableFolder(dir: string): Promise<string> {
+  if (!isAbsolute(dir)) throw new CoreError('bad_request', 'use a full folder path');
+  const abs = resolve(dir);
+  try {
+    await mkdir(abs, { recursive: true });
+    if (!(await stat(abs)).isDirectory()) throw new Error('not a folder');
+  } catch {
+    throw new CoreError('bad_request', `can't save into ${abs}`);
+  }
+  return abs;
 }
 
 function platform(): 'darwin' | 'win32' | 'linux' {

@@ -15,7 +15,8 @@ export interface CommunalBridge {
   /** Hints that some part of the core's state changed (see `ApiTopic` in core). */
   onTopics(cb: (topics: string[]) => void): () => void;
   defaultDeviceName(): Promise<string>;
-  pickFolder(title: string): Promise<string | null>;
+  /** A folder chosen in the system dialog, opened at `start` when given; null if cancelled. */
+  pickFolder(title: string, start?: string): Promise<string | null>;
   /** Reads a small text file the person picks (a recovery file). */
   pickTextFile(title: string, extensions: string[]): Promise<string | null>;
   saveTextFile(title: string, defaultName: string, text: string): Promise<boolean>;

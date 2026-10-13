@@ -12,7 +12,7 @@ export type Route =
   | { screen: 'settings'; tab?: SettingsTab };
 
 export type SettingsTab =
-  'account' | 'devices' | 'hubs' | 'network' | 'bandwidth' | 'storage' | 'agents';
+  'account' | 'devices' | 'hubs' | 'network' | 'bandwidth' | 'downloads' | 'storage' | 'agents';
 
 export const NavCtx = createContext<(r: Route) => void>(() => undefined);
 export const useNav = () => useContext(NavCtx);

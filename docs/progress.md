@@ -2,12 +2,33 @@
 
 ## Next up
 
-- **First release (v0.1.0):** `pnpm release` once `.env` has the App Store Connect API key (see `.env.example`). It also needs a first green run of the CI `desktop` job and the release workflow on GitHub, including the untested Windows build.
-- **Planned: download destinations and folder downloads** (owner request, 2026-10-12; design notes in `docs/questions.md`). Downloads go to a folder chosen by kind (audio → ~/Music, video → ~/Movies…), and a whole folder (an album) downloads at once, keeping its structure. When the destination is inside a shared folder, finished files are re-shared, so popular files gain sources and downloads spread across them.
+- **Feedback on downloads** (ADR 0018): rules by kind, a re-share warning and transfer groups wait for what people ask for. The plan is in `docs/handoff-downloads.md`.
+- **The synced folder on real machines** (ADR 0019): two or three computers over a few days, including one that's often asleep.
+- **The Windows build** has never run on Windows.
 - **Hands-on test of the M9 done criterion** by a non-technical person, with the release build.
 - **The 1 GiB transfer between two physical machines on a LAN** (open since M0).
 - Windows code signing; an in-app "What's new" from `apps/desktop/changelog.json`.
 - After v1: the hub web admin UI (`docs/questions.md`) and a retention setting for long-unseen devices (ADR 0015).
+
+## Synced folder and downloads (2026-10-13)
+
+- **Synced folder (ADR 0019):** one switch per computer (My shares › Synced folder, `communal sync on`) keeps a `Communal` folder the same on all your computers. It's private to you, and deletions go to the trash. Conflicting edits keep both versions under a `conflicted copy` name that every computer picks alike. It builds on subscriptions (two-way, through a staging folder, one queue) plus a marker file so empty folders still show. The owner's hand-made setup is taken over as it is.
+- **Downloads (ADR 0018):**
+  - A downloads folder you choose (Settings › Downloads, `communal download-dir`).
+  - **Save to…** next to every Download.
+  - **Download folder** in the Library (`communal get-folder`), which keeps the structure and copies or clones what you already have instead of fetching it.
+- **Indexer fix:** files in a folder moved into a share in one step were never hashed until something else changed.
+- **Tests:** `m10-downloads` and `m10-sync-folder` (three computers, a conflict while one is offline, taking over hand-made subscriptions, turning off). The full `pnpm check` passes.
+
+### Demo
+
+```bash
+communal sync on                   # on each computer; ~/Communal by default
+echo hi > ~/Communal/note.txt      # appears on the others
+communal sync                      # which computers it's in step with
+communal get-folder <device_id> "Music/Albums/Blue" --dest ~/Music
+communal download-dir ~/Downloads
+```
 
 ## After M9 — agents, releases, site (2026-10-12)
 

@@ -27,8 +27,9 @@ These came from the owner during development. Don't revert them to the spec's wo
 - Running an app from source: `pnpm --filter @communal/hub dev` (a dev build with self-signed TLS, data in `apps/hub/hub-data`), `pnpm --filter @communal/cli dev -- status`.
 - People and access (per hub, `--hub` needed when on several): `communal people search|request|accept|remove|verify`, `communal group set|list|delete`, `communal acl set <path> me|hub|users:<ids>|groups:<ids>`.
 - Previews: `communal browse` (icon, metadata, ▣ = has thumbnail), `communal thumbs <hub> <device> <folder>` (batch into the cache), `communal peek <hub> <device> <hash>`.
-- Transfers: `communal get <hash>`, `communal transfers` (shows the diagnosis and tips when a source can't be reached), `communal cancel <id>`, `communal log` (who downloaded what from this device).
+- Transfers: `communal get <hash> [--dest]`, `communal get-folder <device> <path> [--dest]`, `communal download-dir [dir|--reset]`, `communal transfers` (shows the diagnosis and tips when a source can't be reached), `communal cancel <id>`, `communal log` (who downloaded what from this device).
 - Subscriptions: `communal subscribe <device> <path> [--mirror-deletes|--no-mirror-deletes] [--dest]`, `communal subscriptions [list|set|remove]`.
+- Synced folder: `communal sync [status|on [folder]|off]`.
 - Devices (M8): `communal devices [list|add|requests|approve|deny|revoke]`, `communal link <code> --hub <url>` (fresh device), `communal restore <file>|--words [--hub]`, `communal recovery export --out <file>|--words`. `link`, `restore` and `recovery export` also work with the daemon stopped. Passphrases come from the terminal or `COMMUNAL_RECOVERY_PASSPHRASE`.
 - Network: `communal netcheck` (NAT type per hub, UPnP/NAT-PMP mapping, IPv6, CGNAT). The daemon maps its UDP port on the router unless `COMMUNAL_UPNP=false`.
 - Desktop (M9): `pnpm --filter @communal/desktop... run build`, then `COMMUNAL_BUILD=dev COMMUNAL_DEV_TLS=self-signed pnpm --filter @communal/desktop start` against a dev hub.
@@ -97,6 +98,11 @@ How the pieces connect:
   - **Losing access must never look like a deletion.** Hidden files simply stop being mentioned.
   - Core `subscriptions.ts` applies events one at a time per subscription and only moves the cursor once an event is fully applied. Deleted files go to the OS trash (`trash`), never `rm`. Local copies the user changed are never touched.
   - Tests inject `subscriptions.trash` so they never touch the real trash.
+- **Synced folder** (ADR 0019):
+  - It's the share named `Communal` on each of your computers. `sync-folder.ts` finds your other computers that share one and follows each with a `sync` subscription into yours, a full mesh.
+  - `sync` subscriptions share one queue and stage files in `.communal-incoming/`. `placeSync` decides at placing time: same content, replace a synced version, ignore a late echo (`stale`), or a conflict. In a conflict the newer version keeps the name and the other gets `conflictName()`, which must stay deterministic, or two computers' copies never converge.
+  - `.communal-sync` (`SYNC_MARKER`) is the one shared dotfile. It keeps an empty synced folder visible on the hub. Removals from a computer that stopped sharing its folder are ignored (`stillShared`).
+- **Downloads** (ADR 0018): the downloads folder is a setting (`downloads_dir`), read on every download. `transfer/folder.ts` downloads a folder through a `browse` walk (10,000 files at most) and copies or clones content already in your shares.
 - **Desktop** (ADR 0016):
   - `apps/desktop/src/main` is the Electron main process: window, tray, `safeStorage` keys, updater. `core-host.ts` runs the core in a `utilityProcess` and must never import Electron.
   - The renderer (`src/renderer`, React + TanStack Query) reaches the API only through `communal://api/...`. Main adds the token, and the renderer never sees it.

@@ -217,6 +217,19 @@ sudo -u communal communal status</code></pre>
             </td>
           </tr>
           <tr>
+            <td><code>communal get-folder &lt;device&gt; &lt;path&gt;</code></td>
+            <td>
+              Download a folder and the folders inside it, once. Files you already have are copied,
+              not downloaded. <code>--dest</code>, <code>--hub</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><code>communal download-dir [folder]</code></td>
+            <td>
+              Show or change where downloads go. <code>--reset</code> goes back to the usual one.
+            </td>
+          </tr>
+          <tr>
             <td><code>communal transfers</code></td>
             <td>
               Downloads, with the reason and tips when a source can’t be reached.
@@ -246,6 +259,14 @@ sudo -u communal communal status</code></pre>
           <tr>
             <td><code>communal subscriptions [list|set|remove]</code></td>
             <td>List, change (pause, mirror deletes) or remove subscriptions.</td>
+          </tr>
+          <tr>
+            <td><code>communal sync [on [folder]|off]</code></td>
+            <td>
+              The synced folder: one folder kept the same on all your computers (default
+              <code>~/Communal</code>). Run <code>on</code> on each computer. On its own,
+              <code>communal sync</code> shows which computers it’s in step with.
+            </td>
           </tr>
         </table>
 

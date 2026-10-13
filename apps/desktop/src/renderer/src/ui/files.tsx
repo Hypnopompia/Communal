@@ -1,7 +1,16 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { api, streamUrl, thumbUrl, type Kind, type Meta } from '../api';
-import { baseName, date, duration, size } from '../format';
+import {
+  api,
+  streamUrl,
+  thumbUrl,
+  type DownloadSettings,
+  type FolderDownload,
+  type Kind,
+  type Meta,
+} from '../api';
+import { baseName, date, duration, plural, size } from '../format';
+import { useApi } from '../query';
 import { Dialog, ErrorNote, useAction } from './kit';
 import { FileIcon, FolderIcon } from './icons';
 
@@ -91,12 +100,14 @@ export function PreviewDialog({
   device,
   onClose,
   onDownload,
+  onSaveTo,
 }: {
   file: FileLike & { hash: string };
   hub: string;
   device: string;
   onClose: () => void;
   onDownload?: () => void;
+  onSaveTo?: () => void;
 }) {
   const media = file.kind === 'video' || file.kind === 'audio';
   const text = file.kind === 'text' || file.kind === 'code';
@@ -162,6 +173,11 @@ export function PreviewDialog({
         <span className="muted" style={{ flex: 1 }}>
           {describe(file.kind, file.meta, file.size)}
         </span>
+        {onSaveTo && (
+          <button className="btn" onClick={onSaveTo}>
+            Save to…
+          </button>
+        )}
         {onDownload && (
           <button className="btn primary" onClick={onDownload}>
             Download
@@ -172,11 +188,117 @@ export function PreviewDialog({
   );
 }
 
+/**
+ * Downloads a file into the downloads folder (Settings › Downloads), or, with `saveTo`, into a
+ * folder the person picks first. Resolves to undefined when they cancel the picker.
+ */
 export function useDownload() {
   return useAction(
-    (hash: string, name: string) =>
-      api.post<{ download: { name: string } }>('/v1/downloads', { hash, name }),
-    { topics: ['transfers'], done: (r) => `Downloading ${r.download.name}`, toastErrors: true },
+    async (hash: string, name: string, saveTo = false) => {
+      let dest: string | null = null;
+      if (saveTo) {
+        const current = await api.get<DownloadSettings>('/v1/settings/downloads').catch(() => null);
+        dest = await window.communal.pickFolder(`Save “${name}” to`, current?.dir);
+        if (!dest) return null;
+      }
+      return api.post<{ download: { name: string } }>('/v1/downloads', {
+        hash,
+        name,
+        ...(dest ? { dest } : {}),
+      });
+    },
+    {
+      topics: ['transfers'],
+      done: (r) => (r ? `Downloading ${r.download.name}` : null),
+      toastErrors: true,
+    },
+  );
+}
+
+/** Where a path goes, for people: the last two folders (`Music › Albums`). */
+function shortPath(p: string) {
+  return p.split(/[\\/]/).filter(Boolean).slice(-2).join(' › ');
+}
+
+/** What a folder download did, in a sentence. */
+export function folderDownloadText(name: string, r: FolderDownload): string {
+  const parts: string[] = [];
+  if (r.queued) parts.push(`downloading ${plural(r.queued, 'file')} (${size(r.bytes)})`);
+  if (r.copied) parts.push(`copied ${plural(r.copied, 'file')} you already had`);
+  if (r.skipped) parts.push(`${plural(r.skipped, 'file')} already there`);
+  if (r.unprepared) parts.push(`${plural(r.unprepared, 'file')} still being prepared`);
+  const text = parts.join(', ') || 'nothing to download';
+  return `${name}: ${text.charAt(0).toUpperCase()}${text.slice(1)}`;
+}
+
+/** Downloading a folder and its subfolders once, into the downloads folder or a chosen one. */
+export function DownloadFolderDialog({
+  hub,
+  device,
+  path,
+  owner,
+  onClose,
+}: {
+  hub: string;
+  device: string;
+  path: string;
+  /** Whose folder it is; left out for your own other computers. */
+  owner?: string;
+  onClose: () => void;
+}) {
+  const settings = useApi<DownloadSettings>([], '/v1/settings/downloads');
+  const [dest, setDest] = useState<string | null>(null);
+  const name = baseName(path);
+  const parent = dest ?? settings.data?.dir;
+  const run = useAction(
+    () =>
+      api.post<{ folder: FolderDownload }>('/v1/downloads/folder', {
+        hub,
+        device,
+        path,
+        ...(dest ? { dest } : {}),
+      }),
+    {
+      topics: ['transfers'],
+      done: (r) => folderDownloadText(name, r.folder),
+      onDone: onClose,
+    },
+  );
+  const pick = async () => {
+    const d = await window.communal.pickFolder(`Save “${name}” to`, parent);
+    if (d) setDest(d);
+  };
+  return (
+    <Dialog title={`Download “${name}”`} onClose={onClose}>
+      <p className="muted">
+        Everything in this folder{owner ? ` of ${owner}’s` : ''}, including the folders inside it,
+        is downloaded once. Files you already have aren’t downloaded again.
+      </p>
+      <div className="field">
+        <span>Save to</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span
+            className="muted"
+            style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}
+            title={parent ? `${parent}/${name}` : undefined}
+          >
+            {parent ? `${shortPath(parent)} › ${name}` : '…'}
+          </span>
+          <button className="btn small" onClick={() => void pick()}>
+            Change…
+          </button>
+        </div>
+      </div>
+      <ErrorNote error={run.error ?? settings.error} />
+      <div className="dialog-actions">
+        <button className="btn" onClick={onClose}>
+          Cancel
+        </button>
+        <button className="btn primary" disabled={run.busy} onClick={() => void run.run()}>
+          {run.busy ? 'Looking through the folder…' : 'Download'}
+        </button>
+      </div>
+    </Dialog>
   );
 }
 

@@ -780,6 +780,54 @@ program
   );
 
 program
+  .command('get-folder <device_id> <path>')
+  .description('download a folder of another device once, with its subfolders')
+  .option('--hub <id>', 'the hub to list it through (needed when on several)')
+  .option('--dest <dir>', 'folder to save into (default: the downloads folder)')
+  .action((device: string, path: string, opts: { hub?: string; dest?: string }) =>
+    viaDaemon(async (c) => {
+      const hubId = await pickHub(c, opts.hub);
+      const { folder: f } = await c.post<{
+        folder: {
+          dest: string;
+          queued: number;
+          copied: number;
+          skipped: number;
+          unprepared: number;
+          bytes: number;
+        };
+      }>('/v1/downloads/folder', {
+        hub: hubId,
+        device,
+        path,
+        ...(opts.dest ? { dest: resolve(opts.dest) } : {}),
+      });
+      console.log(`→ ${f.dest}`);
+      console.log(`  ${f.queued} queued (${f.bytes} bytes; follow with \`communal transfers\`)`);
+      if (f.copied) console.log(`  ${f.copied} copied from files already on this computer`);
+      if (f.skipped) console.log(`  ${f.skipped} already there`);
+      if (f.unprepared)
+        console.log(`  ${f.unprepared} left out: still being prepared by the owner`);
+    }),
+  );
+
+program
+  .command('download-dir [dir]')
+  .description('show or change where downloads go by default')
+  .option('--reset', 'go back to the usual folder')
+  .action((dir: string | undefined, opts: { reset?: boolean }) =>
+    viaDaemon(async (c) => {
+      const r =
+        dir || opts.reset
+          ? await c.put<{ dir: string }>('/v1/settings/downloads', {
+              dir: opts.reset ? null : resolve(dir!),
+            })
+          : await c.get<{ dir: string }>('/v1/settings/downloads');
+      console.log(r.dir);
+    }),
+  );
+
+program
   .command('transfers')
   .description('downloads: queued, in progress, waiting for a source, done, failed')
   .action(() =>
@@ -962,6 +1010,57 @@ program
           `  deletions at the source: ${s.mirror_deletes ? 'moved to the trash here too' : 'kept here'}`,
         );
       }),
+  );
+
+type SyncState = {
+  enabled: boolean;
+  path: string | null;
+  devices: {
+    device_id: string;
+    name: string | null;
+    status: string;
+    files: { pending: number; done: number; failed: number };
+  }[];
+};
+
+function printSync(s: SyncState) {
+  if (!s.enabled) {
+    console.log('synced folder: off (`communal sync on [folder]` turns it on)');
+    return;
+  }
+  console.log(`synced folder: ${s.path}`);
+  if (s.devices.length === 0) console.log('  no other computer has it turned on yet');
+  for (const d of s.devices)
+    console.log(
+      `  ${d.name ?? d.device_id}  ${d.status}  ${d.files.done} files` +
+        (d.files.pending ? `, ${d.files.pending} on the way` : '') +
+        (d.files.failed ? `, ${d.files.failed} failed` : ''),
+    );
+}
+
+const syncCmd = program
+  .command('sync')
+  .description('a folder kept the same on all your computers (only you can see it)');
+syncCmd
+  .command('status', { isDefault: true })
+  .description('whether it is on, where, and which computers it is in step with')
+  .action(() => viaDaemon(async (c) => printSync(await c.get<SyncState>('/v1/sync'))));
+syncCmd
+  .command('on [folder]')
+  .description('turn it on (default folder: ~/Communal); do this on each computer')
+  .action((folder: string | undefined) =>
+    viaDaemon(async (c) =>
+      printSync(await c.put<SyncState>('/v1/sync', folder ? { path: resolve(folder) } : {})),
+    ),
+  );
+syncCmd
+  .command('off')
+  .description('stop syncing this computer; nothing is deleted anywhere')
+  .action(() =>
+    viaDaemon(async (c) => {
+      await c.delete('/v1/sync');
+      console.log('synced folder: off; the files stay where they are');
+    }),
   );
 
 const subs = program.command('subscriptions').description('folders you follow');

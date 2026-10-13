@@ -49,8 +49,9 @@
         ><a href="#first-launch">First launch</a><a href="#library">Library</a
         ><a href="#search">Search</a><a href="#sharing">Sharing and access</a
         ><a href="#people">People and groups</a><a href="#transfers">Transfers</a
-        ><a href="#subscriptions">Subscriptions</a><a href="#activity">Activity</a
-        ><a href="#settings">Settings</a><a href="#background">Running in the background</a>
+        ><a href="#subscriptions">Subscriptions</a><a href="#synced-folder">Synced folder</a
+        ><a href="#activity">Activity</a><a href="#settings">Settings</a
+        ><a href="#background">Running in the background</a>
       </nav>
       <article>
         <h1>Using the app</h1>
@@ -124,7 +125,14 @@
             <b>Click</b> a file to look at it: pictures and PDF pages open large, text and code show
             their first page, videos and music play straight from the owner’s computer.
           </li>
-          <li><b>Double-click</b> a file, or use <b>Download</b>, to save it.</li>
+          <li>
+            <b>Double-click</b> a file, or use <b>Download</b>, to save it in your downloads folder
+            (Settings › Downloads). <b>Save to…</b> asks where to put it instead.
+          </li>
+          <li>
+            <b>Download folder</b> saves the folder you’re in, with the folders inside it, once.
+            Files you already have aren’t downloaded again.
+          </li>
           <li>
             <b>Subscribe to this folder</b> follows the folder you’re in (see
             <a href="#subscriptions">Subscriptions</a>).
@@ -258,6 +266,34 @@
           you already have stay).
         </p>
 
+        <h2 id="synced-folder">Synced folder</h2>
+        <p>
+          A folder that’s the same on all your computers. In <b>My shares</b>, turn on
+          <b>Synced folder</b> on each computer you want it on (it’s <code>Communal</code> in your
+          home folder unless you pick another). Only you can see it.
+        </p>
+        <ul>
+          <li>
+            Files you add, change or delete on one computer follow on the others. Deleted files go
+            to the trash.
+          </li>
+          <li>
+            Two computers sync when both are on, directly with each other. Nothing is kept on the
+            hub, so a laptop that was asleep catches up the next time both are on.
+          </li>
+          <li>
+            If the same file was changed on two computers before they could sync, the newer one
+            keeps the name and the other is kept beside it as “name (conflicted copy <i>date</i>
+            <i>code</i>)”.
+          </li>
+          <li>Turning it off on a computer stops it syncing. Nothing is deleted anywhere.</li>
+        </ul>
+        <p class="muted">
+          The synced folder is the folder you share under the name <code>Communal</code>, so sharing
+          a folder by that name turns syncing on too. A hidden <code>.communal-sync</code> file in
+          it lets your other computers find it even when it’s empty.
+        </p>
+
         <h2 id="activity">Activity</h2>
         <p>
           Activity lists who got which of your files and when. This list is kept on your computer
@@ -302,6 +338,11 @@
         <p>
           Limit upload speed and how many people download from you at once, or share only within
           your home network.
+        </p>
+        <h3>Downloads</h3>
+        <p>
+          The folder <b>Download</b> saves into. <b>Save to…</b> next to any Download picks another
+          folder for that file.
         </p>
         <h3>Storage</h3>
         <p>How much space previews of other people’s files may take, and <b>Clear previews</b>.</p>

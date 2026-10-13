@@ -11,6 +11,7 @@ import { useApi } from '../query';
 import { Disc } from '../ui/Disc';
 import {
   describe,
+  DownloadFolderDialog,
   FileArt,
   FolderTile,
   previewable,
@@ -154,15 +155,16 @@ function Browse({
   const [view, setView] = useView();
   const [preview, setPreview] = useState<(FileLike & { hash: string }) | null>(null);
   const [subscribe, setSubscribe] = useState(false);
+  const [getFolder, setGetFolder] = useState(false);
   const download = useDownload();
   const listing = useApi<Listing>(
     ['index', 'presence', 'browse'],
     `/v1/browse${qs({ hub, device: deviceId, path })}`,
   );
-  const files: FileLike[] = (listing.data?.files ?? []).map((f) => ({
-    ...f,
-    name: baseName(f.path),
-  }));
+  // Dotfiles (the synced folder's marker) are bookkeeping, not something to download.
+  const files: FileLike[] = (listing.data?.files ?? [])
+    .map((f) => ({ ...f, name: baseName(f.path) }))
+    .filter((f) => !f.name.startsWith('.'));
   const hasThumb = useThumbs(
     hub,
     deviceId,
@@ -203,9 +205,14 @@ function Browse({
         </div>
         <div className="actions">
           {segs.length > 0 && !own && (
-            <button className="btn" onClick={() => setSubscribe(true)}>
-              <Icon name="subscriptions" size={16} /> Subscribe to this folder
-            </button>
+            <>
+              <button className="btn" onClick={() => setGetFolder(true)}>
+                <Icon name="transfers" size={16} /> Download folder
+              </button>
+              <button className="btn" onClick={() => setSubscribe(true)}>
+                <Icon name="subscriptions" size={16} /> Subscribe to this folder
+              </button>
+            </>
           )}
           <div className="segmented" role="group" aria-label="View">
             <button aria-pressed={view === 'grid'} onClick={() => setView('grid')}>
@@ -305,12 +312,20 @@ function Browse({
                   )}
                   {f.hash ? (
                     !own && (
-                      <button
-                        className="btn small"
-                        onClick={() => void download.run(f.hash!, f.name)}
-                      >
-                        Download
-                      </button>
+                      <>
+                        <button
+                          className="btn small quiet"
+                          onClick={() => void download.run(f.hash!, f.name, true)}
+                        >
+                          Save to…
+                        </button>
+                        <button
+                          className="btn small"
+                          onClick={() => void download.run(f.hash!, f.name)}
+                        >
+                          Download
+                        </button>
+                      </>
                     )
                   ) : (
                     <span className="faint small">Still being prepared</span>
@@ -338,7 +353,20 @@ function Browse({
             : {
                 onDownload: () =>
                   void download.run(preview.hash, preview.name).then(() => setPreview(null)),
+                onSaveTo: () =>
+                  void download
+                    .run(preview.hash, preview.name, true)
+                    .then((r) => r && setPreview(null)),
               })}
+        />
+      )}
+      {getFolder && (
+        <DownloadFolderDialog
+          hub={hub}
+          device={deviceId}
+          path={path}
+          {...(mine ? {} : { owner })}
+          onClose={() => setGetFolder(false)}
         />
       )}
       {subscribe && (

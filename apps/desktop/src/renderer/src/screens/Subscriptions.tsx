@@ -14,6 +14,8 @@ export function Subscriptions() {
     '/v1/subscriptions',
   );
   const go = useNav();
+  // The synced folder's subscriptions are shown with it, in My shares.
+  const subs = list.data?.subscriptions.filter((s) => !s.sync);
   return (
     <div className="page">
       <div className="page-head">
@@ -26,7 +28,7 @@ export function Subscriptions() {
         </div>
       </div>
       <ErrorNote error={list.error} />
-      {list.data?.subscriptions.length === 0 && (
+      {subs?.length === 0 && (
         <Empty
           title="You’re not following any folders"
           action={
@@ -38,9 +40,9 @@ export function Subscriptions() {
           Open a folder someone shared with you and choose “Subscribe to this folder”.
         </Empty>
       )}
-      {(list.data?.subscriptions.length ?? 0) > 0 && (
+      {subs && subs.length > 0 && (
         <div className="panel rows">
-          {list.data!.subscriptions.map((s) => (
+          {subs.map((s) => (
             <SubRow key={s.id} s={s} />
           ))}
         </div>

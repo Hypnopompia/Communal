@@ -272,7 +272,7 @@ describe('M7: subscriptions', () => {
     const deskHub = (await desk.addHub(h.url, acct('alice'))).hub.id;
     const deskRoot = tmp('communal-m7-desk-');
     await writeFile(join(deskRoot, 'a.txt'), 'aaa');
-    await desk.addShare('Communal', deskRoot);
+    await desk.addShare('Both', deskRoot);
 
     const laptop = await core('laptop');
     const { code } = await desk.createLinkCode(deskHub);
@@ -285,21 +285,21 @@ describe('M7: subscriptions', () => {
     ]);
     const laptopHub = laptop.hubs.list()[0]!.id;
     const laptopRoot = tmp('communal-m7-laptop-');
-    await laptop.addShare('Communal', laptopRoot);
+    await laptop.addShare('Both', laptopRoot);
 
     // Each follows the other's folder into its own shared one. Your own devices see
     // everything, so no rule is needed.
     await desk.subscriptions.add({
       hub: deskHub,
       device: laptop.deviceId,
-      path: 'Communal/',
+      path: 'Both/',
       dest: deskRoot,
       mirrorDeletes: true,
     });
     await laptop.subscriptions.add({
       hub: laptopHub,
       device: desk.deviceId,
-      path: 'Communal/',
+      path: 'Both/',
       dest: laptopRoot,
       mirrorDeletes: true,
     });

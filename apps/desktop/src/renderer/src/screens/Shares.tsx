@@ -20,6 +20,10 @@ import { useHubs, useStatus } from '../hubs';
 import { useApi } from '../query';
 import { FileIcon, FolderIcon, Icon } from '../ui/icons';
 import { Dialog, Empty, ErrorNote, Progress, useAction } from '../ui/kit';
+import { SyncedFolderPanel } from './SyncedFolder';
+
+/** The synced folder's share (ADR 0019): shown in its own panel, not as a share. */
+const SYNC_SHARE = 'Communal';
 
 type Rules = Record<string, { path: string; audience: Audience }[]>;
 
@@ -50,8 +54,9 @@ export function Shares() {
 
       {status && <IndexProgress index={status.index} />}
       <ErrorNote error={shares.error} />
+      <SyncedFolderPanel />
 
-      {shares.data?.shares.length === 0 && (
+      {shares.data?.shares.every((s) => s.name === SYNC_SHARE) && (
         <Empty
           title="You’re not sharing anything yet"
           action={
@@ -64,9 +69,11 @@ export function Shares() {
         </Empty>
       )}
 
-      {shares.data?.shares.map((s) => (
-        <ShareRowView key={s.name} share={s} hubs={hubs} />
-      ))}
+      {shares.data?.shares
+        .filter((s) => s.name !== SYNC_SHARE)
+        .map((s) => (
+          <ShareRowView key={s.name} share={s} hubs={hubs} />
+        ))}
 
       {shares.data && shares.data.shares.length > 0 && activeHub && (
         <section className="section">

@@ -38,7 +38,14 @@ const IGNORED_NAMES = new Set([
 ]);
 const IGNORED_SUFFIXES = ['.part', '.partmap', '.crdownload', '.tmp', '.partial', '.download'];
 
+/**
+ * The one dotfile that is shared: it marks a synced folder (ADR 0019), so the folder shows on
+ * the hub even when it's empty.
+ */
+export const SYNC_MARKER = '.communal-sync';
+
 export function isIgnored(name: string): boolean {
+  if (name === SYNC_MARKER) return false;
   if (name.startsWith('.')) return true;
   const lower = name.toLowerCase();
   return IGNORED_NAMES.has(lower) || IGNORED_SUFFIXES.some((s) => lower.endsWith(s));
@@ -199,6 +206,8 @@ export class Indexer extends EventEmitter<IndexerEvents> {
       }),
     );
 
+    // Stopped while reading the disk: the store may be closed by now.
+    if (this.stopped) return seen.size;
     let removed = 0;
     const unseen = [...known.keys()].filter((rel) => !seen.has(rel));
     const moved = movedFrom(unseen.map((rel) => ({ rel, ...known.get(rel)! })));
@@ -217,6 +226,9 @@ export class Indexer extends EventEmitter<IndexerEvents> {
     );
     this.emit('scanned', { share: name, files: seen.size, ms });
     if (detected.length || removed) this.emit('changed');
+    // New files need hashes: a folder moved in is scanned from the watcher, with nothing else
+    // to start the hasher.
+    if (detected.length) this.kick();
     return seen.size;
   }
 
@@ -240,6 +252,17 @@ export class Indexer extends EventEmitter<IndexerEvents> {
       .on('unlinkDir', mark)
       .on('addDir', mark);
     w.on('error', (err) => this.log.warn({ share: name, err: String(err) }, 'watcher error'));
+    // Files written after the first scan but before the watcher was ready got no event, and
+    // the OS can start delivering events a little after "ready" (macOS FSEvents, under load).
+    // Two quick scans settle both; the periodic rescan is far off.
+    const settle = () => {
+      if (!this.stopped && this.watchers.get(name) === w)
+        void this.scan(name).catch(() => undefined);
+    };
+    w.once('ready', () => {
+      settle();
+      setTimeout(settle, 2_000).unref();
+    });
     this.watchers.set(name, w);
   }
 
@@ -300,6 +323,7 @@ export class Indexer extends EventEmitter<IndexerEvents> {
   /** Applies batched watcher events: re-stat each dirty path and update the index. */
   async flush() {
     this.flushTimer = undefined;
+    if (this.stopped) return;
     for (const [name, rels] of await this.reconcileDirs()) {
       if (rels.size) this.log.debug({ share: name, paths: rels.size }, 'watcher missed changes');
       for (const rel of rels) this.touch(name, rel);
@@ -310,6 +334,7 @@ export class Indexer extends EventEmitter<IndexerEvents> {
     this.dirty.clear();
     let changed = false;
     for (const [name, rels] of batch) {
+      if (this.stopped) return;
       const share = this.store.share(name);
       if (!share) continue;
       const added: Omit<FileRow, 'hash'>[] = [];
@@ -331,6 +356,7 @@ export class Indexer extends EventEmitter<IndexerEvents> {
           gone.push(rel); // or replaced by something unshareable
         }
       }
+      if (this.stopped) return;
       // Additions first, so a file renamed within this batch keeps its hash (see movedFrom).
       const moved = movedFrom(
         gone.flatMap((rel) => {
