@@ -4,7 +4,7 @@
 
 This is the one list of open work. Each item points to where its detail lives. When an item is done, remove it here and log it in a dated section below. The milestone sections further down are history: their "Carried forward" lists were folded in here on 2026-10-13, so add new work here, not there.
 
-`docs/questions.md` holds the reasoning for items that need an owner decision. `docs/handoff-downloads.md` is the parked plan for the rest of downloads.
+`docs/questions.md` holds anything still waiting for an owner decision. Longer plans live in `docs/plans/`: `downloads.md` (the parked rest of downloads) and `agents.md` (MCP ideas).
 
 ### Try it on real machines
 
@@ -28,22 +28,26 @@ These need a person or hardware that CI doesn't have.
 - **An in-app "What's new"** from `apps/desktop/changelog.json` (ADR 0016).
 - **A message to send to the person with the easier fix.** Transfers shows who can fix a failed connection, but there's no ready-made note to send them (M5, HANDOFF §8).
 
+### Decided, ready to build
+
+- **Hub admin in the client** (ADR 0020):
+  - admin accounts (the first account, plus `communal-hub admin`);
+  - admin hub messages with access-control tests;
+  - Settings › Hubs › Manage: settings, users, devices, graph, audit log;
+  - MCP admin tools.
+- **Agents, first step** (ADR 0021, `docs/plans/agents.md`): thumbnails as MCP image content, then an access dry run. The dry run is shown to the person, never taken as confirmation.
+- **Re-share warning** (ADR 0021): say who will see the files before a download lands in a shared folder.
+- **People on several hubs** (ADR 0021): one person per `user_id` in People, named as on the first hub you joined. Actions stay per hub.
+- **First-device guidance** (ADR 0021): the guide and recovery-key screens say to keep the first computer and the recovery key safe, and to start a new account if either is stolen.
+
 ### Waiting for user feedback
 
-The plan is in `docs/handoff-downloads.md`, and the open choices are in `docs/questions.md`.
+The plan is in `docs/plans/downloads.md`.
 
 - **Download rules by kind** (audio → Music, video → Movies), unless Save to… turns out to be enough.
-- **Re-sharing:** warn, or narrow the audience, when a download lands in a shared folder (owner decision).
 - **Transfers grouped by folder**, with one progress bar per folder download.
 - **New sources during a download.** Re-query sources every ~30 s so a copy that appears mid-download gets used.
-
-### Needs an owner decision first
-
-These are in `docs/questions.md`.
-
-- **Losing the first device:** accept it for v1, rotate the account key, or keep a separate root key.
-- **Multi-hub people:** merge one person seen on several hubs, choose which display name to show, and maybe add per-hub identities later.
-- **Expanding what AI agents can do (MCP):** choose which ideas to do first. Suggested: thumbnails as image content, plus an access dry run before `set_access`/`share_folder`. Also open: whether a dry run counts as confirmation, and how much file content may leave the owner's device for content search.
+- **More agent tools** from `docs/plans/agents.md`, beyond the first step.
 
 ### Known limitations
 
@@ -69,7 +73,7 @@ These are fine for now. Fix them if they start to bite.
 
 ### After v1
 
-- **The hub web admin UI** (`docs/questions.md`): settings, approvals, bans and the social graph. It includes retention for long-unseen devices (ADR 0015).
+- **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
 - **From HANDOFF §15:** hubs caching thumbnails of hub-wide files, and mobile clients.
 
 ## People, shares and a Linux installer (0.1.5, 2026-10-13)

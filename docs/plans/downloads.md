@@ -1,6 +1,6 @@
-# Handoff: download destinations, folder downloads and re-sharing
+# Plan: download destinations, folder downloads and re-sharing
 
-Status: **partly built, the rest on hold** (2026-10-13). The owner chose a simpler first step: a downloads folder they choose, "Save to…", and whole-folder downloads. See ADR 0018. Rules by kind, the re-share warning and the rest of this plan wait for user feedback. Keep this as the plan if they're picked up again.
+Status: **partly built, the rest on hold** (2026-10-13). The re-share question is decided: warn before saving into a shared folder (ADR 0021). The owner chose a simpler first step: a downloads folder they choose, "Save to…", and whole-folder downloads. See ADR 0018. Rules by kind, the re-share warning and the rest of this plan wait for user feedback. Keep this as the plan if they're picked up again.
 
 ## What the owner wants
 
@@ -69,7 +69,7 @@ This isn't required for the feature, but it's what makes re-sharing pay off for 
    - (b) Give re-shared files "only me" unless you widen them.
    - (c) Default re-shared files to the narrower of the two audiences.
 
-   The hub can't help here: it doesn't know a local file came from someone else. Record the choice in the ADR and in `docs/questions.md`.
+   The hub can't help here: it doesn't know a local file came from someone else. Decided: (a), warn (ADR 0021).
 
 4. **Duplicates.** Copy a local same-hash file into the destination, or hard-link it (same volume) or clone it (APFS `copyFile` with `COPYFILE_FICLONE`)? Cloning or linking saves space; plain copying is simplest.
 5. **Listing:** a recursive `browse` walk with a cap, as proposed, or a new hub `tree` message?

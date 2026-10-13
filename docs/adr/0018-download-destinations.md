@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-10-13
 
-The owner asked for downloads organized by kind (audio → Music…), whole-folder downloads, and re-sharing into shared folders (`docs/handoff-downloads.md`). After looking at the design, **the owner chose a simpler first step**: let people choose where things go as they download them, and get real feedback before adding rules. There are no protocol changes.
+The owner asked for downloads organized by kind (audio → Music…), whole-folder downloads, and re-sharing into shared folders (`docs/plans/downloads.md`). After looking at the design, **the owner chose a simpler first step**: let people choose where things go as they download them, and get real feedback before adding rules. There are no protocol changes.
 
 ## What's built
 
@@ -22,7 +22,7 @@ The owner asked for downloads organized by kind (audio → Music…), whole-fold
 From the handoff, waiting for feedback:
 
 - **Destination rules by kind** (audio → Music). People pick a folder with Save to… instead.
-- **The re-share warning.** Downloading into a shared folder still re-shares the files with that folder's audience, as before. The handoff's open question (warn, or default re-shared files to "only me", or to the narrower audience) is still open in `docs/questions.md`.
+- **The re-share warning.** Downloading into a shared folder still re-shares the files with that folder's audience, as before. The handoff's open question (warn, or default re-shared files to "only me", or to the narrower audience) was decided in ADR 0021: warn before saving into a shared folder.
 - **Refreshing sources mid-download**, transfer groups in the Transfers screen.
 
 ## Tests

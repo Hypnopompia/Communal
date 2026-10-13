@@ -13,7 +13,7 @@ These came from the owner during development. Don't revert them to the spec's wo
 - **Multiple hubs per client, one identity** (ADR 0007). A search goes to every joined hub at once. The desktop Settings will need a hub list, not a single "Hub address".
 - **Access rules are per hub** (ADR 0007/0009). The same file can be public on one hub and private on another. A rule on one hub never grants access through another. The UI must make the per-hub scope obvious.
 - **Hub admins can ban and unban accounts** (ADR 0006).
-- **A web admin UI for hubs** (settings, approvals, bans, social graph) is wanted **after v1**. Open design questions are in `docs/questions.md`. Keep admin actions as `HubDb` methods so a second front end can reuse them.
+- **Hub admin lives in the clients** (ADR 0020), not a web UI: the first account on a hub is its admin, and `communal-hub admin` adds or removes admins (shell only). Settings › Hubs › Manage covers settings, users, devices, the connection graph (admins only, no groups or rules) and an audit log, and MCP gets admin tools. Keep admin actions as `HubDb` methods so a second front end can reuse them.
 
 ## Commands
 

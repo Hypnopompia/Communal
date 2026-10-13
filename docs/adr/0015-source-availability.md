@@ -45,4 +45,4 @@ The client merges hits from several hubs round-robin (ADR 0007), then stable-sor
 
 ## Not done
 
-- **Retention.** Hiding a device's entries after X days unseen belongs with the hub admin UI (post-v1, `docs/questions.md`). The device's next snapshot would bring them back.
+- **Retention.** Hiding a device's entries after X days unseen belongs with the hub admin UI (a hub setting in the admin screens, ADR 0020). The device's next snapshot would bring them back.
