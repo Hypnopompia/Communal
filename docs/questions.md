@@ -54,30 +54,15 @@ Options:
 2. **Account key rotation:** a new root signed by the old one, with clients and hubs following the rotation. Peers that verified the old fingerprint would need to see it change. The "verified key changed" warning (§2) would fire, which is right but alarming.
 3. **Don't make the first device the root:** a separate root key that lives only in the recovery file and signs device certs during setup. Devices could then all be revoked, but linking would need the root key (or a delegation scheme).
 
-## Download destinations and folder downloads
+## Download destinations and re-sharing
 
-**Status:** planned (owner request, 2026-10-12). Not scheduled.
+**Status:** first step built (ADR 0018, 2026-10-13): a downloads folder people choose, "Save to…", and whole-folder downloads. The rest waits for user feedback (owner). The full plan is in `docs/handoff-downloads.md`.
 
-Today every download lands in one folder (`~/Downloads/Communal`), or in a subscription's folder. The owner wants downloads organized by kind, and whole folders downloaded at once. For example: find an album in someone's shared Music, download the folder into `~/Music`, which is itself shared, so the album is re-shared and becomes another source for others.
+Still open:
 
-What's already in place:
-
-- Files are identified by content hash, so a re-shared copy is automatically an extra source for everyone downloading it (multi-source, ADR 0010).
-- Subscriptions already download a folder tree and keep its structure (ADR 0013). A one-off folder download is the same without the watch.
-- The indexer picks up new files in shared folders. The downloader writes `.part` files and renames them on completion, so a half-finished file is never shared.
-
-Needs deciding:
-
-1. **Rules.** Destination by kind (audio, video, image, document…), by file extension, or by MIME type? A per-download "Save to…" override? What happens when a rule's folder is missing?
-2. **Structure.** For a folder download, keep the owner's folder name (e.g. `Music/Artist/Album/`)? Merge into an existing folder of the same name? Handle name clashes by renaming, skipping identical content (same hash), or asking?
-3. **Re-sharing and access.**
-   - A destination inside a share inherits that share's access rules: should the app say so before downloading ("this will be visible to everyone on the hub")?
-   - Should re-sharing be opt-in per rule?
-   - Re-sharing someone else's file to a wider audience than they chose would undo their choice. Should a re-shared copy default to the narrower of the two audiences, or should the app warn?
-4. **Duplicates.** If the same content (hash) already exists locally, link or copy it instead of downloading again?
-5. **API and UI.**
-   - `POST /v1/downloads` takes a folder (`hub, device, path`).
-   - Rules live in persisted settings (`settings.json`).
-   - Settings gets a "Downloads" tab.
-   - Library gets "Download folder", and Transfers groups a folder's files.
-   - MCP: a `download_folder` tool.
+1. **Rules by kind** (audio → Music, video → Movies), by extension, or neither, if Save to… turns out to be enough.
+2. **Re-sharing and access.** A download saved into a shared folder takes that folder's audience. Someone who was shared a file privately could re-share it to the whole hub without noticing. Options:
+   - warn before saving into a shared folder;
+   - re-shared files start as "only me";
+   - they take the narrower of the two audiences.
+3. **Transfers grouped by folder**, with one progress bar for a folder download.
