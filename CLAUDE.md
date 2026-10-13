@@ -48,7 +48,7 @@ These came from the owner during development. Don't revert them to the spec's wo
   - It signs and notarizes both Mac apps locally. GitHub Actions (`release.yml`) adds Windows, Linux and the tarballs to the draft, then the script publishes.
 - AI agents: `communal mcp` (stdio MCP server). The desktop app serves its local socket only while Settings › AI agents allows it.
 - Site: `site/` (static HTML, deployed by `.github/workflows/pages.yml` to https://hypnopompia.github.io/Communal/). Screenshots in `site/screenshots/` come from two app profiles with generated demo data, never real files.
-- Hub admin: `communal-hub users | approve <user_id> | ban <user_id> [--reason] | unban <user_id> | set join_mode open|approval | set name "<readable name>"`. These commands work directly on the SQLite database, so they run alongside a live hub.
+- Hub admin: `communal-hub users | approve <user_id> | ban <user_id> [--reason] | unban <user_id> | set join_mode open|approval | set name "<readable name>" | admin [list|add|remove <user_id>] | log [-n N]`. These commands work directly on the SQLite database, so they run alongside a live hub. Every change goes in the audit log (`admin_log`) with `cli` as the actor.
 
 Shell notes for this machine:
 
@@ -112,6 +112,7 @@ How the pieces connect:
   - The page CSP allows only bundled scripts. Fonts are bundled (`@fontsource-variable/...`).
   - No asar: the core spawns ffmpeg and the trash helper by path.
 - **Agents** (ADR 0017): `packages/mcp` is an MCP server over the local API. It must never get tools for the recovery key, device linking or revoking, or verifying people. `discoverApi()` finds a running core (daemon, then the desktop app's control socket). `POST /v1/ui/show` moves the desktop window and is `not_found` when headless.
+- **Hub admins** (ADR 0020): `users.admin_at`, checked by `HubDb.isAdmin()` on every `admin.*` message (a ban overrides it). The first account on a hub is its admin. Admin `HubDb` methods take an `actor` and write `admin_log` in the same transaction, so every front end is audited.
 - **Hub visibility** is decided in exactly one place, `Catalog.visible()` in `apps/hub/src/catalog.ts`. Never filter access in individual queries. Each entry carries its governing rule (`entries.rule_path`), which `HubDb` re-tags whenever rules change (ADR 0009).
 - **Access rules are per hub, and the client's copy is authoritative** (core `index.db` table `acl`). It's pushed whole with `acl.replace` on every sign-in. List grants only work while the two users are connected.
 - **Clients never trust a hub's claims about identity:** run `checkSummary` on every `UserSummary` (core `people.ts`).
@@ -143,6 +144,7 @@ How the pieces connect:
   - `access.test.ts`: the audience × viewer matrix, connections, groups, rules
   - `broker.test.ts`: `connect.*`
   - `devices.test.ts`: `link.*`, `account.restore`, `device.list`, `device.revoke`
+  - `admin.test.ts`: `admin.*` (admin, non-admin and banned admin), the first account becoming admin, and the migration
   - `watch.test.ts`: `watch` / `unwatch` / `watch.event`
 - Integration tests in `test/integration/` are named per milestone (`m1-…`, `m4-transfers…`). `CommunalCore` takes `peer: { loopback: true }` and short `downloads`/`indexer` timers for tests, plus `testHooks` for fault injection (e.g. corrupt chunks).
 - Social state for later milestones (connections etc.) can be seeded directly with `HubDb` methods such as `putConnection`.

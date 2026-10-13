@@ -531,6 +531,15 @@ export class HubServer {
           return this.send(s, 'device.listing', this.deviceListing(s.user!), msg.id);
         case 'device.revoke':
           return this.onRevoke(s, msg.id, msg.body);
+        case 'admin.users':
+        case 'admin.approve':
+        case 'admin.ban':
+        case 'admin.unban':
+        case 'admin.settings.get':
+        case 'admin.settings.set':
+        case 'admin.graph':
+        case 'admin.log':
+          return this.onAdmin(s, msg);
         case 'unwatch': {
           const path = folderPath(msg.body.path);
           s.watches.delete(watchKey(msg.body.device_id, path));
@@ -599,9 +608,13 @@ export class HubServer {
       });
       return;
     }
-    const status = this.db.joinMode === 'open' ? 'active' : 'pending';
-    this.db.createAccount(
-      { id: uid, display_name: body.display_name, root_pubkey: toB64(root), status },
+    const { status, admin } = this.db.createAccount(
+      {
+        id: uid,
+        display_name: body.display_name,
+        root_pubkey: toB64(root),
+        status: this.db.joinMode === 'open' ? 'active' : 'pending',
+      },
       {
         id: did,
         user_id: uid,
@@ -611,7 +624,8 @@ export class HubServer {
         platform: body.platform,
       },
     );
-    s.log.info({ user_id: uid, device_id: did, status }, 'account created');
+    s.log.info({ user_id: uid, device_id: did, status, admin }, 'account created');
+    this.notifyAdmins();
     this.send(
       s,
       'account.created',
@@ -636,6 +650,7 @@ export class HubServer {
     this.db.addDevice({ id: did, user_id: user.id, ...d });
     this.refreshLibraries((x) => x.user === user.id, [did]);
     s.log.info({ user_id: user.id, device_id: did }, 'device added to account');
+    this.notifyAdmins();
     this.send(
       s,
       'account.created',
@@ -703,6 +718,7 @@ export class HubServer {
         observed_addr: s.observedAddr,
         index_rev: this.db.indexRev(dev.id),
         nat_probe_ports: this.probePorts,
+        admin: this.db.isAdmin(user.id),
       },
       re,
     );
@@ -1368,6 +1384,119 @@ export class HubServer {
       this.db.revokeDevice(d.id);
       this.dropDevice(user.id, d.id, 4004, 'device revoked');
     }
+    this.notifyAdmins();
+  }
+
+  // ── hub administration (ADR 0020) ─────────────────────────────────────────
+
+  /**
+   * Every admin message is checked here, against the database, so a flag removed by the shell
+   * applies at once. Anyone else gets exactly what an older hub says about a type it doesn't know.
+   */
+  private onAdmin(s: Session, msg: Extract<ClientMessage, { t: `admin.${string}` }>) {
+    if (!this.db.isAdmin(s.user!))
+      return this.fail(s, 'bad_request', `unknown type ${msg.t}`, msg.id);
+    const me = s.user!;
+    switch (msg.t) {
+      case 'admin.users':
+        return this.send(s, 'admin.user.listing', { users: this.adminUsers() }, msg.id);
+      case 'admin.approve': {
+        if (!this.db.getUser(msg.body.user_id))
+          return this.fail(s, 'not_found', 'no such user', msg.id);
+        if (this.db.approve(msg.body.user_id, me)) this.notifyAdmins();
+        return this.send(s, 'ok', {}, msg.id);
+      }
+      case 'admin.ban': {
+        const target = this.db.getUser(msg.body.user_id);
+        if (!target) return this.fail(s, 'not_found', 'no such user', msg.id);
+        if (target.id === me || target.admin_at !== null)
+          return this.fail(s, 'forbidden', 'admins can only be banned from the hub shell', msg.id);
+        if (target.banned_at === null) {
+          this.db.ban(target.id, msg.body.reason || null, me);
+          this.kickUser(target.id);
+          this.notifyAdmins();
+        }
+        return this.send(s, 'ok', {}, msg.id);
+      }
+      case 'admin.unban': {
+        if (!this.db.getUser(msg.body.user_id))
+          return this.fail(s, 'not_found', 'no such user', msg.id);
+        if (this.db.unban(msg.body.user_id, me)) this.notifyAdmins();
+        return this.send(s, 'ok', {}, msg.id);
+      }
+      case 'admin.settings.get':
+        return this.send(s, 'admin.settings', this.adminSettings(), msg.id);
+      case 'admin.settings.set':
+        this.db.changeSettings(msg.body, me);
+        this.notifyAdmins();
+        return this.send(s, 'admin.settings', this.adminSettings(), msg.id);
+      case 'admin.graph':
+        return this.send(
+          s,
+          'admin.graph.listing',
+          {
+            connections: this.db.allConnections().map((c) => ({
+              a: c.user_a,
+              b: c.user_b,
+              state: c.state,
+              requested_by: c.requested_by,
+              since: c.created_at,
+            })),
+          },
+          msg.id,
+        );
+      case 'admin.log':
+        return this.send(
+          s,
+          'admin.log.listing',
+          this.db.auditLog(msg.body.limit, msg.body.before),
+          msg.id,
+        );
+    }
+  }
+
+  private adminUsers(): HubBody<'admin.user.listing'>['users'] {
+    return this.db.adminUsers().map((u) => ({
+      user_id: u.id,
+      display_name: u.display_name,
+      fingerprint: fingerprint(fromB64(u.root_pubkey)),
+      status: u.status,
+      admin: u.admin_at !== null,
+      created_at: u.created_at,
+      banned_at: u.banned_at,
+      ban_reason: u.ban_reason,
+      devices: u.devices.map((d) => {
+        const p = d.revoked_at === null ? this.profileOf(d.id) : undefined;
+        return {
+          device_id: d.id,
+          name: d.name,
+          platform: d.platform as Platform,
+          created_at: d.created_at,
+          last_seen: d.last_seen,
+          revoked_at: d.revoked_at,
+          online: d.revoked_at === null && this.isOnline(d.id),
+          files: d.files,
+          bytes: d.bytes,
+          ...(p ? { nat: { nat: p.nat, upnp: p.upnp, ipv6: p.ipv6, cgnat: p.cgnat } } : {}),
+        };
+      }),
+    }));
+  }
+
+  private adminSettings(): HubBody<'admin.settings'> {
+    return { join_mode: this.db.joinMode, name: this.db.hubName ?? null };
+  }
+
+  /** Tells every signed-in admin that something their screens show changed. */
+  private notifyAdmins() {
+    const admins = new Set(
+      this.db
+        .listAdmins()
+        .filter((u) => u.banned_at === null)
+        .map((u) => u.id),
+    );
+    for (const s of this.online.values())
+      if (admins.has(s.user!)) this.send(s, 'admin.changed', {});
   }
 
   // ── access rules ──────────────────────────────────────────────────────────

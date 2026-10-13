@@ -171,6 +171,7 @@ describe('access control: account.create', () => {
   });
 
   it('creates pending accounts in approval mode', async () => {
+    (await signUp(t.url, 'owner')).c.close(); // the first account is always let in (ADR 0020)
     t.db.setSetting('join_mode', 'approval');
     const key = generateKeyPair();
     const c = await RawClient.connect(t.url);

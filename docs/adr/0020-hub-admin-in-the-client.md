@@ -1,6 +1,6 @@
 # ADR 0020 — Hub administration from the client
 
-- Status: accepted (design; not built yet)
+- Status: accepted. The hub side is built (protocol, database, handlers, `communal-hub admin` and `log`). Core, desktop and MCP are next.
 - Date: 2026-10-13
 
 Today a hub admin is anyone with a shell on the hub, using `communal-hub` (HANDOFF §10). The plan was a separate web admin UI after v1, with open questions about sign-in, graph privacy and where to serve it (`docs/questions.md`, now removed). The owner chose a different shape: admin lives in the clients.
@@ -28,7 +28,7 @@ These were open questions or details. They're decided here, and can be revisited
 - **No separate sign-in.** The hub session is already authenticated with the device key, so an admin is recognised by `user_id`. Every device on the account can manage the hub. No passwords, admin links or `/admin` HTTP routes are needed, and the hub opens no new port.
 - **Admin rights are per hub**, like everything else (ADR 0007). Being admin on one hub means nothing on another.
 - **Existing hubs:** the migration that adds admins makes the oldest account that isn't banned the admin. On a hub set up by its owner, that's the owner. Check with `communal-hub admin list` after upgrading.
-- **On a new hub, the first account to sign up wins.** The hub install script and `hub.html` tell the person running it to join first. `communal-hub admin add|remove` fixes a mistake.
+- **On a new hub, the first account to sign up wins.** It's let in even in approval mode, since nobody could approve it from a client otherwise. The hub install script and `hub.html` tell the person running it to join first. `communal-hub admin add|remove` fixes a mistake.
 - **Only the shell can make or remove admins.** That stays out of the client and MCP, so a stolen device or a misled agent can't take over a hub. An admin can't ban another admin from the client either. Use the CLI for that.
 - **A banned account isn't an admin**, even while the flag is still set.
 - **Enforcement on the hub.** Every admin message checks the session's account on the hub. Non-admins get the same error as an unknown message type, so they can't tell whether admin messages exist.
@@ -38,7 +38,7 @@ These were open questions or details. They're decided here, and can be revisited
   - **Index counts per device:** files and total size. **No file names or paths.** The hub stores them, but the admin UI doesn't put people's files in front of another person.
   - **The graph:** accounts as nodes and accepted connections as edges, with pending requests shown differently. **Groups and access rules are left out.** Groups are private to their owner (HANDOFF §2), and nobody may learn who can see a file (§6).
 - **Settings:** the hub name, `join_mode`, and (later) retention for devices that haven't been seen for a long time (ADR 0015).
-- **The audit log** is a hub table `admin_log`: time, actor (`user_id`, or `cli`), action, target and details. Every admin `HubDb` method writes its entry in the same transaction, so no front end can skip it. CLI actions are logged too. Entries are kept until an admin clears them. The Manage screen shows the log, newest first.
+- **The audit log** is a hub table `admin_log`: time, actor (`user_id`, or `cli`), action, target and details. Every admin `HubDb` method writes its entry in the same transaction, so no front end can skip it. CLI actions are logged too. Entries are kept, and there's no way to clear them yet. The Manage screen shows the log, newest first, and `communal-hub log` prints it.
 - **One set of methods.** Every admin action stays a `HubDb` method. The CLI, the hub messages and through them the client and MCP are all front ends on those methods.
 - **MCP** (amends ADR 0017's scope):
   - Tools for listing users, devices and the log; approving, banning and unbanning; and hub settings.
@@ -48,7 +48,7 @@ These were open questions or details. They're decided here, and can be revisited
 
 ## Protocol and tests
 
-- The new admin messages go in `clientBodies`/`hubBodies`, with fixtures, and are recorded in ADR 0004.
+- The new admin messages go in `clientBodies`/`hubBodies`, with fixtures, and are recorded in ADR 0004. `welcome.admin` tells the client whether to show Manage, and an `admin.changed` hint tells open admin screens to refetch.
 - Each one needs access-control cases (admin, non-admin, banned admin) in a new `apps/hub/src/admin.test.ts`.
 - The local API gets `/v1/hubs/:id/admin/...` routes, and the renderer wire types follow them.
 

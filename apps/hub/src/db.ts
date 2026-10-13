@@ -55,6 +55,26 @@ export interface UserRow {
   /** Set when the hub admin bans the account; orthogonal to `status`. */
   banned_at: number | null;
   ban_reason: string | null;
+  /** Set while the account administers the hub (ADR 0020). A ban overrides it. */
+  admin_at: number | null;
+}
+
+/** Who did something, in the audit log: an admin's user_id, `cli` (the shell) or `hub`. */
+export type Actor = string;
+
+export interface AuditEntry {
+  id: number;
+  at: number;
+  actor: Actor;
+  action: string;
+  target: string | null;
+  details: string | null;
+}
+
+/** Hub settings an admin can change (ADR 0020). `name: null` clears the name. */
+export interface SettingsChange {
+  join_mode?: JoinMode;
+  name?: string | null;
 }
 
 export interface DeviceRow {
@@ -267,6 +287,26 @@ const MIGRATIONS: string[] = [
   ALTER TABLE entries ADD COLUMN mrev INTEGER NOT NULL DEFAULT 0;
   CREATE INDEX entries_mrev ON entries (device_id, mrev);
   `,
+  `
+  -- Hub admins (ADR 0020). An existing hub's oldest unbanned account becomes its admin, which on
+  -- a hub its owner set up is the owner; \`communal-hub admin\` changes it.
+  ALTER TABLE users ADD COLUMN admin_at INTEGER;
+  UPDATE users SET admin_at = CAST(strftime('%s', 'now') AS INTEGER)
+    WHERE id = (SELECT id FROM users WHERE banned_at IS NULL ORDER BY created_at, rowid LIMIT 1);
+
+  -- Every admin action, from a client or the shell. Kept; never sent to anyone but admins.
+  CREATE TABLE admin_log (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    at      INTEGER NOT NULL,
+    actor   TEXT NOT NULL,
+    action  TEXT NOT NULL,
+    target  TEXT,
+    details TEXT
+  );
+  INSERT INTO admin_log (at, actor, action, target, details)
+    SELECT admin_at, 'hub', 'admin.add', id, 'oldest account when admins were added'
+    FROM users WHERE admin_at IS NOT NULL;
+  `,
 ];
 
 const now = () => Math.floor(Date.now() / 1000);
@@ -342,19 +382,135 @@ export class HubDb {
     return this.getSetting('join_mode') === 'approval' ? 'approval' : 'open';
   }
 
+  /** Changes admin-editable settings and logs each change. Throws on an invalid value. */
+  changeSettings(change: SettingsChange, actor: Actor) {
+    if (change.join_mode !== undefined && !['open', 'approval'].includes(change.join_mode))
+      throw new Error('join_mode must be open or approval');
+    const name = typeof change.name === 'string' ? change.name.trim() : change.name;
+    if (typeof name === 'string' && (name.length < 1 || name.length > 64))
+      throw new Error('name must be 1 to 64 characters');
+    this.raw.transaction(() => {
+      if (change.join_mode !== undefined && change.join_mode !== this.joinMode) {
+        this.setSetting('join_mode', change.join_mode);
+        this.audit(actor, 'set', 'join_mode', change.join_mode);
+      }
+      if (name !== undefined && name !== (this.hubName ?? null)) {
+        if (name === null) this.raw.prepare("DELETE FROM settings WHERE key = 'name'").run();
+        else this.setSetting('name', name);
+        this.audit(actor, 'set', 'name', name);
+      }
+    })();
+  }
+
+  // ── admins and the audit log (ADR 0020) ───────────────────────────────────
+
+  /** Whether the account administers the hub: flagged, and not banned. */
+  isAdmin(id: string): boolean {
+    return (
+      this.raw
+        .prepare('SELECT 1 FROM users WHERE id = ? AND admin_at IS NOT NULL AND banned_at IS NULL')
+        .get(id) !== undefined
+    );
+  }
+
+  /** Makes an account an admin or not. Only the shell does this; false when nothing changed. */
+  setAdmin(id: string, on: boolean, actor: Actor = 'cli'): boolean {
+    return this.raw.transaction(() => {
+      const changed =
+        this.raw
+          .prepare(
+            on
+              ? 'UPDATE users SET admin_at = ? WHERE id = ? AND admin_at IS NULL'
+              : 'UPDATE users SET admin_at = NULL WHERE id = ? AND admin_at IS NOT NULL',
+          )
+          .run(...(on ? [now(), id] : [id])).changes > 0;
+      if (changed) this.audit(actor, on ? 'admin.add' : 'admin.remove', id);
+      return changed;
+    })();
+  }
+
+  listAdmins(): UserRow[] {
+    return this.raw
+      .prepare('SELECT * FROM users WHERE admin_at IS NOT NULL ORDER BY admin_at, id')
+      .all() as UserRow[];
+  }
+
+  private audit(
+    actor: Actor,
+    action: string,
+    target: string | null,
+    details: string | null = null,
+  ) {
+    this.raw
+      .prepare('INSERT INTO admin_log (at, actor, action, target, details) VALUES (?, ?, ?, ?, ?)')
+      .run(now(), actor, action, target, details);
+  }
+
+  /** The audit log, newest first, from just before `before` (an entry id) when given. */
+  auditLog(limit: number, before?: number): { entries: AuditEntry[]; more: boolean } {
+    const rows = this.raw
+      .prepare('SELECT * FROM admin_log WHERE id < ? ORDER BY id DESC LIMIT ?')
+      .all(before ?? Number.MAX_SAFE_INTEGER, limit + 1) as AuditEntry[];
+    return { entries: rows.slice(0, limit), more: rows.length > limit };
+  }
+
+  /** Every account with all its devices and what each shares, as counts (the admin Users screen). */
+  adminUsers(): (UserRow & {
+    devices: (DeviceRow & { files: number; bytes: number })[];
+  })[] {
+    const counts = new Map(
+      (
+        this.raw
+          .prepare(
+            'SELECT device_id, count(*) AS files, coalesce(sum(size), 0) AS bytes FROM entries GROUP BY device_id',
+          )
+          .all() as { device_id: string; files: number; bytes: number }[]
+      ).map((r) => [r.device_id, r]),
+    );
+    return (this.raw.prepare('SELECT * FROM users ORDER BY created_at, id').all() as UserRow[]).map(
+      (u) => ({
+        ...u,
+        devices: this.listDevices(u.id).map((d) => ({
+          ...d,
+          files: counts.get(d.id)?.files ?? 0,
+          bytes: counts.get(d.id)?.bytes ?? 0,
+        })),
+      }),
+    );
+  }
+
+  /** Every connection on the hub: the admin graph (never groups or rules, ADR 0020). */
+  allConnections(): {
+    user_a: string;
+    user_b: string;
+    state: 'pending' | 'accepted';
+    requested_by: string;
+    created_at: number;
+  }[] {
+    return this.raw
+      .prepare('SELECT * FROM connections ORDER BY created_at, user_a, user_b')
+      .all() as ReturnType<HubDb['allConnections']>;
+  }
+
   // ── users & devices ───────────────────────────────────────────────────────
 
+  /**
+   * Creates an account with its first device. The hub's very first account is active and its
+   * admin whatever the join mode (ADR 0020); the returned status says what was stored.
+   */
   createAccount(
-    user: Omit<UserRow, 'created_at' | 'banned_at' | 'ban_reason'>,
+    user: Omit<UserRow, 'created_at' | 'banned_at' | 'ban_reason' | 'admin_at'>,
     device: Omit<DeviceRow, 'created_at' | 'last_seen' | 'revoked_at'>,
-  ) {
+  ): { status: UserStatus; admin: boolean } {
     const t = now();
-    this.raw.transaction(() => {
+    return this.raw.transaction(() => {
+      const first = this.raw.prepare('SELECT 1 FROM users LIMIT 1').get() === undefined;
+      const status = first ? 'active' : user.status;
       this.raw
         .prepare(
-          'INSERT INTO users (id, display_name, root_pubkey, status, created_at) VALUES (?, ?, ?, ?, ?)',
+          'INSERT INTO users (id, display_name, root_pubkey, status, created_at, admin_at) VALUES (?, ?, ?, ?, ?, ?)',
         )
-        .run(user.id, user.display_name, user.root_pubkey, user.status, t);
+        .run(user.id, user.display_name, user.root_pubkey, status, t, first ? t : null);
       this.raw
         .prepare(
           `INSERT INTO devices (id, user_id, pubkey, cert_chain, name, platform, created_at)
@@ -369,6 +525,8 @@ export class HubDb {
           device.platform,
           t,
         );
+      if (first) this.audit('hub', 'admin.add', user.id, 'first account');
+      return { status, admin: first };
     })();
   }
 
@@ -407,19 +565,40 @@ export class HubDb {
     return this.raw.prepare('UPDATE users SET status = ? WHERE id = ?').run(status, id).changes > 0;
   }
 
-  ban(id: string, reason: string | null = null): boolean {
-    return (
-      this.raw
-        .prepare('UPDATE users SET banned_at = ?, ban_reason = ? WHERE id = ?')
-        .run(now(), reason, id).changes > 0
-    );
+  /** Lets a pending account in. False when it doesn't exist or was already active. */
+  approve(id: string, actor: Actor = 'cli'): boolean {
+    return this.raw.transaction(() => {
+      const changed =
+        this.raw
+          .prepare("UPDATE users SET status = 'active' WHERE id = ? AND status = 'pending'")
+          .run(id).changes > 0;
+      if (changed) this.audit(actor, 'approve', id);
+      return changed;
+    })();
   }
 
-  unban(id: string): boolean {
-    return (
-      this.raw.prepare('UPDATE users SET banned_at = NULL, ban_reason = NULL WHERE id = ?').run(id)
-        .changes > 0
-    );
+  ban(id: string, reason: string | null = null, actor: Actor = 'cli'): boolean {
+    return this.raw.transaction(() => {
+      const changed =
+        this.raw
+          .prepare('UPDATE users SET banned_at = ?, ban_reason = ? WHERE id = ?')
+          .run(now(), reason, id).changes > 0;
+      if (changed) this.audit(actor, 'ban', id, reason);
+      return changed;
+    })();
+  }
+
+  unban(id: string, actor: Actor = 'cli'): boolean {
+    return this.raw.transaction(() => {
+      const changed =
+        this.raw
+          .prepare(
+            'UPDATE users SET banned_at = NULL, ban_reason = NULL WHERE id = ? AND banned_at IS NOT NULL',
+          )
+          .run(id).changes > 0;
+      if (changed) this.audit(actor, 'unban', id);
+      return changed;
+    })();
   }
 
   /** Which of `ids` are banned. */

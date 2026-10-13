@@ -25,4 +25,6 @@ systemctl restart communal-hub || true
 cat <<MSG
 Installed. Put the TLS certificate in /etc/communal-hub/tls (see the .env file), then:
   systemctl restart communal-hub && systemctl status communal-hub
+On a new hub, join it from your own app first: the first account becomes its admin
+(communal-hub admin list|add|remove changes that).
 MSG

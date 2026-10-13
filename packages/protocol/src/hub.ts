@@ -78,6 +78,39 @@ const Group = z.object({
   members: z.array(UserId).max(1000),
 });
 
+/** Who did something in the hub's audit log: an admin's account, the shell, or the hub itself. */
+const Actor = z.union([UserId, z.enum(['cli', 'hub'])]);
+
+/** What a hub admin sees about one device (ADR 0020): counts, never file names or paths. */
+const AdminDevice = z.object({
+  device_id: DeviceId,
+  name: DeviceName,
+  platform: Platform,
+  created_at: UnixSeconds,
+  last_seen: UnixSeconds.nullable(),
+  revoked_at: UnixSeconds.nullable(),
+  online: z.boolean(),
+  files: z.number().int().nonnegative(),
+  bytes: z.number().int().nonnegative(),
+  /** The NAT side of its latest network profile, while it's signed in (no addresses). */
+  nat: NatObservation.optional(),
+});
+
+const AdminUser = z.object({
+  user_id: UserId,
+  display_name: z.string(),
+  fingerprint: Fingerprint,
+  status: z.enum(['active', 'pending']),
+  admin: z.boolean(),
+  created_at: UnixSeconds,
+  banned_at: UnixSeconds.nullable(),
+  ban_reason: z.string().nullable(),
+  devices: z.array(AdminDevice),
+});
+
+const JoinMode = z.enum(['open', 'approval']);
+const HubName = z.string().trim().min(1).max(64);
+
 const TransferToken = z.object({
   claims: z.object({
     session_id: SessionId,
@@ -219,6 +252,28 @@ export const clientBodies = {
     }),
   }),
 
+  /*
+   * Hub administration (ADR 0020). Only admins may send these; anyone else gets the same
+   * `bad_request` "unknown type" an older hub would give.
+   */
+  'admin.users': Empty,
+  'admin.approve': z.object({ user_id: UserId }),
+  /** Admins can't be banned from a client, only from the hub's shell. */
+  'admin.ban': z.object({ user_id: UserId, reason: z.string().trim().max(200).optional() }),
+  'admin.unban': z.object({ user_id: UserId }),
+  'admin.settings.get': Empty,
+  /** Only the fields given change; `name: null` clears the name. */
+  'admin.settings.set': z.object({
+    join_mode: JoinMode.optional(),
+    name: HubName.nullable().optional(),
+  }),
+  'admin.graph': Empty,
+  /** Newest first; `before` is the id of the oldest entry already shown. */
+  'admin.log': z.object({
+    before: z.number().int().positive().optional(),
+    limit: z.number().int().min(1).max(500),
+  }),
+
   ping: Empty,
   pong: Empty,
   error: z.object({ code: ErrorCode, message: z.string().max(1024) }),
@@ -239,6 +294,8 @@ export const hubBodies = {
     observed_addr: z.string().max(64),
     index_rev: z.number().int().nonnegative(),
     nat_probe_ports: z.tuple([z.number().int(), z.number().int()]),
+    /** This account administers the hub (ADR 0020). Older hubs leave it out. */
+    admin: z.boolean().optional(),
   }),
   'account.created': z.object({
     user_id: UserId,
@@ -368,6 +425,38 @@ export const hubBodies = {
     you: NatObservation,
     them: NatObservation,
   }),
+
+  'admin.user.listing': z.object({ users: z.array(AdminUser).max(10_000) }),
+  'admin.settings': z.object({ join_mode: JoinMode, name: HubName.nullable() }),
+  /** Accounts and connections only: never groups, rules or files (ADR 0020). */
+  'admin.graph.listing': z.object({
+    connections: z
+      .array(
+        z.object({
+          a: UserId,
+          b: UserId,
+          state: z.enum(['accepted', 'pending']),
+          requested_by: UserId,
+          since: UnixSeconds,
+        }),
+      )
+      .max(100_000),
+  }),
+  'admin.log.listing': z.object({
+    entries: z.array(
+      z.object({
+        id: z.number().int().positive(),
+        at: UnixSeconds,
+        actor: Actor,
+        action: z.string().max(64),
+        target: z.string().max(256).nullable(),
+        details: z.string().max(1024).nullable(),
+      }),
+    ),
+    more: z.boolean(),
+  }),
+  /** Something an admin screen shows changed (a new account, an admin action): ask again. */
+  'admin.changed': Empty,
 
   ok: Empty,
   ping: Empty,

@@ -10,7 +10,7 @@ import { pino } from 'pino';
 import { generateKeyPair, type KeyPair } from '@communal/crypto';
 import { HubClient, type HubClientState } from '@communal/core';
 import { devSelfSigned, HubDb } from '@communal/hub';
-import { sleep, startTestHub, type TestHub } from '@communal/hub/testing';
+import { signUp, sleep, startTestHub, type TestHub } from '@communal/hub/testing';
 import type { HubBody } from '@communal/protocol';
 
 const SILENCE_MS = 600;
@@ -243,6 +243,8 @@ describe('M1: hub + accounts', () => {
     db.setSetting('join_mode', 'approval');
     const hub = await hubWithTls({ dir, db });
     cleanups.push(() => hub.close());
+    // The hub's first account is its admin and is always let in (ADR 0020).
+    (await signUp(hub.url, 'owner')).c.close();
     const dave = makeNode('dave', hub.url);
     let pendingSeen = 0;
     dave.client.on('pending_approval', () => pendingSeen++);

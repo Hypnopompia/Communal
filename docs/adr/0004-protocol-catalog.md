@@ -19,6 +19,7 @@
 | `acl.replace` (c→h, M3)                               | Full per-hub rule set for the device, sent on sign-in; keeps the hub in step with the client's authoritative copy (ADR 0009). |
 | `library` / `library.listing` (M9)                    | Devices the viewer can browse, with owner, `online` and `seen`: the desktop Library (ADR 0016).                               |
 | `browse.follow` / `browse.changed`, `library.changed` | Live browsing: the device a session is looking at, and a data-free hint that its listing changed for that viewer (below).     |
+| `admin.*` (ADR 0020)                                  | Hub administration from the client: users, approve, ban, unban, settings, graph, audit log, and the `admin.changed` hint.     |
 
 ### Peer
 
@@ -60,6 +61,15 @@
 - **`library.changed {}`** follows any `library` request: the hub remembers which devices it listed (memory only) and re-checks a device whenever its index, its rules, or the owner's connections or groups change, or it's added, revoked or its owner banned. When the list would differ, it sends the hint, and the client asks again. Unbans aren't announced (the admin CLI only edits the database); the next refetch picks them up.
 - **`challenge.name`** (optional) is the hub's readable name, set by its admin (`communal-hub set name …`). It's in the challenge so a client sees it before signing in (an account waiting for approval). Clients keep the last one they saw and show the hub's host name when there's none.
 - **`connection.listing`** entries for accepted connections carry `online` (any of their computers) and `seen` (the latest, bucketed like `library.listing`). Pending requests carry neither, since presence is only visible to accepted connections.
+- **Admin messages (ADR 0020):**
+  - c→h `admin.users` → `admin.user.listing`: accounts with their devices, with file counts and bytes per device, and the NAT side of a signed-in device's network profile. No paths or addresses.
+  - `admin.approve`, `admin.ban {user_id, reason?}` and `admin.unban` → `ok`. Repeating one is a no-op. A client can't ban itself or another admin (`forbidden`).
+  - `admin.settings.get` / `admin.settings.set {join_mode?, name?}` → `admin.settings`. `name: null` clears the name.
+  - `admin.graph` → `admin.graph.listing`: every connection, with no groups or rules.
+  - `admin.log {before?, limit}` → `admin.log.listing {entries, more}`, newest first.
+  - h→c `admin.changed {}` goes to signed-in admins when an account or device is added or revoked, or after an admin action.
+  - Non-admins get `bad_request` "unknown type …", the same reply an older hub gives.
+  - `welcome.admin` says whether the account administers the hub.
 - **`SharePath`** is `ShareName/rel/path`. It rejects absolute paths, `..`, `.`, empty segments, backslashes and NUL. A trailing `/` marks a folder (ACL rules, browse, watch).
 
 ## Peer frame encoding

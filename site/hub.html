@@ -121,14 +121,22 @@ sudo certbot certonly --standalone -d hub.example.com \
 
         <h2 id="admin">Who can join</h2>
         <p>
-          A new hub starts in <b>approval</b> mode: each new account waits until you let it in.
-          Admin commands work on the database while the hub runs:
+          <b>Join your new hub first.</b> The first account on a hub becomes its admin, and it’s let
+          in straight away. After that, a new hub is in <b>approval</b> mode: each new account waits
+          until you let it in. Admin commands work on the database while the hub runs:
         </p>
         <pre><code>sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub users
 sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub approve &lt;user_id&gt;
 sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub ban &lt;user_id&gt; --reason "…"
 sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub set join_mode open
-sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub set name "Hunter family"</code></pre>
+sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub set name "Hunter family"
+sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub admin add &lt;user_id&gt;
+sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub log</code></pre>
+        <p>
+          <code>admin list|add|remove</code> chooses who administers the hub. Only these commands
+          can make or remove admins. If someone else joined first, add yourself and remove them.
+          <code>log</code> shows every admin action, from the command line or an admin’s app.
+        </p>
         <p>
           The <b>name</b> is what people see in the app instead of the hub’s address. Clients pick
           it up the next time they connect.
@@ -150,8 +158,10 @@ sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr
         <p>
           The hub stores accounts (display name and public key), connections, groups, access rules,
           and the names, sizes and types of shared files. It never stores files, thumbnails or
-          download history, and it never relays transfers. Its admin can see the list of who is on
-          the hub and who is connected to whom.
+          download history, and it never relays transfers. In the app, its admins can see who is on
+          the hub, who is connected to whom, and how many files each computer shares, but not file
+          names, groups or who can see what. Whoever runs the server can read everything the hub
+          stores.
         </p>
       </article>
     </main>
