@@ -124,7 +124,10 @@ function Browse({
 }) {
   const go = useNav();
   const me = useStatus().data;
-  const own = deviceId === me?.device_id || device?.user.user_id === me?.account.user_id;
+  // This computer: nothing to download or follow. Your other devices are fair game (that's
+  // how two of them keep a folder in step).
+  const own = deviceId === me?.device_id;
+  const mine = own || device?.user.user_id === me?.account.user_id;
   const [view, setView] = useState<'grid' | 'list'>('grid');
   const [preview, setPreview] = useState<(FileLike & { hash: string }) | null>(null);
   const [subscribe, setSubscribe] = useState(false);
@@ -321,6 +324,7 @@ function Browse({
           device={deviceId}
           path={path}
           owner={owner}
+          {...(mine && device ? { ownDevice: device.device_name } : {})}
           onClose={() => setSubscribe(false)}
         />
       )}

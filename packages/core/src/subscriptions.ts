@@ -7,6 +7,7 @@ import type { HubBody } from '@communal/protocol';
 import { CoreError } from './errors.js';
 import { HubError } from './hub-client.js';
 import type { HubManager } from './hub-manager.js';
+import { hashFile } from './index/hasher.js';
 import type { IndexStore, LocalStamp, SubFileRow, SubscriptionRow } from './index/store.js';
 import { safeName, uniquePath, type Downloads } from './transfer/downloader.js';
 
@@ -281,6 +282,20 @@ export class Subscriptions {
     const { dir, name } = this.target(sub, e.path);
     await mkdir(dir, { recursive: true });
 
+    // Already here under this name. Two of your devices that follow each other's folder see
+    // each other's copies come back; saving them again as "name (1)" would never stop.
+    const here = join(dir, name);
+    if (await sameContent(here, e)) {
+      const st = await stat(here);
+      this.o.store.putSubFile({
+        ...row,
+        state: 'done',
+        local: { path: here, size: st.size, mtime: Math.floor(st.mtimeMs) },
+        prev: null,
+      });
+      return;
+    }
+
     // Content we already hold (moved at the source, a duplicate, or in our own shares).
     const have = await this.localCopy(sub, e, leaving);
     if (have) {
@@ -411,6 +426,13 @@ export class Subscriptions {
 async function intact(s: LocalStamp): Promise<boolean> {
   const st = await stat(s.path).catch(() => null);
   return !!st && st.isFile() && st.size === s.size && Math.floor(st.mtimeMs) === s.mtime;
+}
+
+/** Whether the file at `path` holds exactly the content `e` names. */
+async function sameContent(path: string, e: Entry): Promise<boolean> {
+  const st = await stat(path).catch(() => null);
+  if (!st?.isFile() || st.size !== e.size) return false;
+  return (await hashFile(path).catch(() => null))?.hash === e.hash;
 }
 
 const exists = (p: string) =>

@@ -189,12 +189,15 @@ export function SubscribeDialog({
   device,
   path,
   owner,
+  ownDevice,
   onClose,
 }: {
   hub: string;
   device: string;
   path: string;
   owner: string;
+  /** Set when the folder is on another of your own devices (its name). */
+  ownDevice?: string;
   onClose: () => void;
 }) {
   const [dest, setDest] = useState<string | null>(null);
@@ -220,10 +223,18 @@ export function SubscribeDialog({
   };
   return (
     <Dialog title={`Subscribe to “${baseName(path)}”`} onClose={onClose}>
-      <p className="muted">
-        Everything in this folder of {owner}’s is downloaded to your computer, and new files arrive
-        automatically.
-      </p>
+      {ownDevice ? (
+        <p className="muted">
+          Everything in this folder on {ownDevice} is copied to this computer, and new files arrive
+          automatically. To keep the two in step both ways, save into a folder this computer shares,
+          then subscribe to that folder from {ownDevice} too.
+        </p>
+      ) : (
+        <p className="muted">
+          Everything in this folder of {owner}’s is downloaded to your computer, and new files
+          arrive automatically.
+        </p>
+      )}
       <div className="field">
         <span>Save to</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -237,7 +248,9 @@ export function SubscribeDialog({
       </div>
       <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
         <legend style={{ fontWeight: 600, marginBottom: 8 }}>
-          When {owner} deletes a file, delete your copy too?
+          {ownDevice
+            ? `When a file is deleted on ${ownDevice}, delete it here too?`
+            : `When ${owner} deletes a file, delete your copy too?`}
         </legend>
         <label className="check">
           <input type="radio" name="mirror" checked={!mirror} onChange={() => setMirror(false)} />

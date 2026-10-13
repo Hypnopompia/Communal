@@ -266,6 +266,61 @@ describe('M7: subscriptions', () => {
     expect(bob.c.trashed).toEqual([]);
   });
 
+  it('keeps a folder in step between two of your own devices that follow each other', async () => {
+    const h = await hub();
+    const desk = await core('desk');
+    const deskHub = (await desk.addHub(h.url, acct('alice'))).hub.id;
+    const deskRoot = tmp('communal-m7-desk-');
+    await writeFile(join(deskRoot, 'a.txt'), 'aaa');
+    await desk.addShare('Communal', deskRoot);
+
+    const laptop = await core('laptop');
+    const { code } = await desk.createLinkCode(deskHub);
+    await Promise.all([
+      laptop.link(h.url, code, 'laptop'),
+      (async () => {
+        await until(() => desk.linkRequests().length > 0, 10_000, 'link request');
+        await desk.approveLink(desk.linkRequests()[0]!.request_id);
+      })(),
+    ]);
+    const laptopHub = laptop.hubs.list()[0]!.id;
+    const laptopRoot = tmp('communal-m7-laptop-');
+    await laptop.addShare('Communal', laptopRoot);
+
+    // Each follows the other's folder into its own shared one. Your own devices see
+    // everything, so no rule is needed.
+    await desk.subscriptions.add({
+      hub: deskHub,
+      device: laptop.deviceId,
+      path: 'Communal/',
+      dest: deskRoot,
+      mirrorDeletes: true,
+    });
+    await laptop.subscriptions.add({
+      hub: laptopHub,
+      device: desk.deviceId,
+      path: 'Communal/',
+      dest: laptopRoot,
+      mirrorDeletes: true,
+    });
+    const both = async (want: Record<string, string>) => {
+      await expectTree(desk, deskRoot, want);
+      await expectTree(laptop, laptopRoot, want);
+    };
+    // Copies coming back are recognised, never saved again as "a (1).txt".
+    await both({ 'a.txt': 'aaa' });
+
+    await writeFile(join(laptopRoot, 'b.txt'), 'bbb');
+    await both({ 'a.txt': 'aaa', 'b.txt': 'bbb' });
+
+    await writeFile(join(laptopRoot, 'a.txt'), 'edited on the laptop');
+    await both({ 'a.txt': 'edited on the laptop', 'b.txt': 'bbb' });
+
+    await rm(join(deskRoot, 'b.txt'));
+    await both({ 'a.txt': 'edited on the laptop' });
+    expect(laptop.trashed).toEqual(['b.txt']);
+  });
+
   it('queues while the owner is offline and finishes when they are back', async () => {
     const h = await hub();
     const aliceData = tmp('communal-m7-alice-');
