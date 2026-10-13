@@ -1,5 +1,20 @@
 [
   {
+    "version": "0.1.5",
+    "date": "2026-10-13",
+    "changes": [
+      "Downloading a folder of many files no longer pauses after every few files. When the computer sending them is busy, the next file starts as soon as one finishes.",
+      "My shares shows each folder once, with who can see it right on the folder. Change files and folders inside with Files inside…. If you're on several hubs, each hub gets its own line.",
+      "People shows which of your connections are online, and when the others were last around. This needs your hub to be updated too.",
+      "A green shield follows the name of everyone you've verified, wherever their name appears.",
+      "Search can show only files from your connections, or only from people you've verified.",
+      "Hubs can have a name, set by whoever runs the hub. The app shows it instead of the hub's address.",
+      "Download has a menu with Save to…, instead of a separate button.",
+      "The synced folder no longer copies its .communal-sync file between computers.",
+      "On Linux, install or update with one command: curl -fsSL https://hypnopompia.github.io/Communal/install.sh | sh"
+    ]
+  },
+  {
     "version": "0.1.4",
     "date": "2026-10-13",
     "changes": [
