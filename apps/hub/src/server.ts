@@ -320,7 +320,7 @@ export class HubServer {
       if (isBinary) return this.fail(s, 'bad_request', 'binary frames not supported');
       this.onMessage(s, data.toString());
     });
-    ws.on('close', () => this.onClose(s));
+    ws.on('close', (code) => this.onClose(s, code));
     ws.on('error', (err) => s.log.debug({ err: err.message }, 'socket error'));
   }
 
@@ -390,15 +390,22 @@ export class HubServer {
     this.refreshLibraries((x) => x.library!.has(device), [device]);
   }
 
-  private onClose(s: Session) {
+  private onClose(s: Session, code?: number) {
     this.sessions.delete(s);
     this.dropLinks(s);
     if (!s.device || this.online.get(s.device) !== s) return;
     this.online.delete(s.device);
-    // Presence goes offline only once the device has been silent for the full window, so a
-    // quick reconnect never flaps (HANDOFF §5 lifecycle step 4).
     const device = s.device;
     const user = s.user!;
+    // A client that closes normally (1000: the app quitting) is gone, so say so now.
+    if (code === 1000) {
+      this.db.touchDevice(device);
+      this.publishPresence(user, device, false);
+      s.log.info({ device_id: device }, 'device signed off');
+      return;
+    }
+    // A dropped connection goes offline only once the device has been silent for the full
+    // window, so a quick reconnect never flaps (HANDOFF §5 lifecycle step 4).
     const wait = Math.max(0, s.lastSeen + this.opts.silenceMs - Date.now());
     this.goingOffline.set(
       device,

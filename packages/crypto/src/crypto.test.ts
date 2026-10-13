@@ -167,9 +167,17 @@ describe('recovery key', () => {
     expect(toB64(wordsToRootSecret('  ' + words.join('  ').toUpperCase()))).toBe(
       toB64(root.secretKey),
     );
+    // Swapped words: the checksum catches it, except 1 time in 256 (it's 8 bits, as in
+    // BIP 39). Then it must at least never come back as the same key.
     const swapped = [words[1]!, words[0]!, ...words.slice(2)];
     if (swapped.join() !== words.join()) {
-      expect(() => wordsToRootSecret(swapped)).toThrow(RecoveryError);
+      let got: string | null = null;
+      try {
+        got = toB64(wordsToRootSecret(swapped));
+      } catch (err) {
+        expect(err).toBeInstanceOf(RecoveryError);
+      }
+      if (got !== null) expect(got).not.toBe(toB64(root.secretKey));
     }
   });
 });

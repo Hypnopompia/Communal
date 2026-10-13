@@ -16,6 +16,7 @@
 
 - **Pings.** The client pings every 30 s. Any frame counts as activity. Both sides drop the connection after 90 s of silence.
 - **Offline grace period.** HANDOFF says presence goes offline "only after the 90 s timeout". The hub therefore publishes `offline` at **last contact + 90 s**, even when the socket closed earlier. A reconnect inside that window cancels the pending event, so short network drops never cause an offline/online flicker. The trade-off is that a cleanly quit device shows as online for up to 90 s.
+  - _Amended 2026-10-13 (owner report: a quit laptop stayed online "for a while"):_ a client that closes its socket normally (code 1000, sent when the app or daemon quits) is published offline at once, and its `last_seen` is stamped. Only dropped connections (anything else, e.g. 1006) wait out the grace period. This departs from HANDOFF §5's "only after the 90 s timeout" for clean quits, where the timeout had no purpose.
 - **Who receives presence.** For now, the owner's other devices and **accepted connections**. Pending connections don't count. M3 extends this to owners who share something with the viewer (`canSee` / `publishPresence` in `apps/hub/src/server.ts`).
 - **Snapshot.** On sign-in, the hub sends one `presence {online:true}` for each device the user can see that is currently online, including devices still inside their grace period.
 

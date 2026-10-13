@@ -313,6 +313,32 @@ describe('access control: presence', () => {
 
     for (const c of [fresh.c, bob.c, carol.c, daveBack.c]) c.close();
   });
+
+  it('announces a device that signs off at once, and waits out a dropped one', async () => {
+    const alice = await signUp(t.url, 'alice');
+    const bob = await signUp(t.url, 'bob');
+    const carol = await signUp(t.url, 'carol');
+    t.db.putConnection(alice.userId, bob.userId, 'accepted');
+    t.db.putConnection(alice.userId, carol.userId, 'accepted');
+    alice.c.keepAlive();
+    const offline = (device: string) => (m: { t: string; body: unknown }) =>
+      m.t === 'presence' &&
+      (m.body as { device_id: string; online: boolean }).device_id === device &&
+      !(m.body as { online: boolean }).online;
+
+    // Quitting the app closes normally (1000): well inside the 2 s silence window.
+    const started = Date.now();
+    bob.c.ws.close(1000, 'client stopping');
+    await alice.c.next(offline(bob.deviceId), 1_000);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(t.db.getDevice(bob.deviceId)?.last_seen).not.toBeNull();
+
+    // A dropped connection might come straight back: no news yet.
+    carol.c.close();
+    await sleep(500);
+    expect(alice.c.backlog().some(offline(carol.deviceId))).toBe(false);
+    alice.c.close();
+  });
 });
 
 describe('access control: bans', () => {

@@ -79,6 +79,13 @@ function makeNode(
 }
 
 /** Replaces a node's client with a fresh one using the same key and saved state. */
+/** Cuts a client's connection without a goodbye, as a network failure would (1006 at the hub). */
+async function dropConnection(node: Node) {
+  const ws = (node.client as unknown as { ws?: { terminate(): void } }).ws;
+  ws?.terminate();
+  await node.client.stop(); // the socket is already gone: nothing more reaches the hub
+}
+
 function restartClient(node: Node, url: string) {
   node.client = new HubClient({
     url,
@@ -141,7 +148,7 @@ describe('M1: hub + accounts', () => {
     });
   });
 
-  it('delivers presence to connections only, with a grace period before offline', async () => {
+  it('delivers presence to connections only, with a grace period after a drop', async () => {
     const { dir, db } = setup();
     const hub = await hubWithTls({ dir, db });
     cleanups.push(() => hub.close());
@@ -161,16 +168,16 @@ describe('M1: hub + accounts', () => {
     // Bob drops abruptly and comes back within the window: nobody sees a flap.
     const bobDevice = bob.state.deviceId!;
     const bobOnline = { device_id: bobDevice, user_id: bob.state.userId!, online: true };
-    await bob.client.stop();
+    await dropConnection(bob);
     restartClient(bob, hub.url);
     await bob.client.waitReady();
     await sleep(SILENCE_MS + 200);
     expect(alice.presence).toEqual([]);
 
-    // Bob leaves for good: alice hears "offline" only once the silence window has passed since
-    // bob's last ping (sent at most one ping interval before he stopped); carol never does.
+    // Bob's connection dies for good: alice hears "offline" only once the silence window has
+    // passed since bob's last ping (sent at most one ping interval before); carol never does.
     const left = Date.now();
-    await bob.client.stop();
+    await dropConnection(bob);
     await until(() => alice.presence.length === 1, 3_000, 'offline event');
     expect(Date.now() - left).toBeGreaterThanOrEqual(SILENCE_MS - 100 - 20);
     expect(alice.presence[0]).toEqual({ ...bobOnline, online: false });
@@ -178,6 +185,13 @@ describe('M1: hub + accounts', () => {
     restartClient(bob, hub.url);
     await until(() => alice.presence.length === 2, 3_000, 'online event');
     expect(alice.presence[1]).toEqual(bobOnline);
+
+    // Bob quits the app: it says goodbye, so alice hears at once (ADR 0006, amended).
+    const quit = Date.now();
+    await bob.client.stop();
+    await until(() => alice.presence.length === 3, 3_000, 'offline after quitting');
+    expect(Date.now() - quit).toBeLessThan(SILENCE_MS - 100);
+    expect(alice.presence[2]).toEqual({ ...bobOnline, online: false });
     expect(carol.presence).toEqual([]);
     // Bob's sign-in snapshot told him alice is online.
     expect(bob.presence).toContainEqual({
