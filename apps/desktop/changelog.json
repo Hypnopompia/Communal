@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.1.1",
+    "date": "2026-10-13",
+    "changes": [
+      "Keep a folder in step between two of your own computers: subscribe to it from each one. Files added, changed or deleted on either side show up on the other.",
+      "Adding a computer to your account now says clearly that you need to approve it on your other computer, and that computer shows a banner asking you to review it.",
+      "When a hub's admin hasn't let you in yet, or a hub refuses this computer, a banner says so instead of just \"Not connected\".",
+      "The app icon no longer looks scrambled at small sizes on Mac."
+    ]
+  },
+  {
     "version": "0.1.0",
     "date": "2026-10-13",
     "changes": [
