@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'react';
 import type { AgentsState } from '../../../shared/bridge';
 import { api, type Device, type LinkRequest, type NetworkSummary, type UploadLimits } from '../api';
-import { ago, hubName, size } from '../format';
+import { ago, hubName, plural, size } from '../format';
 import { hubUrl } from '../format';
 import { useHubs, useStatus } from '../hubs';
 import { useNav, type SettingsTab } from '../nav';
@@ -222,6 +222,9 @@ function Devices() {
   });
   const [code, setCode] = useState<{ code: string; expires_in: number; at: number } | null>(null);
   const [revoking, setRevoking] = useState<Device | null>(null);
+  // Removed computers stay on record (that's what keeps them distrusted) but out of the way.
+  const [showRemoved, setShowRemoved] = useState(false);
+  const removedCount = devices.data?.devices.filter((d) => d.revoked).length ?? 0;
   const create = useAction(
     () => api.post<{ code: string; expires_in: number }>('/v1/link/codes', {}),
     {
@@ -298,46 +301,57 @@ function Devices() {
         <h2>Your computers</h2>
         <ErrorNote error={devices.error ?? revoke.error} />
         <div className="panel rows">
-          {devices.data?.devices.map((d) => {
-            const online = d.hubs.some((h) => h.online);
-            const seen = Math.max(0, ...d.hubs.map((h) => h.last_seen ?? 0));
-            return (
-              <div key={d.device_id} className="row">
-                <Icon name="device" size={22} />
-                <div className="grow">
-                  <div className="title">
-                    {d.name}
-                    {d.this_device && (
-                      <span className="tag accent" style={{ marginLeft: 8 }}>
-                        This computer
+          {devices.data?.devices
+            .filter((d) => showRemoved || !d.revoked)
+            .map((d) => {
+              const online = d.hubs.some((h) => h.online);
+              const seen = Math.max(0, ...d.hubs.map((h) => h.last_seen ?? 0));
+              return (
+                <div key={d.device_id} className="row">
+                  <Icon name="device" size={22} />
+                  <div className="grow">
+                    <div className="title">
+                      {d.name}
+                      {d.this_device && (
+                        <span className="tag accent" style={{ marginLeft: 8 }}>
+                          This computer
+                        </span>
+                      )}
+                      {d.root && (
+                        <span className="tag" style={{ marginLeft: 8 }}>
+                          First computer
+                        </span>
+                      )}
+                    </div>
+                    <div className="sub mono">{d.device_id}</div>
+                  </div>
+                  <div className="end">
+                    {d.revoked ? (
+                      <span className="status bad">Removed</span>
+                    ) : (
+                      <span className={`status${online ? ' on' : ''}`}>
+                        {online ? 'Online' : seen ? `Seen ${ago(seen)}` : 'Offline'}
                       </span>
                     )}
-                    {d.root && (
-                      <span className="tag" style={{ marginLeft: 8 }}>
-                        First computer
-                      </span>
+                    {!d.root && !d.this_device && !d.revoked && (
+                      <button className="btn small quiet" onClick={() => setRevoking(d)}>
+                        Remove
+                      </button>
                     )}
                   </div>
-                  <div className="sub mono">{d.device_id}</div>
                 </div>
-                <div className="end">
-                  {d.revoked ? (
-                    <span className="status bad">Removed</span>
-                  ) : (
-                    <span className={`status${online ? ' on' : ''}`}>
-                      {online ? 'Online' : seen ? `Seen ${ago(seen)}` : 'Offline'}
-                    </span>
-                  )}
-                  {!d.root && !d.this_device && !d.revoked && (
-                    <button className="btn small quiet" onClick={() => setRevoking(d)}>
-                      Remove
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+              );
+            })}
         </div>
+        {removedCount > 0 && (
+          <div>
+            <button className="btn small quiet" onClick={() => setShowRemoved(!showRemoved)}>
+              {showRemoved
+                ? 'Hide removed computers'
+                : `Show ${plural(removedCount, 'removed computer')}`}
+            </button>
+          </div>
+        )}
       </section>
       {revoking && (
         <Dialog title={`Remove ${revoking.name}?`} onClose={() => setRevoking(null)}>
@@ -483,7 +497,15 @@ export function problemText(reason: string, message: string): string {
   }
 }
 
-function JoinHub({ onClose, hasShares }: { onClose: () => void; hasShares: boolean }) {
+export function JoinHub({
+  onClose,
+  hasShares,
+  title = 'Join another hub',
+}: {
+  onClose: () => void;
+  hasShares: boolean;
+  title?: string;
+}) {
   const [url, setUrl] = useState('');
   const [name, setName] = useState('');
   const [device, setDevice] = useState('');
@@ -504,7 +526,7 @@ function JoinHub({ onClose, hasShares }: { onClose: () => void; hasShares: boole
     },
   );
   return (
-    <Dialog title="Join another hub" onClose={onClose}>
+    <Dialog title={title} onClose={onClose}>
       <label className="field">
         <span>Hub address</span>
         <input

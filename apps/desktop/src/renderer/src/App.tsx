@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import type { HostState, UpdateState } from '../../shared/bridge';
-import { api, type Connection, type LinkRequest, type Transfer } from './api';
+import { api, type Connection, type HubStatus, type LinkRequest, type Transfer } from './api';
+import { Dialog } from './ui/kit';
 import { hubName } from './format';
 import { useHubs, useStatus } from './hubs';
-import { problemText } from './screens/Settings';
 import { NavCtx, type Route } from './nav';
 import { useApi } from './query';
 import { Icon, Mark, type IconName } from './ui/icons';
@@ -16,6 +16,7 @@ import { Transfers } from './screens/Transfers';
 import { Subscriptions } from './screens/Subscriptions';
 import { Activity } from './screens/Activity';
 import { Settings } from './screens/Settings';
+import { JoinHub, problemText } from './screens/Settings';
 import { Welcome } from './screens/Welcome';
 
 export function App() {
@@ -69,6 +70,13 @@ function Ready() {
   if (!status.data) return status.error ? <Centered>{status.error.message}</Centered> : null;
   if (noAccount || settingUp)
     return <Welcome deviceId={status.data.device_id} onDone={() => setSettingUp(false)} />;
+  if (status.data.hubs.length === 0)
+    return (
+      <NoHubs
+        rootDevice={status.data.account.root_device}
+        hasShares={status.data.shares.length > 0}
+      />
+    );
   return (
     <NavCtx.Provider value={setRoute}>
       {/* macOS draws the window with no title bar: this strip is where it can be dragged. */}
@@ -185,6 +193,28 @@ function Sidebar({ route, go }: { route: Route; go: (r: Route) => void }) {
  */
 function Attention({ route, go }: { route: Route; go: (r: Route) => void }) {
   const { hubs } = useHubs();
+  const account = useStatus().data?.account;
+  // Removed from the account: we hold the proof, or every hub refuses our key. (The first
+  // computer can't be removed; a hub refusing it is something else.)
+  const removed =
+    !!account?.user_id &&
+    (account.revoked ||
+      (!account.root_device &&
+        hubs.length > 0 &&
+        hubs.every((h) => h.problem?.reason === 'rejected')));
+  if (removed) return <Removed revoked={account.revoked} />;
+  return <HubAttention route={route} go={go} hubs={hubs} />;
+}
+
+function HubAttention({
+  route,
+  go,
+  hubs,
+}: {
+  route: Route;
+  go: (r: Route) => void;
+  hubs: HubStatus[];
+}) {
   const links = useApi<{ requests: LinkRequest[] }>(['devices'], '/v1/link/requests', {
     refetchInterval: 15_000,
   });
@@ -233,6 +263,107 @@ function Attention({ route, go }: { route: Route; go: (r: Route) => void }) {
           </div>
         ))}
     </div>
+  );
+}
+
+/**
+ * The account is still here but this computer left its last hub: nothing works until it joins
+ * one again. A computer added with a code can also start over and be added afresh.
+ */
+function NoHubs({ rootDevice, hasShares }: { rootDevice: boolean; hasShares: boolean }) {
+  const [joining, setJoining] = useState(false);
+  const [startingOver, setStartingOver] = useState(false);
+  return (
+    <Centered>
+      <Mark size={44} />
+      <div style={{ display: 'grid', gap: 8 }}>
+        <h1>This computer isn’t on any hub</h1>
+        <p className="muted">
+          A hub is where you find people and files, so Communal can’t do anything until this
+          computer joins one. Your account is still here: join a hub you were on, or a new one.
+        </p>
+      </div>
+      <div style={{ display: 'grid', gap: 10, justifySelf: 'stretch' }}>
+        <button className="choice" onClick={() => setJoining(true)}>
+          <strong>Join a hub</strong>
+          <span>Type the hub’s address. You stay the same person you were.</span>
+        </button>
+        {!rootDevice && (
+          <button className="choice" onClick={() => setStartingOver(true)}>
+            <strong>Start over and add this computer with a code</strong>
+            <span>If it was removed from your account, or you want to set it up again.</span>
+          </button>
+        )}
+      </div>
+      {joining && (
+        <JoinHub title="Join a hub" hasShares={hasShares} onClose={() => setJoining(false)} />
+      )}
+      {startingOver && <StartOverDialog onClose={() => setStartingOver(false)} />}
+    </Centered>
+  );
+}
+
+/**
+ * This computer was removed from its account, so its key can never sign in again. Starting
+ * over gives it a new identity; the old one is set aside, not deleted.
+ */
+function Removed({ revoked }: { revoked: boolean }) {
+  const [asking, setAsking] = useState(false);
+  return (
+    <div className="attention">
+      <div className="notice bad attention-row">
+        <span>
+          {revoked ? (
+            <>
+              <b>This computer was removed from your account</b> on another of your computers, so
+              your hubs no longer let it sign in.
+            </>
+          ) : (
+            <>
+              <b>None of your hubs will let this computer sign in.</b> That happens when it was
+              removed from your account on another of your computers.
+            </>
+          )}{' '}
+          To use it again, start over and add it to your account with a new code.
+        </span>
+        <button className="btn small primary" onClick={() => setAsking(true)}>
+          Start over…
+        </button>
+      </div>
+      {asking && <StartOverDialog onClose={() => setAsking(false)} />}
+    </div>
+  );
+}
+
+function StartOverDialog({ onClose }: { onClose: () => void }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <Dialog title="Start over on this computer?" onClose={onClose}>
+      <p className="muted">
+        Communal restarts as if newly installed. Then choose <b>Add this computer to my account</b>{' '}
+        and type a code from <b>Settings → Devices</b> on your other computer.
+      </p>
+      <p className="muted">
+        Your files aren’t touched. After you’re back in, choose your shared folders and
+        subscriptions again. This computer’s old identity and Communal data are kept in a backup
+        folder, not deleted.
+      </p>
+      <div className="dialog-actions">
+        <button className="btn" onClick={onClose}>
+          Cancel
+        </button>
+        <button
+          className="btn primary"
+          disabled={busy}
+          onClick={() => {
+            setBusy(true);
+            void window.communal.startOver();
+          }}
+        >
+          {busy ? 'Restarting…' : 'Start over'}
+        </button>
+      </div>
+    </Dialog>
   );
 }
 

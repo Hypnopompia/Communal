@@ -245,8 +245,15 @@ describe('M8: devices and recovery', () => {
         expect.objectContaining({ device_id: laptop.c.deviceId, revoked: true }),
       ]),
     );
-    // The laptop is out: the hubs refuse it.
+    // The laptop is out: the hubs refuse it, and it knows why (the app offers to start over).
     await until(() => !laptop.c.hubs.list().some((h) => h.ready), 5_000, 'laptop dropped');
+    await until(() => laptop.c.identity().revoked, 5_000, 'laptop learns it was removed');
+    await until(
+      () => laptop.c.hubs.list().every((h) => h.problem?.reason === 'rejected'),
+      5_000,
+      'every hub refuses the laptop',
+    );
+    expect(a.c.identity().revoked).toBe(false);
     await laptop.c.stopNow();
 
     // A hub "forgets" the revocation (an old backup, or a malicious admin) and lets the laptop

@@ -32,6 +32,11 @@ export interface CommunalBridge {
   /** Auto-update (packaged builds only). */
   onUpdate(cb: (u: UpdateState) => void): () => void;
   installUpdate(): Promise<void>;
+  /**
+   * Sets this computer aside after it was removed from its account: its identity and Communal
+   * data move to a dated backup folder, and the app restarts fresh, ready to be added again.
+   */
+  startOver(): Promise<void>;
 }
 
 export type UpdateState =

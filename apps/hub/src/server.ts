@@ -1249,6 +1249,10 @@ export class HubServer {
     revoked.add(rev.device_id);
     this.send(s, 'ok', {}, re);
     s.log.info({ revoked: rev.device_id }, 'device revoked');
+    // The account's other devices keep the proof and pass it on to their other hubs. Sent
+    // before anyone is dropped, so a removed device that's online learns why.
+    for (const x of this.online.values())
+      if (x.user === user.id && x !== s) this.send(x, 'device.revoked', proof);
     // The device goes, and so does every device whose chain runs through it (ADR 0002).
     for (const d of this.db.listDevices(user.id)) {
       if (d.revoked_at !== null) continue;
@@ -1256,9 +1260,6 @@ export class HubServer {
       this.db.revokeDevice(d.id);
       this.dropDevice(user.id, d.id, 4004, 'device revoked');
     }
-    // The account's other devices keep the proof and pass it on to their other hubs.
-    for (const x of this.online.values())
-      if (x.user === user.id && x !== s) this.send(x, 'device.revoked', proof);
   }
 
   // ── access rules ──────────────────────────────────────────────────────────

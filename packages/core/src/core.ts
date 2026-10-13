@@ -381,6 +381,8 @@ export class CommunalCore {
       fingerprint: a ? fingerprint(fromB64(a.root_pubkey)) : null,
       root_device: a ? a.root_pubkey === toB64(this.o.device.publicKey) : false,
       holds_root_key: this.rootSecret() !== undefined,
+      /** Another device of the account removed this one (we kept the proof). */
+      revoked: a ? this.revocations.revokedFor(a.root_pubkey).has(this.deviceId) : false,
     };
   }
 

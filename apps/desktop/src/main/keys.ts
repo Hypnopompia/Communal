@@ -66,3 +66,17 @@ export class KeyStore {
     renameSync(file + '.tmp', file);
   }
 }
+
+/**
+ * "Start over" on a computer removed from its account: its keys can never sign in again, so it
+ * needs a new identity. Nothing is deleted. The keys and the core's data (account, hubs, index,
+ * caches) move to `<userData>/set-aside-<date>`, and the next start is a fresh install.
+ * Settings and the files people shared stay where they are.
+ */
+export function setAside(dir: string): string {
+  const to = join(dir, `set-aside-${new Date().toISOString().replace(/[:.]/g, '-')}`);
+  mkdirSync(to, { recursive: true, mode: 0o700 });
+  for (const name of ['core', 'device.key.enc', 'device.key', 'root.key.enc', 'root.key'])
+    if (existsSync(join(dir, name))) renameSync(join(dir, name), join(to, name));
+  return to;
+}

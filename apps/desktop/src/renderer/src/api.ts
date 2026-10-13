@@ -121,6 +121,8 @@ export interface Identity {
   fingerprint: string | null;
   root_device: boolean;
   holds_root_key: boolean;
+  /** Another of your computers removed this one. */
+  revoked: boolean;
 }
 
 export interface UploadLimits {

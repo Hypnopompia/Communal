@@ -22,7 +22,7 @@ import { createRequire } from 'node:module';
 import { dirname } from 'node:path';
 import { CoreHost } from './host.js';
 import { PrefsFile } from './prefs.js';
-import { KeyStore } from './keys.js';
+import { KeyStore, setAside } from './keys.js';
 import { Updater } from './updater.js';
 
 protocol.registerSchemesAsPrivileged([
@@ -137,6 +137,13 @@ function start() {
   ipcMain.handle('update:install', () => {
     quitting = true;
     updater.install();
+  });
+  ipcMain.handle('device:start-over', async () => {
+    quitting = true;
+    await host.stop();
+    setAside(app.getPath('userData'));
+    app.relaunch();
+    app.exit(0);
   });
 
   host.start();

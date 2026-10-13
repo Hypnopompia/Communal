@@ -35,6 +35,7 @@ const bridge: CommunalBridge = {
   copyText: (text) => ipcRenderer.invoke('clipboard:write', text),
   onUpdate: (cb) => subscribe<UpdateState>('update:state', cb),
   installUpdate: () => ipcRenderer.invoke('update:install'),
+  startOver: () => ipcRenderer.invoke('device:start-over'),
 };
 
 contextBridge.exposeInMainWorld('communal', bridge);
