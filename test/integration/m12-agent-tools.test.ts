@@ -2,7 +2,7 @@
  * Agent tools beyond ADR 0017 (ADR 0021): thumbnails an agent can look at, through the same
  * access checks as the app.
  */
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -54,6 +54,9 @@ async function core(name: string) {
   return c;
 }
 
+/** The local API client each agent's core was given, for calling routes directly. */
+const agentApis = new Map<CommunalCore, LocalApiClient>();
+
 /** An AI agent on `c`, through its local API and the MCP server. */
 async function agentOn(c: CommunalCore) {
   const api = new LocalApi(c);
@@ -70,6 +73,7 @@ async function agentOn(c: CommunalCore) {
   const agent = new Client({ name: 'test-agent', version: '0' });
   await agent.connect(b);
   cleanups.push(() => agent.close());
+  agentApis.set(c, client);
   return async (name: string, args: Record<string, unknown> = {}) =>
     (await agent.callTool({ name, arguments: args })) as {
       isError?: boolean;
@@ -193,5 +197,69 @@ describe('M12: agent tools', () => {
     expect(toHub.summary).toContain('to everyone on 127.0.0.1');
     const back = await text('preview_access', { hub: ha, path: 'Photos/', audience: null });
     expect(back).toMatchObject({ files: 2, widens: false });
+  }, 60_000);
+
+  it('warns when a download would land in a shared folder, and only then', async () => {
+    const h = await hub();
+    const alice = await core('alice');
+    const bob = await core('bob');
+    const ha = (await alice.addHub(h.url, acct('alice'))).hub.id;
+    const hb = (await bob.addHub(h.url, acct('bob'))).hub.id;
+    // Bob shares a song with the whole hub.
+    const bobs = tmp('communal-m12-bob-');
+    writeFileSync(join(bobs, 'song.mp3'), 'la la la');
+    await bob.addShare('Songs', bobs);
+    await bob.setRule(hb, 'Songs/', 'hub');
+    await until(() => bob.store.counts().hashed === 1, 10_000, 'hashing');
+    const hash = bob.store.file('Songs', 'song.mp3')!.hash!;
+    // Alice's Music is open to the hub; Music/Private is hers alone.
+    const music = tmp('communal-m12-music-');
+    mkdirSync(join(music, 'Private'));
+    await alice.addShare('Music', music);
+    await alice.setRule(ha, 'Music/', 'hub');
+    await alice.setRule(ha, 'Music/Private/', 'me');
+    const call = await agentOn(alice);
+    const api = agentApis.get(alice)!;
+    const exposure = (dir: string, inside?: string) =>
+      api.get<{ shared: boolean; others?: boolean; path?: string; summary?: string }>(
+        `/v1/exposure?${new URLSearchParams({ dir, ...(inside ? { inside } : {}) })}`,
+      );
+
+    // A folder that doesn't exist yet, under a path through a symlink (macOS /var → /private/var).
+    expect(await exposure(join(music, 'Albums', 'New'), 'Blue/')).toMatchObject({
+      shared: true,
+      others: true,
+      path: 'Music/Albums/New/Blue/',
+      summary: expect.stringContaining('everyone on 127.0.0.1'),
+    });
+    expect(await exposure(join(music, 'Private'), 'x.mp3')).toMatchObject({
+      shared: true,
+      others: false,
+    });
+    expect(await exposure(join(music, '.hidden'))).toEqual({ shared: false });
+    expect(await exposure(tmp('communal-m12-elsewhere-'))).toEqual({ shared: false });
+
+    // The download itself says so; saving elsewhere doesn't.
+    await until(
+      async () => (await alice.search({ q: 'song', limit: 10 })).hits.length === 1,
+      10_000,
+      'search',
+    );
+    const into = await api.post<{ reshared?: { summary: string } }>('/v1/downloads', {
+      hash,
+      dest: join(music, 'From Bob'),
+    });
+    expect(into.reshared?.summary).toContain('your shared folder Music');
+    const out = await api.post<{ reshared?: unknown }>('/v1/downloads', {
+      hash,
+      dest: tmp('communal-m12-out-'),
+    });
+    expect(out.reshared).toBeUndefined();
+
+    // Agents can ask before choosing.
+    const checked = await call('check_destination', { dir: join(music, 'From Bob') });
+    expect(JSON.parse((checked.content[0] as { text: string }).text)).toMatchObject({
+      others: true,
+    });
   }, 60_000);
 });

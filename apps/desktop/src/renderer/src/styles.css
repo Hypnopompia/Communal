@@ -284,6 +284,10 @@ a {
   display: grid;
   gap: 6px;
 }
+/* Grid items won't shrink below their content otherwise: a long path would push its buttons out. */
+.field > * {
+  min-width: 0;
+}
 .field > span {
   font-weight: 600;
   font-size: 14px;

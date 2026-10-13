@@ -28,6 +28,13 @@ The ideas are in `docs/plans/agents.md`.
 
 The warning says who will be able to see the files, per hub, using the existing audience text.
 
+**Built (2026-10-13):**
+
+- **Core:** `exposure(dir, inside?)` (`GET /v1/exposure`) says which share a folder is in, even one that doesn't exist yet, resolving symlinks the way share roots are. It also gives the audience the files would get on each hub the share is listed on, with people named and a one-line summary. Dot-folders count as unshared, since they're never indexed.
+- **The warning:** download, folder download and subscribe replies carry `reshared` when anyone but you would see the files, and the CLI prints it.
+- **App:** Save to… asks first ("Save and share"). The folder download and Subscribe dialogs show the note, and the button becomes "Download and share". Settings › Downloads shows it when the downloads folder is shared.
+- **MCP:** a `check_destination` tool, and the download and subscribe tools ask agents to pass `reshared` on to the person.
+
 Re-shared files starting as "only me", or taking the narrower audience, were rejected. A downloaded file carries no record of the audience it came from, and the narrower audience can't be worked out. Warning also matches how the owner wants a shared Music folder to work.
 
 ### 3. Download rules and grouped transfers

@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { mkdir, realpath, stat } from 'node:fs/promises';
-import { isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pino, type Logger } from 'pino';
 import {
   deviceId,
@@ -22,7 +22,13 @@ import { Indexer, type IndexerOptions } from './index/indexer.js';
 import { IndexStore, type Audience, type ShareRow } from './index/store.js';
 import { People } from './people.js';
 import { HubAdmin } from './hub-admin.js';
-import { previewRule, type AccessPreview, type PeopleOnHub } from './access-preview.js';
+import {
+  exposureOf,
+  previewRule,
+  type AccessPreview,
+  type Exposure,
+  type PeopleOnHub,
+} from './access-preview.js';
 import { PeerTransport, type TransportOptions } from './peer/transport.js';
 import { NetworkCheck, type NetworkProfile, type PortMapper } from './peer/netcheck.js';
 import { PeerBroker } from './transfer/broker.js';
@@ -705,6 +711,49 @@ export class CommunalCore {
    */
   async previewRule(hub: string, path: string, audience: Audience | null): Promise<AccessPreview> {
     const rulePath = this.rulePath(hub, path);
+    return previewRule(this.store, hub, rulePath, audience, await this.peopleOn(hub));
+  }
+
+  /**
+   * Who would see files saved into `dir` (plus `inside`, a file or folder name to be created
+   * there): nobody when it isn't in one of your shares, else that folder's audience on each hub
+   * the share is listed on (ADR 0021: the re-share warning).
+   */
+  async exposure(dir: string, inside?: string): Promise<Exposure> {
+    if (!isAbsolute(dir)) throw new CoreError('bad_request', 'use a full folder path');
+    // Share roots are real paths; the folder may not exist yet, so resolve what does.
+    let real = resolve(dir);
+    const rest: string[] = [];
+    for (;;) {
+      const r = await realpath(real).catch(() => null);
+      if (r) {
+        real = join(r, ...rest);
+        break;
+      }
+      const parent = dirname(real);
+      if (parent === real) break;
+      rest.unshift(basename(real));
+      real = parent;
+    }
+    const share = this.store
+      .shares()
+      .find(
+        (s) => real === s.root || real.startsWith(s.root.endsWith(sep) ? s.root : s.root + sep),
+      );
+    if (!share) return { shared: false };
+    const segs = relative(share.root, real).split(sep).filter(Boolean);
+    if (inside) segs.push(...inside.split(/[\\/]/).filter(Boolean));
+    // Dot-folders are never indexed (ADR 0008), so nothing in one is shared.
+    if (segs.some((x) => x.startsWith('.'))) return { shared: false };
+    const path = [share.name, ...segs].join('/') + (inside && !inside.endsWith('/') ? '' : '/');
+    const known = new Set(this.hubs.list().map((h) => h.id));
+    const hubs = new Map<string, PeopleOnHub>();
+    for (const h of share.hubs.filter((x) => known.has(x))) hubs.set(h, await this.peopleOn(h));
+    return exposureOf(this.store, share.name, path, hubs);
+  }
+
+  /** Names and groups on a hub, for describing audiences; empty while it's offline. */
+  private async peopleOn(hub: string): Promise<PeopleOnHub> {
     const entry = this.hubs.find(hub)!;
     const people: PeopleOnHub = {
       hubName: entry.state.name ?? new URL(entry.url).hostname,
@@ -721,7 +770,7 @@ export class CommunalCore {
         if (c.state === 'accepted') people.connections.set(c.user_id, c.display_name);
       for (const g of groups) people.groups.set(g.group_id, { name: g.name, members: g.members });
     }
-    return previewRule(this.store, hub, rulePath, audience, people);
+    return people;
   }
 
   /** Checks a rule path for `hub` and normalises it (a bare share name means its folder). */

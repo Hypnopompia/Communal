@@ -5,13 +5,14 @@ import {
   streamUrl,
   thumbUrl,
   type DownloadSettings,
+  type Exposure,
   type FolderDownload,
   type Kind,
   type Meta,
 } from '../api';
 import { baseName, date, duration, plural, size } from '../format';
 import { useApi } from '../query';
-import { Dialog, ErrorNote, useAction } from './kit';
+import { Dialog, ErrorNote, useAction, useConfirm } from './kit';
 import { FileIcon, FolderIcon, Icon } from './icons';
 
 /**
@@ -255,6 +256,7 @@ export function DownloadButton({
  * folder the person picks first. Resolves to undefined when they cancel the picker.
  */
 export function useDownload() {
+  const confirm = useConfirm();
   return useAction(
     async (hash: string, name: string, saveTo = false) => {
       let dest: string | null = null;
@@ -262,6 +264,18 @@ export function useDownload() {
         const current = await api.get<DownloadSettings>('/v1/settings/downloads').catch(() => null);
         dest = await window.communal.pickFolder(`Save “${name}” to`, current?.dir);
         if (!dest) return null;
+        // Saving into a shared folder shares the file too (ADR 0021): say so first.
+        const e = await exposure(dest, name);
+        if (
+          e?.shared &&
+          e.others &&
+          !(await confirm({
+            title: 'Share this file too?',
+            body: <ReshareNote exposure={e} />,
+            yes: 'Save and share',
+          }))
+        )
+          return null;
       }
       return api.post<{ download: { name: string } }>('/v1/downloads', {
         hash,
@@ -274,6 +288,34 @@ export function useDownload() {
       done: (r) => (r ? `Downloading ${r.download.name}` : null),
       toastErrors: true,
     },
+  );
+}
+
+/** Who would see files saved at `dir` (+ `inside`); null if that can't be told. */
+export function exposure(dir: string, inside?: string): Promise<Exposure | null> {
+  const q = new URLSearchParams({ dir, ...(inside ? { inside } : {}) });
+  return api.get<Exposure>(`/v1/exposure?${q}`).catch(() => null);
+}
+
+export function useExposure(dir: string | null | undefined, inside?: string) {
+  const q = dir ? new URLSearchParams({ dir, ...(inside ? { inside } : {}) }) : null;
+  return useApi<Exposure>(['hubs', 'people', 'index'], q ? `/v1/exposure?${q}` : null);
+}
+
+/**
+ * The re-share warning (ADR 0021): files saved into one of your shared folders can be seen by
+ * whoever can see that folder, possibly people the original owner never chose.
+ */
+export function ReshareNote({ exposure: e }: { exposure: Exposure | undefined | null }) {
+  if (!e?.shared || !e.others) return null;
+  return (
+    <div className="notice warn" style={{ display: 'grid', gap: 6 }}>
+      <span>{e.summary}</span>
+      <span className="small">
+        Whoever shared them with you may not have meant them for these people. To keep them to
+        yourself, save somewhere outside your shared folders.
+      </span>
+    </div>
   );
 }
 
@@ -312,6 +354,8 @@ export function DownloadFolderDialog({
   const [dest, setDest] = useState<string | null>(null);
   const name = baseName(path);
   const parent = dest ?? settings.data?.dir;
+  const reshare = useExposure(parent, `${name}/`);
+  const shares = reshare.data?.shared && reshare.data.others;
   const run = useAction(
     () =>
       api.post<{ folder: FolderDownload }>('/v1/downloads/folder', {
@@ -341,7 +385,13 @@ export function DownloadFolderDialog({
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span
             className="muted"
-            style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
             title={parent ? `${parent}/${name}` : undefined}
           >
             {parent ? `${shortPath(parent)} › ${name}` : '…'}
@@ -351,13 +401,14 @@ export function DownloadFolderDialog({
           </button>
         </div>
       </div>
+      <ReshareNote exposure={reshare.data} />
       <ErrorNote error={run.error ?? settings.error} />
       <div className="dialog-actions">
         <button className="btn" onClick={onClose}>
           Cancel
         </button>
         <button className="btn primary" disabled={run.busy} onClick={() => void run.run()}>
-          {run.busy ? 'Looking through the folder…' : 'Download'}
+          {run.busy ? 'Looking through the folder…' : shares ? 'Download and share' : 'Download'}
         </button>
       </div>
     </Dialog>
@@ -386,6 +437,9 @@ export function SubscribeDialog({
 }) {
   const [dest, setDest] = useState<string | null>(null);
   const [mirror, setMirror] = useState(false);
+  const settings = useApi<DownloadSettings>([], '/v1/settings/downloads');
+  // Without a choice, files go to <downloads folder>/<folder name> (ADR 0013, 0018).
+  const reshare = useExposure(dest ?? settings.data?.dir, dest ? undefined : `${baseName(path)}/`);
   const sub = useAction(
     () =>
       api.post('/v1/subscriptions', {
@@ -422,8 +476,17 @@ export function SubscribeDialog({
       <div className="field">
         <span>Save to</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span className="muted" style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {dest ?? `Downloads › Communal › ${baseName(path)}`}
+          <span
+            className="muted"
+            style={{
+              flex: 1,
+              minWidth: 0,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {dest ?? (settings.data ? `${shortPath(settings.data.dir)} › ${baseName(path)}` : '…')}
           </span>
           <button className="btn small" onClick={() => void pick()}>
             Change…
@@ -455,6 +518,7 @@ export function SubscribeDialog({
           </span>
         </label>
       </fieldset>
+      <ReshareNote exposure={reshare.data} />
       <ErrorNote error={sub.error} />
       <div className="dialog-actions">
         <button className="btn" onClick={onClose}>

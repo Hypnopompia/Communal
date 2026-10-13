@@ -135,6 +135,49 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
 export const useToast = () => useContext(ToastCtx);
 
+// ── confirmations ──
+
+export interface ConfirmOptions {
+  title: string;
+  body: ReactNode;
+  yes: string;
+  no?: string;
+}
+const ConfirmCtx = createContext<(o: ConfirmOptions) => Promise<boolean>>(async () => false);
+
+/** Lets code that isn't a component (an action, say) ask a yes/no question in a dialog. */
+export function ConfirmProvider({ children }: { children: ReactNode }) {
+  const [ask, setAsk] = useState<(ConfirmOptions & { done: (yes: boolean) => void }) | null>(null);
+  const confirm = useCallback(
+    (o: ConfirmOptions) => new Promise<boolean>((done) => setAsk({ ...o, done })),
+    [],
+  );
+  const answer = (yes: boolean) => {
+    ask?.done(yes);
+    setAsk(null);
+  };
+  return (
+    <ConfirmCtx.Provider value={confirm}>
+      {children}
+      {ask && (
+        <Dialog title={ask.title} onClose={() => answer(false)}>
+          {ask.body}
+          <div className="dialog-actions">
+            <button className="btn" onClick={() => answer(false)}>
+              {ask.no ?? 'Cancel'}
+            </button>
+            <button className="btn primary" onClick={() => answer(true)}>
+              {ask.yes}
+            </button>
+          </div>
+        </Dialog>
+      )}
+    </ConfirmCtx.Provider>
+  );
+}
+
+export const useConfirm = () => useContext(ConfirmCtx);
+
 /**
  * Runs a change against the API: tracks that it's in progress, shows its error, refreshes the
  * given topics when it succeeds and optionally confirms it with a toast.

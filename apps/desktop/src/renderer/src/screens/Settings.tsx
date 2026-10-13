@@ -19,6 +19,7 @@ import { useNav, type SettingsTab } from '../nav';
 import { useApi } from '../query';
 import { Icon } from '../ui/icons';
 import { Dialog, ErrorNote, useAction } from '../ui/kit';
+import { ReshareNote, useExposure } from '../ui/files';
 
 const TABS: { tab: SettingsTab; label: string }[] = [
   { tab: 'account', label: 'Account' },
@@ -786,6 +787,7 @@ function Bandwidth() {
 
 function Downloads() {
   const st = useApi<DownloadSettings>([], '/v1/settings/downloads');
+  const reshare = useExposure(st.data?.dir);
   const set = useAction(
     (dir: string | null) => api.put<DownloadSettings>('/v1/settings/downloads', { dir }),
     { done: 'Saved', onDone: () => void st.refetch() },
@@ -808,7 +810,13 @@ function Downloads() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span
             className="muted"
-            style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
             title={dir}
           >
             {dir}
@@ -821,6 +829,7 @@ function Downloads() {
           </button>
         </div>
       </div>
+      <ReshareNote exposure={reshare.data} />
       <ErrorNote error={set.error} />
       {dir !== default_dir && (
         <div>

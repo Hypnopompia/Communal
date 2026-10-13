@@ -390,3 +390,22 @@ export interface NetworkSummary {
   router_ip: string | null;
   hubs: Record<string, { profile: NetworkProfile; checked_at: number }>;
 }
+
+// ── re-sharing (ADR 0021): GET /v1/exposure ──
+
+export interface AudienceView {
+  label: string;
+  /** People besides you; null for everyone on the hub. */
+  people: number | null;
+}
+
+export type Exposure =
+  | { shared: false }
+  | {
+      shared: true;
+      share: string;
+      path: string;
+      hubs: { hub: string; hub_name: string; audience: AudienceView }[];
+      others: boolean;
+      summary: string;
+    };

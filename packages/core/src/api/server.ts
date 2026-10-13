@@ -410,7 +410,15 @@ export class LocalApi {
           dest: z.string().min(1).max(4096).optional(),
         })
         .parse(body);
-      return { download: await this.core.download(b.hash, { name: b.name, destDir: b.dest }) };
+      const download = await this.core.download(b.hash, { name: b.name, destDir: b.dest });
+      return { download, ...(await this.reshared(download.dest_dir, download.name)) };
+    });
+    // Who would see files saved into a folder: the re-share warning (ADR 0021).
+    route('GET', '/v1/exposure', async (_req, url) => {
+      const p = z
+        .object({ dir: z.string().min(1).max(4096), inside: z.string().max(4096).optional() })
+        .parse(Object.fromEntries(url.searchParams));
+      return this.core.exposure(p.dir, p.inside);
     });
     // A folder and its subfolders, once (ADR 0018).
     route('POST', '/v1/downloads/folder', async (_req, _url, body) => {
@@ -422,11 +430,10 @@ export class LocalApi {
           dest: z.string().min(1).max(4096).optional(),
         })
         .parse(body);
-      return {
-        folder: await this.core.downloadFolder(b.hub, b.device, b.path, {
-          ...(b.dest ? { destDir: b.dest } : {}),
-        }),
-      };
+      const folder = await this.core.downloadFolder(b.hub, b.device, b.path, {
+        ...(b.dest ? { destDir: b.dest } : {}),
+      });
+      return { folder, ...(await this.reshared(folder.dest)) };
     });
     route('DELETE', '/v1/downloads/:id', async (req, url) => {
       if (!this.core.downloads.cancel(param(req, url, 1)))
@@ -449,16 +456,15 @@ export class LocalApi {
           recursive: z.boolean().default(true),
         })
         .parse(body);
-      return {
-        subscription: await this.core.subscriptions.add({
-          hub: b.hub,
-          device: b.device,
-          path: b.path,
-          mirrorDeletes: b.mirror_deletes,
-          recursive: b.recursive,
-          ...(b.dest ? { dest: b.dest } : {}),
-        }),
-      };
+      const subscription = await this.core.subscriptions.add({
+        hub: b.hub,
+        device: b.device,
+        path: b.path,
+        mirrorDeletes: b.mirror_deletes,
+        recursive: b.recursive,
+        ...(b.dest ? { dest: b.dest } : {}),
+      });
+      return { subscription, ...(await this.reshared(subscription.dest_dir)) };
     });
     route('PUT', '/v1/subscriptions/:id', async (req, url, body) => {
       const b = z
@@ -677,6 +683,15 @@ export class LocalApi {
     clearTimeout(this.flushTimer);
     for (const ws of this.sockets.clients) ws.terminate();
     await new Promise<void>((r) => (this.server ? this.server.close(() => r()) : r()));
+  }
+
+  /**
+   * `{reshared}` when files saved at `dir` (+ `inside`) land in a share someone else can see, so
+   * the CLI and agents can tell the person (ADR 0021). The app asks before downloading.
+   */
+  private async reshared(dir: string, inside?: string) {
+    const e = await this.core.exposure(dir, inside).catch(() => null);
+    return e?.shared && e.others ? { reshared: e } : {};
   }
 
   private authorized(req: IncomingMessage, token?: Buffer): boolean {

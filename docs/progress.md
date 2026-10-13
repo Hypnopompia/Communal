@@ -31,7 +31,6 @@ These need a person or hardware that CI doesn't have.
 
 ### Decided, ready to build
 
-- **Re-share warning** (ADR 0021): say who will see the files before a download lands in a shared folder.
 - **People on several hubs** (ADR 0021): one person per `user_id` in People, named as on the first hub you joined. Actions stay per hub.
 - **First-device guidance** (ADR 0021): the guide and recovery-key screens say to keep the first computer and the recovery key safe, and to start a new account if either is stolen.
 
@@ -70,6 +69,20 @@ These are fine for now. Fix them if they start to bite.
 
 - **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
 - **From HANDOFF §15:** hubs caching thumbnails of hub-wide files, and mobile clients.
+
+## Re-share warning (2026-10-13)
+
+- **ADR 0021:** a download that lands inside one of your shares is shared like the rest of that folder. Communal now says so first.
+  - Core `exposure()` (`GET /v1/exposure`) answers who would see files saved into a folder. It works for folders that don't exist yet and follows symlinks like share roots do. Dot-folders count as unshared.
+  - Download, folder download and subscribe replies carry `reshared`, and the CLI prints it.
+- **App:**
+  - Save to… asks first.
+  - The folder download and Subscribe dialogs show the note, and the button reads "Download and share".
+  - Settings › Downloads shows it when the downloads folder is inside a share.
+  - A new `useConfirm()` (`ConfirmProvider` in `ui/kit.tsx`) asks yes or no from an action.
+- **MCP:** `check_destination`, and the download and subscribe tools tell agents to pass `reshared` on.
+- **Fix:** long folder paths in Settings › Downloads and the download dialogs pushed the buttons out of view (`.field > * { min-width: 0 }`).
+- **Test:** `m12-agent-tools` covers a not-yet-existing subfolder through the macOS `/var` symlink, a private subfolder, a dot-folder, an unrelated folder, `reshared` on a real download (and its absence elsewhere), and `check_destination`. The app's notice was checked in the running app.
 
 ## Agents: thumbnails and the access preview (2026-10-13)
 

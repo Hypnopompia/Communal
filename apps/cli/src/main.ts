@@ -975,6 +975,11 @@ admin
 
 // ── transfers ───────────────────────────────────────────────────────────────
 
+/** Says who will see files saved into a shared folder (ADR 0021: the re-share warning). */
+function warnReshared(r: { reshared?: { summary: string } }) {
+  if (r.reshared) console.log(`  ⚠ ${r.reshared.summary}`);
+}
+
 type Download = {
   id: string;
   name: string;
@@ -993,12 +998,17 @@ program
   .option('--dest <dir>', 'folder to save into')
   .action((hash: string, opts: { name?: string; dest?: string }) =>
     viaDaemon(async (c) => {
-      const { download } = await c.post<{ download: Download }>('/v1/downloads', {
-        hash,
-        ...(opts.name ? { name: opts.name } : {}),
-        ...(opts.dest ? { dest: resolve(opts.dest) } : {}),
-      });
+      const r = await c.post<{ download: Download; reshared?: { summary: string } }>(
+        '/v1/downloads',
+        {
+          hash,
+          ...(opts.name ? { name: opts.name } : {}),
+          ...(opts.dest ? { dest: resolve(opts.dest) } : {}),
+        },
+      );
+      const { download } = r;
       console.log(`${download.id}  queued ${download.name}  (follow with \`communal transfers\`)`);
+      warnReshared(r);
     }),
   );
 
@@ -1010,7 +1020,8 @@ program
   .action((device: string, path: string, opts: { hub?: string; dest?: string }) =>
     viaDaemon(async (c) => {
       const hubId = await pickHub(c, opts.hub);
-      const { folder: f } = await c.post<{
+      const r = await c.post<{
+        reshared?: { summary: string };
         folder: {
           dest: string;
           queued: number;
@@ -1025,7 +1036,9 @@ program
         path,
         ...(opts.dest ? { dest: resolve(opts.dest) } : {}),
       });
+      const f = r.folder;
       console.log(`→ ${f.dest}`);
+      warnReshared(r);
       console.log(`  ${f.queued} queued (${f.bytes} bytes; follow with \`communal transfers\`)`);
       if (f.copied) console.log(`  ${f.copied} copied from files already on this computer`);
       if (f.skipped) console.log(`  ${f.skipped} already there`);
@@ -1217,7 +1230,7 @@ program
       viaDaemon(async (c) => {
         const hubId = await pickHub(c, opts.hub);
         const mirror = opts.mirrorDeletes ?? (await askMirrorDeletes());
-        const { subscription: s } = await c.post<{ subscription: Subscription }>(
+        const r = await c.post<{ subscription: Subscription; reshared?: { summary: string } }>(
           '/v1/subscriptions',
           {
             hub: hubId,
@@ -1228,7 +1241,9 @@ program
             ...(opts.dest ? { dest: resolve(opts.dest) } : {}),
           },
         );
+        const s = r.subscription;
         console.log(`${s.id}  following ${s.path} → ${s.dest_dir}`);
+        warnReshared(r);
         console.log(
           `  deletions at the source: ${s.mirror_deletes ? 'moved to the trash here too' : 'kept here'}`,
         );

@@ -232,7 +232,7 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
   // ── downloads ──
   tool(
     'download_file',
-    'Downloads a file by content hash from every online source. It lands in the downloads folder unless dest is given.',
+    'Downloads a file by content hash from every online source. It lands in the downloads folder unless dest is given. If the folder is inside one of my shares, the files are shared like the rest of it: the answer then carries reshared (who will see them), which you should tell the user. Check first with check_destination when choosing dest.',
     {
       hash: z.string().regex(/^[0-9a-f]{64}$/),
       name: z.string().max(255).optional().describe('File name to save as'),
@@ -242,8 +242,18 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
     (c, a) => c.post('/v1/downloads', a),
   );
   tool(
+    'check_destination',
+    "Who would see files saved into a folder of this computer. A folder inside one of my shares re-shares what lands there, possibly to people the original owner didn't choose. Pass inside to name the file or folder that will be created there. If others is true, tell the user its summary and ask before saving there.",
+    {
+      dir: z.string().min(1).max(4096).describe('Absolute folder path'),
+      inside: z.string().max(4096).optional().describe('File or "Folder/" to be created in dir'),
+    },
+    READ,
+    (c, a) => c.get(`/v1/exposure${q({ dir: a.dir, inside: a.inside })}`),
+  );
+  tool(
     'download_folder',
-    "Downloads a folder of another computer once, with its subfolders, into <dest or the downloads folder>/<folder name>. Content this computer already has is copied instead of downloaded. Answers with how many files were queued, copied, already there, or still being prepared on the owner's side.",
+    "Downloads a folder of another computer once, with its subfolders, into <dest or the downloads folder>/<folder name>. Content this computer already has is copied instead of downloaded. Answers with how many files were queued, copied, already there, or still being prepared on the owner's side. If the folder is inside one of my shares, the files are shared like the rest of it: the answer then carries reshared (who will see them), which you should tell the user. Check first with check_destination when choosing dest.",
     {
       hub: z.string(),
       device: z.string().describe('The device_id of the computer the folder is on'),
@@ -417,7 +427,7 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
   );
   tool(
     'subscribe_folder',
-    "Follows a folder on someone's computer. Ask the user whether to delete local copies when the owner deletes files (mirror_deletes); the safe default is false.",
+    "Follows a folder on someone's computer. Ask the user whether to delete local copies when the owner deletes files (mirror_deletes); the safe default is false. If the folder is inside one of my shares, the files are shared like the rest of it: the answer then carries reshared (who will see them), which you should tell the user. Check first with check_destination when choosing dest.",
     {
       hub: Hub,
       device: z.string(),

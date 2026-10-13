@@ -182,3 +182,43 @@ export function previewRule(
     summary: parts.join(' '),
   };
 }
+
+/**
+ * Who would see files saved into a folder of this computer (ADR 0021: the re-share warning).
+ * A download that lands inside one of your shares is shared like the rest of that folder.
+ */
+export type Exposure =
+  | { shared: false }
+  | {
+      shared: true;
+      share: string;
+      /** The folder or file as hubs see it, e.g. "Music/Albums/Blue/". */
+      path: string;
+      hubs: { hub: string; hub_name: string; audience: AudienceView }[];
+      /** Anyone but you would see them. */
+      others: boolean;
+      summary: string;
+    };
+
+export function exposureOf(
+  store: IndexStore,
+  share: string,
+  path: string,
+  hubs: Map<string, PeopleOnHub>,
+): Exposure {
+  const out = [...hubs].map(([hub, people]) => {
+    const rules = new Map(store.rules(hub).map((r) => [r.path, r.audience]));
+    const g = governingRule(new Set(rules.keys()), path);
+    const audience = g === null ? 'me' : rules.get(g)!;
+    return { hub, hub_name: people.hubName, audience: describeAudience(audience, people) };
+  });
+  const seen = out.filter((h) => h.audience.people !== 0);
+  const summary = seen.length
+    ? `Files saved here go into your shared folder ${share}, so ${list(
+        seen.map((h) =>
+          hubs.size > 1 ? `${h.audience.label} on ${h.hub_name}` : h.audience.label,
+        ),
+      )} will be able to see them.`
+    : `Files saved here go into your shared folder ${share}, but only you can see that folder.`;
+  return { shared: true, share, path, hubs: out, others: seen.length > 0, summary };
+}
