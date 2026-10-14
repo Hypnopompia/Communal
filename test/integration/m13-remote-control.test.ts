@@ -244,14 +244,16 @@ describe('remote control', () => {
       'download done',
     );
     expect(desktop.downloads.list()[0]!.final_path).toBe(join(movies, 'song.mp3'));
-    // A path is just an unknown name (or too long to be one).
-    for (const destination of ['../etc', 'Music', '/tmp'])
+    // A path is just an unknown name, or too long to be one (a temp folder's path is short on
+    // Linux and long on macOS, so it can be either).
+    for (const destination of ['../etc', 'Music', '/tmp', movies])
       await expect(
         phone.remote.request(desktop.deviceId, { op: 'download', hash, destination }),
-      ).rejects.toMatchObject({ code: 'not_found' });
+      ).rejects.toMatchObject({ code: expect.stringMatching(/^(not_found|bad_request)$/) });
     await expect(
-      phone.remote.request(desktop.deviceId, { op: 'download', hash, destination: movies }),
+      phone.remote.request(desktop.deviceId, { op: 'download', hash, destination: 'x'.repeat(41) }),
     ).rejects.toMatchObject({ code: 'bad_request' });
+    expect(desktop.downloads.list()).toHaveLength(1);
     // A followed folder goes to <destination>/<folder name>.
     const s = (await phone.remote.request(desktop.deviceId, {
       op: 'subscribe',
