@@ -45,6 +45,10 @@ The plan is in `docs/plans/downloads.md`.
 - **New sources during a download.** Re-query sources every ~30 s so a copy that appears mid-download gets used.
 - **More agent tools** from `docs/plans/agents.md`, beyond the first step.
 
+### Proposals for the owner
+
+- **An Android client** (download-only, mp3 subscriptions first). The spike in ADR 0023 ran the unmodified core on Android 15 under Node 24: link, search, a direct download and a subscription all worked, from a Compose shell over the local API. The recommendation is to embed the core with our own Node 24 build (no Bare, no Kotlin port), estimated at 8–10.5 weeks. Mobile is out of scope in HANDOFF §2, so this needs the owner's go-ahead. Spike code: `apps/android-spike/` (experimental).
+
 ### Known limitations
 
 These are fine for now. Fix them if they start to bite.

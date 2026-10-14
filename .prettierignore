@@ -4,3 +4,6 @@ coverage/
 HANDOFF.md
 out/
 release/
+apps/android-spike/app/
+apps/android-spike/build/
+apps/android-spike/.gradle/

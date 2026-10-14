@@ -1,0 +1,7 @@
+app/src/main/jniLibs/
+app/src/main/assets/
+build/
+app/build/
+.gradle/
+local.properties
+.kotlin/
