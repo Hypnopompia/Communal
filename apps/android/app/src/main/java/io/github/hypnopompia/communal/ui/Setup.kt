@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -50,7 +51,9 @@ fun Setup(model: AppModel, snackbar: SnackbarHostState) {
     }
     Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { pad ->
         Column(
-            Modifier.fillMaxSize().padding(pad).verticalScroll(rememberScrollState()).padding(24.dp),
+            // The app draws edge to edge, so Android doesn't shrink it for the keyboard: make room
+            // here, and the focused field scrolls into view.
+            Modifier.fillMaxSize().padding(pad).imePadding().verticalScroll(rememberScrollState()).padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text("Welcome to Communal", style = MaterialTheme.typography.headlineSmall)
