@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.1.8",
+    "date": "2026-10-14",
+    "changes": [
+      "Communal for Android: find files, download them to your phone, and keep folders in sync, like music from your computer. Your phone joins your account with a code from Settings › Devices › Add a computer, and only downloads: it never shares its own files. Get the app from the release page; it tells you about new versions. This needs your hub to be updated too.",
+      "Your devices can download for each other. From your phone, another computer or the communal command, ask one of your computers to download a file, download or follow a folder, or show and cancel its downloads, so things are waiting there when you get back. Turn it on for each computer under Settings › Downloads (communal remote allow on a server). This needs your hub to be updated too.",
+      "Destinations: give folders names like Movies, TV or Music under Settings › Downloads, then pick them under the arrow next to Download or in the folder dialogs. Your other devices can only save into a computer's named destinations, never anywhere else.",
+      "Downloading a big folder no longer stops for five minutes partway through. This needs your hub to be updated too.",
+      "Adding a computer no longer waits forever when the computer approving it knows your hub by a different address.",
+      "In the synced folder, editing a file on one computer while it’s being deleted on another no longer leaves two copies of it on both."
+    ]
+  },
+  {
     "version": "0.1.7",
     "date": "2026-10-14",
     "changes": [
