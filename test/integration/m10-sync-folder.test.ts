@@ -22,7 +22,8 @@ afterEach(async () => {
 
 /** A fresh folder, by its real path (macOS: /var is /private/var), as shares record it. */
 function tmp(prefix: string) {
-  const d = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+  // .native, like core's realpath: on Windows it also expands 8.3 short names (RUNNER~1).
+  const d = realpathSync.native(mkdtempSync(join(tmpdir(), prefix)));
   cleanups.push(() => rmSync(d, { recursive: true, force: true }));
   return d;
 }
