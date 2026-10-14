@@ -51,7 +51,7 @@ async function readSecrets(): Promise<Secrets> {
 /** Mirrored deletions wait in app storage for a while, like the desktop OS trash. */
 function emptyOldTrash() {
   const cutoff = Date.now() - TRASH_DAYS * 86_400_000;
-  let entries: string[] = [];
+  let entries: string[];
   try {
     entries = readdirSync(trashDir);
   } catch {

@@ -81,6 +81,14 @@ These are fine for now. Fix them if they start to bite.
 - **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
 - **From HANDOFF §15:** hubs caching thumbnails of hub-wide files.
 
+## Folder downloads stalled for 5 minutes (2026-10-14)
+
+- **Cause:** the hub kept every brokered connection until its token expired (5 min), even after the owner answered, and counted them all against `brokeredPerSession` (64, from the abuse limits in 0.1.7). A folder download, with its busy retries and thumbnail sessions, used up 64 in a minute or two. Every later `connect.request` got `rate_limited` until the oldest expired. The app showed these downloads as "Waiting for a computer that has it to come online."
+- **Fix (hub):** only unanswered connections count toward the cap. An answered one is kept for 60 s, long enough for either side to report `connect.failed`.
+- **Fix (core):** the downloader treats a hub's `rate_limited` like a busy uploader: the download is queued ("Waiting its turn"), not shown as offline. A channel whose manifest fetch fails is now closed instead of left open.
+- **Test:** the `brokeredPerSession` case in `limits.test.ts` now also checks that an answered connection frees its place. It fails on the old code.
+- **Upgrade needed:** the hub change only takes effect once the production hub runs it. Until then, the new client only shows the stall more accurately.
+
 ## Android client and remote control (2026-10-14)
 
 The owner asked for an Android client after the spike (ADR 0023, now accepted): download-only, a signed APK on GitHub releases, remote control of your computers in the first version, Termux's Node 24 as the stopgap runtime.

@@ -7,6 +7,7 @@ import { createBLAKE3 } from 'hash-wasm';
 import { pino, type Logger } from 'pino';
 import { toBase32 } from '@communal/crypto';
 import { CHUNK_SIZE, type AnyPeerHeader, type PeerHeader } from '@communal/protocol';
+import { HubError } from '../hub-client.js';
 import type { HubManager } from '../hub-manager.js';
 import type { IndexStore, TransferRow } from '../index/store.js';
 import type { PeerChannel } from '../peer/transport.js';
@@ -371,12 +372,21 @@ export class Downloads extends EventEmitter<DownloadEvents> {
       sources.slice(0, this.o.maxPeers).map(async (source) => {
         try {
           const channel = await this.connect(source, t.hash);
-          if (!manifest) manifest = await this.manifest(channel, t.hash);
+          try {
+            if (!manifest) manifest = await this.manifest(channel, t.hash);
+          } catch (err) {
+            channel.close();
+            throw err;
+          }
           peers.push({ key: source.device, source, channel, inflight: new Set(), strikes: 0 });
         } catch (err) {
-          if (err instanceof BusyError) {
+          // A hub with too many of our connections waiting is busy too: wait our turn.
+          if (
+            err instanceof BusyError ||
+            (err instanceof HubError && err.code === 'rate_limited')
+          ) {
             busy.add(source.device);
-            busyMs = Math.max(busyMs, err.retryAfterMs);
+            busyMs = Math.max(busyMs, err instanceof BusyError ? err.retryAfterMs : 0);
           }
           if (err instanceof PathError) {
             const { session_id: _s, ...d } = err.diagnosis;

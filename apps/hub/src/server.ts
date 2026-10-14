@@ -79,6 +79,12 @@ export interface HubOptions {
 
 /** Transfer tokens are valid for 5 minutes (HANDOFF §8). */
 const TOKEN_TTL_S = 300;
+/**
+ * An answered session is kept only long enough for either side to report `connect.failed`
+ * (punching gives up after 10 s). Keeping it for the token's whole life made a folder
+ * download hit `brokeredPerSession` and stall until the oldest sessions expired.
+ */
+const ANSWERED_TTL_MS = 60_000;
 
 const DEFAULTS = {
   silenceMs: 90_000,
@@ -1227,7 +1233,8 @@ export class HubServer {
     if (this.brokered.has(body.session_id))
       return this.fail(s, 'conflict', 'session id in use', re);
     let mine = 0;
-    for (const b of this.brokered.values()) if (b.downloader === s) mine++;
+    // Only unanswered sessions are waiting: answered ones are connections that came up.
+    for (const b of this.brokered.values()) if (b.downloader === s && !b.answered) mine++;
     if (mine >= this.fixed.brokeredPerSession)
       return this.fail(s, 'rate_limited', 'too many connections waiting', re);
     const target = this.online.get(body.target);
@@ -1282,6 +1289,7 @@ export class HubServer {
     // Only the device the offer went to may answer it.
     if (!b || b.to !== s.device) return this.fail(s, 'not_found', 'no such session', re);
     b.answered = true;
+    b.expires = Math.min(b.expires, Date.now() + ANSWERED_TTL_MS);
     const me = this.db.getDevice(s.device!)!;
     const owner = this.db.getUser(s.user!)!;
     this.send(b.downloader, 'connect.answer', {

@@ -433,6 +433,16 @@ describe('groups, rules, subscriptions and brokered connections', () => {
       });
     expect((await req(1)).t).toBe('ok');
     expect((await req(2)).body).toMatchObject({ code: 'rate_limited' });
+    // Once the owner answers, the connection is up and no longer waiting: a folder download
+    // makes many in a row and must not stall until the first ones' tokens expire.
+    await a.c.next('connect.offer');
+    const answer = await a.c.request('connect.answer', {
+      session_id: 'x_01J9Z3QX7M8N4P5R6S7T8V9W01',
+      stream_id: 9,
+      candidates: [{ kind: 'lan', host: '127.0.0.1', port: 40001 }],
+    });
+    expect(answer.t).toBe('ok');
+    expect((await req(3)).t).toBe('ok');
   });
 });
 
