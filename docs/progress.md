@@ -17,10 +17,17 @@ These need a person or hardware that CI doesn't have.
 - **The headless tarball on a real systemd host.** Only `systemd-analyze verify` and `sh -n` have checked it so far (M9).
 - **A real UPnP/NAT-PMP mapping.** The NAT lab has no UPnP router, so it stops at "no gateway found". A miniupnpd router container could cover this (M5).
 
-### Before a hub is open to strangers
+### Security
 
-- **Rate-limit account creation** per IP, and requests in general. Today only link codes and subscriptions are limited (M1, `docs/questions.md` "Ban evasion").
-- **A limit on index entries per device** (M2).
+From the October audit (`docs/security-audit-2026-10.md`, the "Open" table). The letters match it.
+
+- **A. Blocking people**: waits on the owner (`docs/questions.md`, "Blocking people").
+- **B. Narrower brokering.** The uploader shouldn't punch towards loopback, link-local or multicast candidates, or towards LAN candidates unless both sides share a public address. LAN candidates should go only to peers behind the same public address.
+- **C. Show direction overrides** in other people's file names when the app renders them (Search, Browse, Transfers).
+- **D. Release checksums.** Publish a `SHA256SUMS` file, signed if possible, and have `site/install.sh` check it.
+- **E. The Windows API pipe:** create it with an owner-only DACL, and require the token or check the server's identity.
+- **F. Expire waiting accounts** in approval mode after a while (a hub setting), plus "clear all" under People › Waiting.
+- **G. Mark untrusted text in MCP tool results** (other people's file and display names).
 
 ### App and release polish
 
@@ -64,6 +71,25 @@ These are fine for now. Fix them if they start to bite.
 
 - **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
 - **From HANDOFF §15:** hubs caching thumbnails of hub-wide files, and mobile clients.
+
+## Abuse limits and a security audit (2026-10-14)
+
+- **ADR 0022.** The hub now limits:
+  - sign-ups per address per hour (IPv4, or IPv6 /64; new devices count too)
+  - files per device, and devices per account
+  - open connections per address
+  - a message budget per session. Over budget, messages wait instead of failing, so older clients only slow down.
+- The three adjustable limits are hub settings: Manage › Settings › Limits, `communal admin settings --signups-per-hour/--max-files/--max-devices`, MCP `set_hub_settings`, `communal-hub set <key> <n>`. 0 means no limit, and changes go in the audit log.
+- **Fixes found by the audit** (`docs/security-audit-2026-10.md`):
+  - The auth timeout now counts from the connection, so pinging can't hold an unauthenticated socket open.
+  - The NAT probe answers only real probes, rate-limited per address (it could be used for reflection).
+  - A repeated connection request no longer notifies again, and at most 50 can wait per account.
+  - Groups, rules, stored subscriptions and brokered connections are capped.
+  - Banned accounts can't add devices.
+  - Names with control or direction characters are refused, and `safeName` strips direction overrides from downloaded file names.
+- The audit's open findings are in the Backlog under Security.
+- Tests: `apps/hub/src/limits.test.ts` (20 cases) and the admin settings tests. `startTestHub` turns per-address limits off, since every test client is 127.0.0.1.
+- Demo: `communal-hub set signups_per_hour 1`, then create two accounts from one machine. The second waits with "too many new accounts from this address".
 
 ## First-computer guidance (2026-10-13)
 

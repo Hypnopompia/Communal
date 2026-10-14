@@ -136,9 +136,17 @@ describe('M11: hub admin from the client', () => {
     const changed = new Promise<void>((resolve) =>
       alice.core.hubs.on('event', ({ msg }) => msg.t === 'admin.changed' && resolve()),
     );
-    expect(await alice.api.put(admin('/settings'), { join_mode: 'approval' })).toEqual({
+    expect(
+      await alice.api.put(admin('/settings'), {
+        join_mode: 'approval',
+        max_devices_per_account: 5,
+      }),
+    ).toEqual({
       join_mode: 'approval',
       name: null,
+      signups_per_hour: 0,
+      max_files_per_device: 1_000_000,
+      max_devices_per_account: 5,
     });
     const carol = await node('carol');
     const joined = await carol.core.addHub(h.url, acct('carol'));
@@ -203,7 +211,7 @@ describe('M11: hub admin from the client', () => {
 
     await expect(bobAgent.call('list_hub_users', { hub: hb })).rejects.toThrow(/forbidden/);
     await aliceAgent.call('set_hub_settings', { hub: ha, join_mode: 'approval', name: 'Ours' });
-    expect(await aliceAgent.call('get_hub_settings', { hub: ha })).toEqual({
+    expect(await aliceAgent.call('get_hub_settings', { hub: ha })).toMatchObject({
       join_mode: 'approval',
       name: 'Ours',
     });

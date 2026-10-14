@@ -34,6 +34,9 @@ export async function startTestHub(
   const dir = opts.dir ?? mkdtempSync(join(tmpdir(), 'communal-hub-'));
   const db = opts.db ?? new HubDb(join(dir, 'hub.db'));
   const hubKey = opts.hubKey ?? generateKeyPair();
+  // Every test client comes from 127.0.0.1, so per-address limits are off unless a test turns
+  // them on (ADR 0022).
+  if (db.getSetting('signups_per_hour') === undefined) db.setSetting('signups_per_hour', '0');
   const hub = new HubServer({
     hubId: 'test-hub',
     silenceMs: 2_000,
@@ -41,6 +44,13 @@ export async function startTestHub(
     diagnosisWaitMs: 300,
     log: pino({ level: process.env.HUB_TEST_LOG ?? 'silent' }),
     ...opts,
+    limits: {
+      connectionsPerAddress: 0,
+      messageRate: 1_000_000,
+      messageBurst: 1_000_000,
+      probeRate: 1_000_000,
+      ...opts.limits,
+    },
     db,
     hubKey,
   });

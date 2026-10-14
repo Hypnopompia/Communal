@@ -20,6 +20,13 @@ describe('transfer helpers', () => {
     expect(safeName('Alien (1979).mkv')).toBe('Alien (1979).mkv');
   });
 
+  it('drops direction overrides and control characters from names', () => {
+    expect(safeName('photo\u202egpj.exe')).toBe('photogpj.exe');
+    expect(safeName('a\u2066b\u2069.txt')).toBe('ab.txt');
+    expect(safeName('bell\u0007.txt')).toBe('bell_.txt');
+    expect(safeName('Ana 👩‍👩‍👧.jpg')).toBe('Ana 👩‍👩‍👧.jpg');
+  });
+
   it('classifies LAN addresses for "only upload on LAN"', () => {
     for (const a of [
       '192.168.1.5',

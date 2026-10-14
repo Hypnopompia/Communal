@@ -552,14 +552,14 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
   );
   tool(
     'get_hub_settings',
-    'A hub I administer: its name and join mode (open: anyone with the address; approval: people wait to be let in).',
+    'A hub I administer: its name, join mode (open: anyone with the address; approval: people wait to be let in) and abuse limits (0 = no limit).',
     { hub: Hub },
     READ,
     (c, a) => c.get(admin(a.hub, '/settings')),
   );
   tool(
     'set_hub_settings',
-    'Changes the name or join mode of a hub I administer. "open" lets anyone with the address in. Confirm with the user first.',
+    'Changes the name, join mode or abuse limits of a hub I administer. "open" lets anyone with the address in. Confirm with the user first.',
     {
       hub: Hub,
       join_mode: z.enum(['open', 'approval']).optional(),
@@ -570,6 +570,27 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
         .nullable()
         .optional()
         .describe('What people see instead of the address; null removes it'),
+      signups_per_hour: z
+        .number()
+        .int()
+        .min(0)
+        .max(10_000)
+        .optional()
+        .describe('New accounts and devices one internet address may add per hour; 0 = no limit'),
+      max_files_per_device: z
+        .number()
+        .int()
+        .min(0)
+        .max(100_000_000)
+        .optional()
+        .describe('Files one device may share on the hub; 0 = no limit'),
+      max_devices_per_account: z
+        .number()
+        .int()
+        .min(0)
+        .max(1_000)
+        .optional()
+        .describe('Devices one account may have on the hub; 0 = no limit'),
     },
     REMOVE,
     (c, a) => {

@@ -39,6 +39,15 @@ import {
 import { Catalog, seenBucket } from './catalog.js';
 import { diagnose, natView, type Observation } from './diagnosis.js';
 import type { HubDb, RevocationProof, UserRow } from './db.js';
+import {
+  addressKey,
+  BucketMap,
+  FIXED_LIMITS,
+  MESSAGE_COST,
+  TokenBucket,
+  WindowCounter,
+  type FixedLimits,
+} from './limits.js';
 
 export interface HubOptions {
   db: HubDb;
@@ -63,6 +72,8 @@ export interface HubOptions {
   diagnosisWaitMs?: number;
   /** How long a link code (and the approval it leads to) stays valid (HANDOFF §2: 10 min). */
   linkTtlMs?: number;
+  /** Fixed abuse limits (ADR 0022); tests loosen or tighten them. */
+  limits?: Partial<FixedLimits>;
   log?: Logger;
 }
 
@@ -100,7 +111,17 @@ interface Session {
   ws: WebSocket;
   nonce: Uint8Array;
   observedAddr: string;
+  /** The key per-address limits count this session under (ADR 0022). */
+  addr: string;
+  connectedAt: number;
   lastSeen: number;
+  /** Message budget, and messages waiting for it (ADR 0022). */
+  budget: TokenBucket;
+  queue: ClientMessage[];
+  queuedBytes: number;
+  /** Bytes of each queued message, in queue order. */
+  queuedSizes: number[];
+  drain?: NodeJS.Timeout;
   user?: string;
   device?: string;
   /** In-progress index snapshot from this session's device. */
@@ -149,8 +170,7 @@ interface LiveWatch {
   sent: number;
 }
 
-/** Max watches per session, and max files + removals per `watch.event` page. */
-const MAX_WATCHES = 1_000;
+/** Max files + removals per `watch.event` page. */
 const WATCH_PAGE = 1_000;
 
 interface Brokered {
@@ -171,7 +191,13 @@ interface Brokered {
 export class HubServer {
   readonly db: HubDb;
   private readonly catalog: Catalog;
-  private readonly opts: Required<Omit<HubOptions, 'tls' | 'log' | 'probePorts'>> & HubOptions;
+  private readonly opts: Required<Omit<HubOptions, 'tls' | 'log' | 'probePorts' | 'limits'>> &
+    HubOptions;
+  private readonly fixed: FixedLimits;
+  /** Open connections per address key, sign-ups per address key, probe replies per address. */
+  private readonly connsPerAddr = new Map<string, number>();
+  private readonly signups = new WindowCounter(3_600_000);
+  private readonly probeBudget: BucketMap;
   private readonly log: Logger;
   private http?: Server;
   private wss?: WebSocketServer;
@@ -190,6 +216,8 @@ export class HubServer {
 
   constructor(opts: HubOptions) {
     this.opts = { ...DEFAULTS, ...opts };
+    this.fixed = { ...FIXED_LIMITS, ...opts.limits };
+    this.probeBudget = new BucketMap(this.fixed.probeRate, this.fixed.probeRate);
     this.db = opts.db;
     this.catalog = new Catalog(this.db, {
       isOnline: (d) => this.isOnline(d),
@@ -277,7 +305,10 @@ export class HubServer {
     // local socket to both ports; differing observed ports mean a symmetric NAT (HANDOFF §8).
     const sock = createSocket('udp4');
     sock.on('message', (msg, rinfo) => {
-      if (msg.length > 64) return; // never amplify
+      // Only clients' probes get an answer, and only a few a second per address, so the
+      // responder can't be used to bounce traffic at someone else (ADR 0022).
+      if (!msg.equals(PROBE_PAYLOAD)) return;
+      if (!this.probeBudget.take(addressKey(rinfo.address))) return;
       sock.send(
         JSON.stringify({ addr: rinfo.address, port: rinfo.port, probe: port }),
         rinfo.port,
@@ -295,12 +326,27 @@ export class HubServer {
   private onConnection(ws: WebSocket, req: IncomingMessage) {
     const id = 's_' + randomBytes(8).toString('hex');
     const remote = req.socket.remoteAddress ?? '';
+    const addr = addressKey(remote);
+    const open = this.connsPerAddr.get(addr) ?? 0;
+    if (this.fixed.connectionsPerAddress && open >= this.fixed.connectionsPerAddress) {
+      this.log.info({ addr }, 'too many connections from one address; refusing');
+      ws.close(4029, 'too many connections from this address');
+      return;
+    }
+    this.connsPerAddr.set(addr, open + 1);
+    const now = Date.now();
     const s: Session = {
       id,
       ws,
       nonce: randomBytes(32),
       observedAddr: `${remote.replace(/^::ffff:/, '')}:${req.socket.remotePort ?? 0}`,
-      lastSeen: Date.now(),
+      addr,
+      connectedAt: now,
+      lastSeen: now,
+      budget: new TokenBucket(this.fixed.messageRate, this.fixed.messageBurst),
+      queue: [],
+      queuedBytes: 0,
+      queuedSizes: [],
       watches: new Map(),
       badClaims: 0,
       log: this.log.child({ session_id: id }),
@@ -317,8 +363,9 @@ export class HubServer {
 
     ws.on('message', (data, isBinary) => {
       s.lastSeen = Date.now();
-      if (isBinary) return this.fail(s, 'bad_request', 'binary frames not supported');
-      this.onMessage(s, data.toString());
+      if (isBinary)
+        return void (s.budget.take() && this.fail(s, 'bad_request', 'binary frames not supported'));
+      this.onFrame(s, data.toString());
     });
     ws.on('close', (code) => this.onClose(s, code));
     ws.on('error', (err) => s.log.debug({ err: err.message }, 'socket error'));
@@ -331,10 +378,13 @@ export class HubServer {
       if (now - s.lastSeen > this.opts.silenceMs) {
         s.log.info('silent too long; dropping');
         s.ws.terminate();
-      } else if (!s.device && !s.claim && now - s.lastSeen > this.opts.authTimeoutMs) {
+      } else if (!s.device && !s.claim && now - s.connectedAt > this.opts.authTimeoutMs) {
+        // Counted from the connection, not the last message: pinging doesn't buy time.
         s.ws.close(4001, 'auth timeout');
       }
     }
+    this.signups.prune();
+    this.probeBudget.prune();
   }
 
   /** Disconnects every live session of users the admin has banned since we last looked. */
@@ -391,7 +441,12 @@ export class HubServer {
   }
 
   private onClose(s: Session, code?: number) {
-    this.sessions.delete(s);
+    if (!this.sessions.delete(s)) return;
+    clearTimeout(s.drain);
+    s.queue = [];
+    const open = (this.connsPerAddr.get(s.addr) ?? 1) - 1;
+    if (open > 0) this.connsPerAddr.set(s.addr, open);
+    else this.connsPerAddr.delete(s.addr);
     this.dropLinks(s);
     if (!s.device || this.online.get(s.device) !== s) return;
     this.online.delete(s.device);
@@ -426,10 +481,52 @@ export class HubServer {
     this.send(s, 'error', { code, message }, re);
   }
 
-  private onMessage(s: Session, raw: string) {
+  /**
+   * Every frame spends from the session's budget (ADR 0022). A session that runs out has its
+   * messages wait, in order, until the budget refills: a busy client slows down instead of
+   * seeing errors. One that keeps sending while it waits is closed.
+   */
+  private onFrame(s: Session, raw: string) {
     const res = parseClientMessage(raw);
-    if (!res.ok) return this.fail(s, res.code, res.message, res.re);
+    // Junk spends budget too; past it, it isn't even answered.
+    if (!res.ok) return void (s.budget.take() && this.fail(s, res.code, res.message, res.re));
     const msg = res.msg;
+    // Keepalives skip the queue, so a throttled session isn't also dropped as silent.
+    if (msg.t === 'ping' || msg.t === 'pong') return this.onMessage(s, msg);
+    if (s.queue.length === 0 && s.budget.take(MESSAGE_COST[msg.t] ?? 1))
+      return this.onMessage(s, msg);
+    s.queue.push(msg);
+    s.queuedSizes.push(raw.length);
+    s.queuedBytes += raw.length;
+    if (s.queue.length > this.fixed.queueMessages || s.queuedBytes > this.fixed.queueBytes) {
+      s.log.info({ queued: s.queue.length, bytes: s.queuedBytes }, 'too many requests; closing');
+      s.queue = [];
+      clearTimeout(s.drain);
+      s.ws.close(4029, 'too many requests');
+      return;
+    }
+    this.scheduleDrain(s);
+  }
+
+  private scheduleDrain(s: Session) {
+    if (s.drain || s.queue.length === 0) return;
+    const wait = s.budget.waitFor(MESSAGE_COST[s.queue[0]!.t] ?? 1);
+    s.drain = setTimeout(
+      () => {
+        s.drain = undefined;
+        while (s.queue.length && s.budget.take(MESSAGE_COST[s.queue[0]!.t] ?? 1)) {
+          const msg = s.queue.shift()!;
+          s.queuedBytes -= s.queuedSizes.shift()!;
+          if (s.ws.readyState !== s.ws.OPEN) return;
+          this.onMessage(s, msg);
+        }
+        this.scheduleDrain(s);
+      },
+      Math.max(1, wait),
+    );
+  }
+
+  private onMessage(s: Session, msg: ClientMessage) {
     if (!s.device && !PRE_AUTH.has(msg.t))
       return this.fail(s, 'unauthenticated', 'sign in first', msg.id);
     try {
@@ -575,6 +672,21 @@ export class HubServer {
     }
   }
 
+  /** Whether the session's address may add another account or device this hour (ADR 0022). */
+  private signupAllowed(s: Session): boolean {
+    const max = this.db.limits.signups_per_hour;
+    if (!max || this.signups.count(s.addr) < max) return true;
+    s.log.info({ addr: s.addr, max }, 'sign-up limit reached for this address');
+    return false;
+  }
+
+  /** Why the account can't have another device here, or undefined if it can. */
+  private deviceCapReached(uid: string): string | undefined {
+    const max = this.db.limits.max_devices_per_account;
+    if (!max || this.db.devicesOf(uid).length < max) return undefined;
+    return `this hub allows ${max} devices per account; remove one first`;
+  }
+
   // ── handlers ──────────────────────────────────────────────────────────────
 
   private onAccountCreate(s: Session, re: string, body: ClientBody<'account.create'>) {
@@ -584,6 +696,7 @@ export class HubServer {
       return this.fail(s, 'forbidden', 'bad signature', re);
     if (this.db.deviceExistsWithPubkey(body.device_pubkey))
       return this.fail(s, 'conflict', 'device already registered', re);
+    if (!this.signupAllowed(s)) return this.fail(s, 'rate_limited', SIGNUP_LIMITED, re);
 
     // The first device's key is the account root (HANDOFF §2). A device joining this hub on
     // behalf of an existing account proves its chain to that account's root (ADR 0007).
@@ -615,6 +728,7 @@ export class HubServer {
       });
       return;
     }
+    this.signups.add(s.addr);
     const { status, admin } = this.db.createAccount(
       {
         id: uid,
@@ -653,6 +767,12 @@ export class HubServer {
     user: UserRow,
     d: { pubkey: string; chain: CertChain; name: string; platform: Platform },
   ) {
+    // A banned account gains nothing here: its devices can't sign in anyway.
+    if (user.banned_at !== null)
+      return this.fail(s, 'banned', 'this account has been banned by the hub admin', re);
+    const full = this.deviceCapReached(user.id);
+    if (full) return this.fail(s, 'forbidden', full, re);
+    this.signups.add(s.addr);
     const did = deviceId(fromB64(d.pubkey));
     this.db.addDevice({ id: did, user_id: user.id, ...d });
     this.refreshLibraries((x) => x.user === user.id, [did]);
@@ -761,6 +881,13 @@ export class HubServer {
       this.db.beginSnapshot(device);
       return this.fail(s, 'bad_request', 'snapshot pages out of order; start again at page 0', re);
     }
+    const max = this.db.limits.max_files_per_device;
+    if (max && this.db.stagedCount(device) + body.entries.length > max) {
+      s.snapshot = undefined;
+      this.db.beginSnapshot(device);
+      s.log.info({ max }, 'index snapshot over the file limit; refused');
+      return this.fail(s, 'forbidden', filesLimited(max), re);
+    }
     this.db.stageSnapshotPage(device, body.entries);
     s.snapshot.nextPage++;
     if (!body.last) return this.send(s, 'ok', {}, re);
@@ -778,6 +905,20 @@ export class HubServer {
     if (body.base_rev !== current || body.rev <= body.base_rev) {
       s.log.info({ have: current, base: body.base_rev }, 'index rev mismatch; asking for resync');
       return this.send(s, 'index.resync', { reason: 'rev_mismatch' }, re);
+    }
+    const max = this.db.limits.max_files_per_device;
+    const added = max
+      ? this.db.newPathCount(
+          device,
+          body.upsert.map((e) => e.path),
+        )
+      : 0;
+    if (added > 0) {
+      const removed = body.remove.length - this.db.newPathCount(device, body.remove);
+      if (this.db.entryCount(device) + added - removed > max) {
+        s.log.info({ max }, 'index delta over the file limit; refused');
+        return this.fail(s, 'forbidden', filesLimited(max), re);
+      }
     }
     this.db.applyDelta(device, body.rev, body.upsert, body.remove);
     this.send(s, 'index.ack', { rev: body.rev }, re);
@@ -838,7 +979,11 @@ export class HubServer {
     if (!this.catalog.canWatch(s.user!, body.device_id, path))
       return this.fail(s, 'not_found', 'no such folder', re);
     const key = watchKey(body.device_id, path);
-    if (!s.watches.has(key) && s.watches.size >= MAX_WATCHES)
+    // Stored subscriptions outlive sessions, so count those, not this session's.
+    if (
+      !this.db.hasWatch(s.device!, body.device_id, path) &&
+      this.db.watchCount(s.device!) >= this.fixed.watchesPerDevice
+    )
       return this.fail(s, 'rate_limited', 'too many subscriptions', re);
     this.db.putWatch({
       user_id: s.user!,
@@ -988,7 +1133,11 @@ export class HubServer {
     if (existing?.state === 'accepted') return this.send(s, 'ok', {}, re);
     // They already asked us: asking back means yes.
     if (existing && existing.requested_by === target) return this.onConnectionAccept(s, re, target);
-    if (!existing) this.db.putConnection(me, target, 'pending', me);
+    // Asking again changes nothing and tells them nothing: a request can't be used to nag.
+    if (existing) return this.send(s, 'ok', {}, re);
+    if (this.db.pendingRequestsFrom(me) >= this.fixed.pendingRequestsPerUser)
+      return this.fail(s, 'rate_limited', 'too many requests waiting for an answer', re);
+    this.db.putConnection(me, target, 'pending', me);
     this.sendToUser(target, 'connection.request', { user: this.summary(this.db.getUser(me)!) });
     this.send(s, 'ok', {}, re);
   }
@@ -1045,6 +1194,8 @@ export class HubServer {
     if (body.group_id && this.db.groupOwner(body.group_id) !== me) {
       return this.fail(s, 'not_found', 'no such group', re);
     }
+    if (!body.group_id && this.db.groupCount(me) >= this.fixed.groupsPerUser)
+      return this.fail(s, 'rate_limited', `at most ${this.fixed.groupsPerUser} groups`, re);
     const connected = new Set(this.db.connectedUsers(me));
     const strangers = body.members.filter((m) => !connected.has(m));
     if (strangers.length)
@@ -1073,6 +1224,10 @@ export class HubServer {
     }
     if (this.brokered.has(body.session_id))
       return this.fail(s, 'conflict', 'session id in use', re);
+    let mine = 0;
+    for (const b of this.brokered.values()) if (b.downloader === s) mine++;
+    if (mine >= this.fixed.brokeredPerSession)
+      return this.fail(s, 'rate_limited', 'too many connections waiting', re);
     const target = this.online.get(body.target);
     if (!target) {
       return this.send(
@@ -1269,6 +1424,8 @@ export class HubServer {
     }
     if (this.db.deviceExistsWithPubkey(r.pubkey))
       return this.fail(s, 'conflict', 'device already registered', re);
+    const full = this.deviceCapReached(user.id);
+    if (full) return this.fail(s, 'forbidden', full, re);
     this.linkRequests.delete(body.request_id);
     r.claimer.claim = undefined;
     const did = deviceId(fromB64(r.pubkey));
@@ -1328,6 +1485,7 @@ export class HubServer {
       return this.fail(s, 'forbidden', 'bad signature', re);
     if (this.db.deviceExistsWithPubkey(body.device_pubkey))
       return this.fail(s, 'conflict', 'device already registered', re);
+    if (!this.signupAllowed(s)) return this.fail(s, 'rate_limited', SIGNUP_LIMITED, re);
     const root = fromB64(body.root_pubkey);
     const user = this.db.getUser(userId(root));
     if (!user || user.root_pubkey !== body.root_pubkey)
@@ -1491,7 +1649,7 @@ export class HubServer {
   }
 
   private adminSettings(): HubBody<'admin.settings'> {
-    return { join_mode: this.db.joinMode, name: this.db.hubName ?? null };
+    return { join_mode: this.db.joinMode, name: this.db.hubName ?? null, ...this.db.limits };
   }
 
   /** Tells every signed-in admin that something their screens show changed. */
@@ -1518,6 +1676,16 @@ export class HubServer {
     // Rules are set by the device that holds the files (ADR 0009).
     if (deviceId !== s.device)
       return this.fail(s, 'forbidden', 'rules can only be set for this device', re);
+    const max = this.fixed.rulesPerDevice;
+    const r0 = rules[0];
+    if (
+      replace
+        ? rules.length > max
+        : r0?.audience &&
+          !this.db.rulePaths(deviceId).has(r0.path) &&
+          this.db.rulePaths(deviceId).size >= max
+    )
+      return this.fail(s, 'rate_limited', `at most ${max} rules per device`, re);
     for (const r of rules) {
       const a = r.audience;
       if (
@@ -1615,3 +1783,10 @@ function folderPath(p: string): string {
 }
 
 const watchKey = (device: string, path: string) => `${device}\0${path}`;
+
+const SIGNUP_LIMITED = 'too many new accounts from this address; try again later';
+const filesLimited = (max: number) =>
+  `this hub takes at most ${max.toLocaleString('en-US')} files per device`;
+
+/** What a client's NAT probe datagram says (core `peer/transport.ts`). */
+const PROBE_PAYLOAD = Buffer.from('communal-probe');

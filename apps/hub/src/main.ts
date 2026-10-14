@@ -7,7 +7,7 @@
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { pino } from 'pino';
-import { HubDb, type JoinMode } from './db.js';
+import { HubDb, LIMIT_DEFAULTS, type HubLimits, type JoinMode } from './db.js';
 import { isDevBuild, loadOrCreateHubKey, resolveTls } from './config.js';
 import { HubServer } from './server.js';
 
@@ -134,24 +134,42 @@ program
 
 program
   .command('set <key> <value>')
-  .description('change a hub setting: join_mode open|approval, or name "<what people see>"')
+  .description(
+    'change a hub setting: join_mode open|approval, name "<what people see>", or a limit ' +
+      `(${Object.keys(LIMIT_DEFAULTS).join(', ')}; 0 = no limit)`,
+  )
   .action((key: string, raw: string) => {
     const value = raw.trim();
+    const limit = key in LIMIT_DEFAULTS;
     const ok =
       key === 'join_mode'
         ? value === 'open' || value === 'approval'
-        : key === 'name' && value.length >= 1 && value.length <= 64;
+        : key === 'name'
+          ? value.length >= 1 && value.length <= 64
+          : limit && /^\d+$/.test(value);
     if (!ok) {
-      console.error('supported: set join_mode open|approval, set name "<1 to 64 characters>"');
+      console.error(
+        'supported: set join_mode open|approval, set name "<1 to 64 characters>", ' +
+          `set <${Object.keys(LIMIT_DEFAULTS).join('|')}> <number, 0 = no limit>`,
+      );
       process.exitCode = 2;
       return;
     }
     const db = openDb();
-    db.changeSettings(
-      key === 'join_mode' ? { join_mode: value as JoinMode } : { name: value },
-      'cli',
-    );
-    console.log(`${key} = ${value}`);
+    try {
+      db.changeSettings(
+        key === 'join_mode'
+          ? { join_mode: value as JoinMode }
+          : limit
+            ? { [key as keyof HubLimits]: Number(value) }
+            : { name: value },
+        'cli',
+      );
+      console.log(`${key} = ${value}`);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exitCode = 2;
+    }
     db.close();
   });
 
@@ -228,6 +246,7 @@ program
     else {
       console.log(`join_mode = ${db.joinMode}`);
       console.log(`name = ${db.hubName ?? '(unset: clients show the host name)'}`);
+      for (const [k, v] of Object.entries(db.limits)) console.log(`${k} = ${v || 'no limit'}`);
     }
     db.close();
   });

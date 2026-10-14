@@ -75,7 +75,35 @@ export interface AuditEntry {
 export interface SettingsChange {
   join_mode?: JoinMode;
   name?: string | null;
+  signups_per_hour?: number;
+  max_files_per_device?: number;
+  max_devices_per_account?: number;
 }
+
+/** Abuse limits an admin can change (ADR 0022). 0 means no limit. */
+export interface HubLimits {
+  /** New accounts and devices one address (IPv4, or an IPv6 /64) may add per hour. */
+  signups_per_hour: number;
+  /** Files one device may list in this hub's index. */
+  max_files_per_device: number;
+  /** Devices, not counting removed ones, one account may have on this hub. */
+  max_devices_per_account: number;
+}
+
+export const LIMIT_DEFAULTS: HubLimits = {
+  signups_per_hour: 20,
+  max_files_per_device: 1_000_000,
+  max_devices_per_account: 20,
+};
+
+/** The largest value each limit takes, so a typo can't make a limit meaningless. */
+const LIMIT_MAX: HubLimits = {
+  signups_per_hour: 10_000,
+  max_files_per_device: 100_000_000,
+  max_devices_per_account: 1_000,
+};
+
+const LIMIT_KEYS = Object.keys(LIMIT_DEFAULTS) as (keyof HubLimits)[];
 
 export interface DeviceRow {
   id: string;
@@ -389,6 +417,11 @@ export class HubDb {
     const name = typeof change.name === 'string' ? change.name.trim() : change.name;
     if (typeof name === 'string' && (name.length < 1 || name.length > 64))
       throw new Error('name must be 1 to 64 characters');
+    for (const k of LIMIT_KEYS) {
+      const v = change[k];
+      if (v !== undefined && (!Number.isInteger(v) || v < 0 || v > LIMIT_MAX[k]))
+        throw new Error(`${k} must be a whole number from 0 (no limit) to ${LIMIT_MAX[k]}`);
+    }
     this.raw.transaction(() => {
       if (change.join_mode !== undefined && change.join_mode !== this.joinMode) {
         this.setSetting('join_mode', change.join_mode);
@@ -399,7 +432,24 @@ export class HubDb {
         else this.setSetting('name', name);
         this.audit(actor, 'set', 'name', name);
       }
+      const limits = this.limits;
+      for (const k of LIMIT_KEYS) {
+        const v = change[k];
+        if (v === undefined || v === limits[k]) continue;
+        this.setSetting(k, String(v));
+        this.audit(actor, 'set', k, String(v));
+      }
     })();
+  }
+
+  /** The current abuse limits (ADR 0022): stored values, else the defaults. */
+  get limits(): HubLimits {
+    const out = { ...LIMIT_DEFAULTS };
+    for (const k of LIMIT_KEYS) {
+      const v = Number(this.getSetting(k));
+      if (this.getSetting(k) !== undefined && Number.isInteger(v) && v >= 0) out[k] = v;
+    }
+    return out;
   }
 
   // ── admins and the audit log (ADR 0020) ───────────────────────────────────
@@ -854,6 +904,26 @@ export class HubDb {
       .get(deviceId) as number;
   }
 
+  /** Entries a snapshot in progress has staged so far. */
+  stagedCount(deviceId: string): number {
+    return this.raw
+      .prepare('SELECT count(*) FROM entries_staging WHERE device_id = ?')
+      .pluck()
+      .get(deviceId) as number;
+  }
+
+  /** How many of `paths` the device's index doesn't have yet. */
+  newPathCount(deviceId: string, paths: string[]): number {
+    if (paths.length === 0) return 0;
+    return this.raw
+      .prepare(
+        `SELECT count(*) FROM json_each(?) j WHERE NOT EXISTS (
+           SELECT 1 FROM entries e WHERE e.device_id = ? AND e.path = j.value)`,
+      )
+      .pluck()
+      .get(JSON.stringify(paths), deviceId) as number;
+  }
+
   // ── access rules (HANDOFF §6, per hub per ADR 0007) ───────────────────────
 
   rulePaths(deviceId: string): Set<string> {
@@ -999,6 +1069,22 @@ export class HubDb {
       });
   }
 
+  /** Subscriptions stored for one watching device. */
+  watchCount(watcherDevice: string): number {
+    return this.raw
+      .prepare('SELECT count(*) FROM watches WHERE watcher_device = ?')
+      .pluck()
+      .get(watcherDevice) as number;
+  }
+
+  hasWatch(watcherDevice: string, deviceId: string, path: string): boolean {
+    return (
+      this.raw
+        .prepare('SELECT 1 FROM watches WHERE watcher_device = ? AND device_id = ? AND path = ?')
+        .get(watcherDevice, deviceId, path) !== undefined
+    );
+  }
+
   removeWatch(watcherDevice: string, deviceId: string, path: string): boolean {
     return (
       this.raw
@@ -1024,6 +1110,13 @@ export class HubDb {
       name: g.name,
       members: members.all(g.id) as string[],
     }));
+  }
+
+  groupCount(ownerId: string): number {
+    return this.raw
+      .prepare('SELECT count(*) FROM groups WHERE owner_id = ?')
+      .pluck()
+      .get(ownerId) as number;
   }
 
   groupOwner(groupId: string): string | undefined {
@@ -1098,6 +1191,17 @@ export class HubDb {
       )
       .get(x, y) as
       { state: 'pending' | 'accepted'; requested_by: string; created_at: number } | undefined;
+  }
+
+  /** Connection requests the user sent that are still waiting for an answer. */
+  pendingRequestsFrom(userId: string): number {
+    return this.raw
+      .prepare(
+        `SELECT count(*) FROM connections WHERE state = 'pending' AND requested_by = @u
+         AND (user_a = @u OR user_b = @u)`,
+      )
+      .pluck()
+      .get({ u: userId }) as number;
   }
 
   removeConnection(a: string, b: string): boolean {

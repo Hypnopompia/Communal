@@ -269,17 +269,25 @@ describe('admin.ban / admin.unban', () => {
 });
 
 describe('admin.settings', () => {
+  // startTestHub turns the per-address sign-up limit off; the others are the defaults.
+  const limits = {
+    signups_per_hour: 0,
+    max_files_per_device: 1_000_000,
+    max_devices_per_account: 20,
+  };
+
   it('reads and changes the join mode and name, logging each change', async () => {
     const { alice } = await world();
     expect((await alice.c.request('admin.settings.get', {})).body).toEqual({
       join_mode: 'open',
       name: null,
+      ...limits,
     });
     const set = await alice.c.request('admin.settings.set', {
       join_mode: 'approval',
       name: 'Hunter family',
     });
-    expect(set.body).toEqual({ join_mode: 'approval', name: 'Hunter family' });
+    expect(set.body).toEqual({ join_mode: 'approval', name: 'Hunter family', ...limits });
     const c = await RawClient.connect(t.url);
     expect((await c.next('challenge')).body).toMatchObject({ name: 'Hunter family' });
     c.close();
@@ -287,6 +295,7 @@ describe('admin.settings', () => {
     expect((await alice.c.request('admin.settings.set', { name: null })).body).toEqual({
       join_mode: 'approval',
       name: null,
+      ...limits,
     });
     expect(
       t.db
@@ -298,6 +307,36 @@ describe('admin.settings', () => {
       ['set', 'name', 'Hunter family'],
       ['set', 'name', null],
     ]);
+  });
+
+  it('changes the abuse limits, logging each one that changed', async () => {
+    const { alice } = await world();
+    const set = await alice.c.request('admin.settings.set', {
+      signups_per_hour: 5,
+      max_files_per_device: 1_000_000,
+      max_devices_per_account: 3,
+    });
+    expect(set.body).toMatchObject({ signups_per_hour: 5, max_devices_per_account: 3 });
+    expect(t.db.limits).toEqual({
+      signups_per_hour: 5,
+      max_files_per_device: 1_000_000,
+      max_devices_per_account: 3,
+    });
+    expect(
+      t.db
+        .auditLog(2)
+        .entries.map((e) => [e.target, e.details])
+        .reverse(),
+    ).toEqual([
+      ['signups_per_hour', '5'],
+      ['max_devices_per_account', '3'],
+    ]);
+    // Out-of-range values never reach the database.
+    const bad = await alice.c.request('admin.settings.set', {
+      max_devices_per_account: -1,
+    } as never);
+    expect(bad.body).toMatchObject({ code: 'bad_request' });
+    expect(() => t.db.changeSettings({ max_files_per_device: 1.5 }, 'cli')).toThrow(/whole number/);
   });
 });
 

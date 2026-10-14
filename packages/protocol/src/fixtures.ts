@@ -253,7 +253,13 @@ export const hubFixtures: { [T in HubType]: HubBody<T> } = {
       },
     ],
   },
-  'admin.settings': { join_mode: 'open', name: 'Hunter family' },
+  'admin.settings': {
+    join_mode: 'open',
+    name: 'Hunter family',
+    signups_per_hour: 20,
+    max_files_per_device: 1_000_000,
+    max_devices_per_account: 20,
+  },
   'admin.graph.listing': {
     connections: [{ a: uid, b: uid2, state: 'accepted', requested_by: uid, since: 1_700_000_000 }],
   },

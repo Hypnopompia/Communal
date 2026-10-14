@@ -49,7 +49,7 @@ These came from the owner during development. Don't revert them to the spec's wo
 - Hub admin from a client: `communal admin users|approve|ban|unban|settings|graph|log` (on hubs you administer).
 - AI agents: `communal mcp` (stdio MCP server). The desktop app serves its local socket only while Settings › AI agents allows it.
 - Site: `site/` (static HTML, deployed by `.github/workflows/pages.yml` to https://hypnopompia.github.io/Communal/). Screenshots in `site/screenshots/` come from two app profiles with generated demo data, never real files.
-- Hub admin: `communal-hub users | approve <user_id> | ban <user_id> [--reason] | unban <user_id> | set join_mode open|approval | set name "<readable name>" | admin [list|add|remove <user_id>] | log [-n N]`. These commands work directly on the SQLite database, so they run alongside a live hub. Every change goes in the audit log (`admin_log`) with `cli` as the actor.
+- Hub admin: `communal-hub users | approve <user_id> | ban <user_id> [--reason] | unban <user_id> | set join_mode open|approval | set name "<readable name>" | set signups_per_hour|max_files_per_device|max_devices_per_account <n> | admin [list|add|remove <user_id>] | log [-n N]`. These commands work directly on the SQLite database, so they run alongside a live hub. Every change goes in the audit log (`admin_log`) with `cli` as the actor.
 
 Shell notes for this machine:
 
@@ -114,6 +114,7 @@ How the pieces connect:
   - No asar: the core spawns ffmpeg and the trash helper by path.
 - **Agents** (ADR 0017): `packages/mcp` is an MCP server over the local API. It must never get tools for the recovery key, device linking or revoking, verifying people, or making hub admins. Hub admin tools (`*_hub_*`) are fine: the hub checks admin on every call. `discoverApi()` finds a running core (daemon, then the desktop app's control socket). `POST /v1/ui/show` moves the desktop window and is `not_found` when headless.
 - **Hub admins** (ADR 0020): `users.admin_at`, checked by `HubDb.isAdmin()` on every `admin.*` message (a ban overrides it). The first account on a hub is its admin. Admin `HubDb` methods take an `actor` and write `admin_log` in the same transaction, so every front end is audited.
+- **Abuse limits** (ADR 0022) live in `apps/hub/src/limits.ts` (fixed) and `HubDb.limits` (admin settings, 0 = no limit). Every frame spends from a per-session token bucket. Over budget, messages **wait** in order rather than fail. Per-address limits count IPv4 addresses and IPv6 /64s. New per-account or per-device state needs a cap there too.
 - **Hub visibility** is decided in exactly one place, `Catalog.visible()` in `apps/hub/src/catalog.ts`. Never filter access in individual queries. Each entry carries its governing rule (`entries.rule_path`), which `HubDb` re-tags whenever rules change (ADR 0009).
 - **Access rules are per hub, and the client's copy is authoritative** (core `index.db` table `acl`). It's pushed whole with `acl.replace` on every sign-in. List grants only work while the two users are connected.
 - **Clients never trust a hub's claims about identity:** run `checkSummary` on every `UserSummary` (core `people.ts`).
@@ -139,6 +140,7 @@ How the pieces connect:
   - `startTestHub()`: an in-process hub on a random port, with a temp database and short timeouts.
   - `RawClient`: sends arbitrary frames, for access-control tests.
   - `signUp` / `signIn` helpers.
+  - Per-address limits are off and the message budget is huge, since every test client is 127.0.0.1. Limit tests (`limits.test.ts`) turn them back on through `limits` or the settings table.
 - Every hub handler needs access-control cases. They're grouped by area in `apps/hub/src/`:
   - `server.test.ts`: session, accounts, bans
   - `catalog.test.ts`: index, search, browse, sources

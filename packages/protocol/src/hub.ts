@@ -37,7 +37,16 @@ const Empty = z.object({}).strict();
 const StreamId = z.number().int().min(1).max(0xffffffff);
 const ClientInfo = z.object({ name: z.string().max(32), version: z.string().max(32) });
 const DeviceName = z.string().min(1).max(64);
-const DisplayName = z.string().trim().min(1).max(64);
+/**
+ * Names a client sends: no control characters and no bidirectional overrides, which could make
+ * a name read as someone else's (or reverse a file extension). Names the hub sends back stay
+ * permissive, so a name stored before this check can still be read (ADR 0022).
+ */
+const UNSAFE_NAME = /[\p{Cc}\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
+const clean = (s: z.ZodString) =>
+  s.refine((v) => !UNSAFE_NAME.test(v), { message: 'name has control or direction characters' });
+const SentDeviceName = clean(z.string().min(1).max(64));
+const DisplayName = clean(z.string().trim().min(1).max(64));
 
 const NatObservation = z.object({
   nat: NetworkProfile.shape.nat,
@@ -110,6 +119,12 @@ const AdminUser = z.object({
 
 const JoinMode = z.enum(['open', 'approval']);
 const HubName = z.string().trim().min(1).max(64);
+/** Abuse limits an admin can change (ADR 0022); 0 means no limit. */
+const HubLimits = z.object({
+  signups_per_hour: z.number().int().min(0).max(10_000),
+  max_files_per_device: z.number().int().min(0).max(100_000_000),
+  max_devices_per_account: z.number().int().min(0).max(1_000),
+});
 
 const TransferToken = z.object({
   claims: z.object({
@@ -129,7 +144,7 @@ export const clientBodies = {
   // carries its own proof-of-possession signature over the challenge.
   'account.create': z.object({
     display_name: DisplayName,
-    device_name: DeviceName,
+    device_name: SentDeviceName,
     device_pubkey: PublicKey,
     platform: Platform,
     client: ClientInfo,
@@ -145,7 +160,7 @@ export const clientBodies = {
   'link.code.create': Empty,
   'link.claim': z.object({
     code: z.string().regex(/^[0-9A-Z]{4}-[0-9A-Z]{4}$/),
-    device_name: DeviceName,
+    device_name: SentDeviceName,
     device_pubkey: PublicKey,
     platform: Platform,
     sig: Signature,
@@ -160,7 +175,7 @@ export const clientBodies = {
   'account.restore': z.object({
     root_pubkey: PublicKey,
     device_pubkey: PublicKey,
-    device_name: DeviceName,
+    device_name: SentDeviceName,
     platform: Platform,
     issued_at: UnixSeconds,
     /** A device-cert signature by the root key over the new device. */
@@ -180,7 +195,10 @@ export const clientBodies = {
   'connection.accept': z.object({ user_id: UserId }),
   'connection.remove': z.object({ user_id: UserId }),
   'connection.list': Empty,
-  'group.upsert': Group.extend({ group_id: GroupId.optional() }),
+  'group.upsert': Group.extend({
+    group_id: GroupId.optional(),
+    name: clean(z.string().trim().min(1).max(64)),
+  }),
   'group.delete': z.object({ group_id: GroupId }),
   'group.list': Empty,
   'acl.set': z.object({ device_id: DeviceId, path: SharePath, audience: Audience.nullable() }),
@@ -265,7 +283,8 @@ export const clientBodies = {
   /** Only the fields given change; `name: null` clears the name. */
   'admin.settings.set': z.object({
     join_mode: JoinMode.optional(),
-    name: HubName.nullable().optional(),
+    name: clean(HubName).nullable().optional(),
+    ...HubLimits.partial().shape,
   }),
   'admin.graph': Empty,
   /** Newest first; `before` is the id of the oldest entry already shown. */
@@ -427,7 +446,10 @@ export const hubBodies = {
   }),
 
   'admin.user.listing': z.object({ users: z.array(AdminUser).max(10_000) }),
-  'admin.settings': z.object({ join_mode: JoinMode, name: HubName.nullable() }),
+  /** The limits are optional so a client can read the settings of a hub older than ADR 0022. */
+  'admin.settings': z
+    .object({ join_mode: JoinMode, name: HubName.nullable() })
+    .extend(HubLimits.partial().shape),
   /** Accounts and connections only: never groups, rules or files (ADR 0020). */
   'admin.graph.listing': z.object({
     connections: z

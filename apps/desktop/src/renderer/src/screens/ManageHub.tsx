@@ -10,6 +10,7 @@ import {
   type AdminGraph,
   type AdminLogEntry,
   type AdminSettings,
+  type HubLimitKey,
   type AdminUser,
 } from '../api';
 import { ago, date, hubName, plural, size } from '../format';
@@ -637,6 +638,81 @@ function describe(e: AdminLogEntry, name: (id: string | null) => string): string
 
 // ── settings ──
 
+const LIMITS: { key: HubLimitKey; label: string; help: string; max: number }[] = [
+  {
+    key: 'signups_per_hour',
+    label: 'New accounts per hour',
+    help: 'From one internet address, counting new devices too. A household shares one address.',
+    max: 10_000,
+  },
+  {
+    key: 'max_files_per_device',
+    label: 'Files per device',
+    help: 'How many files one computer can share on this hub.',
+    max: 100_000_000,
+  },
+  {
+    key: 'max_devices_per_account',
+    label: 'Devices per account',
+    help: 'Computers one person can have on this hub, not counting removed ones.',
+    max: 1_000,
+  },
+];
+
+function LimitsPanel({
+  settings,
+  busy,
+  save,
+}: {
+  settings: AdminSettings;
+  busy: boolean;
+  save: (change: Partial<AdminSettings>) => void;
+}) {
+  const [draft, setDraft] = useState<Partial<Record<HubLimitKey, string>>>({});
+  const value = (k: HubLimitKey) => draft[k] ?? String(settings[k] ?? 0);
+  const valid = LIMITS.every(({ key, max }) => {
+    const v = value(key);
+    return /^\d+$/.test(v) && Number(v) <= max;
+  });
+  const changed = LIMITS.some(({ key }) => Number(value(key)) !== settings[key]);
+  return (
+    <div className="panel panel-pad section">
+      <h2>Limits</h2>
+      <p className="muted" style={{ margin: 0 }}>
+        These keep one person or script from swamping the hub. 0 means no limit.
+      </p>
+      {LIMITS.map(({ key, label, help }) => (
+        <label key={key} style={{ display: 'grid', gap: 2 }}>
+          <span>
+            <b>{label}</b>
+          </span>
+          <input
+            className="input"
+            style={{ maxWidth: 160 }}
+            inputMode="numeric"
+            value={value(key)}
+            aria-label={label}
+            onChange={(e) => setDraft({ ...draft, [key]: e.target.value.trim() })}
+          />
+          <span className="muted small">{help}</span>
+        </label>
+      ))}
+      <div>
+        <button
+          className="btn primary"
+          disabled={busy || !valid || !changed}
+          onClick={() => {
+            save(Object.fromEntries(LIMITS.map(({ key }) => [key, Number(value(key))])));
+            setDraft({});
+          }}
+        >
+          Save limits
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function SettingsTab({ hub }: { hub: string }) {
   const settings = useApi<AdminSettings>(['admin'], adminPath(hub, '/settings'));
   const users = useAdminUsers(hub);
@@ -709,6 +785,9 @@ function SettingsTab({ hub }: { hub: string }) {
           </span>
         </label>
       </div>
+      {s.signups_per_hour !== undefined && (
+        <LimitsPanel settings={s} busy={save.busy} save={(c) => void save.run(c)} />
+      )}
       <div className="panel panel-pad section">
         <h2>Admins</h2>
         <p className="muted" style={{ margin: 0 }}>

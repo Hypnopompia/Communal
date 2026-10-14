@@ -136,7 +136,13 @@ export interface AdminUser {
 export interface AdminSettings {
   join_mode: 'open' | 'approval';
   name: string | null;
+  /** Abuse limits, 0 = no limit (ADR 0022). Missing on hubs older than 0.1.7. */
+  signups_per_hour?: number;
+  max_files_per_device?: number;
+  max_devices_per_account?: number;
 }
+
+export type HubLimitKey = 'signups_per_hour' | 'max_files_per_device' | 'max_devices_per_account';
 
 export interface AdminGraph {
   people: {

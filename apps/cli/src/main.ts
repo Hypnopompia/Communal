@@ -876,29 +876,59 @@ admin
 
 admin
   .command('settings')
-  .description("show or change the hub's name and who can join")
+  .description("show or change the hub's name, who can join, and its abuse limits")
   .option(...adminHubOpt)
   .option('--join-mode <mode>', 'open (anyone with the address) or approval (you let people in)')
   .option('--name <name>', 'what people see instead of the address')
   .option('--clear-name', 'remove the name')
-  .action((opts: { hub?: string; joinMode?: string; name?: string; clearName?: boolean }) =>
-    viaDaemon(async (c) => {
-      const hub = await pickAdminHub(c, opts.hub);
-      if (opts.joinMode && opts.joinMode !== 'open' && opts.joinMode !== 'approval')
-        throw new Error('--join-mode is open or approval');
-      const change = {
-        ...(opts.joinMode ? { join_mode: opts.joinMode } : {}),
-        ...(opts.clearName ? { name: null } : opts.name ? { name: opts.name } : {}),
-      };
-      const s = Object.keys(change).length
-        ? await c.put<{ join_mode: string; name: string | null }>(
-            adminPath(hub, '/settings'),
-            change,
-          )
-        : await c.get<{ join_mode: string; name: string | null }>(adminPath(hub, '/settings'));
-      console.log(`join_mode = ${s.join_mode}`);
-      console.log(`name = ${s.name ?? '(none: people see the address)'}`);
-    }),
+  .option(
+    '--signups-per-hour <n>',
+    'new accounts and devices per internet address per hour (0: no limit)',
+  )
+  .option('--max-files <n>', 'files one device may share on the hub (0: no limit)')
+  .option('--max-devices <n>', 'devices one account may have on the hub (0: no limit)')
+  .action(
+    (opts: {
+      hub?: string;
+      joinMode?: string;
+      name?: string;
+      clearName?: boolean;
+      signupsPerHour?: string;
+      maxFiles?: string;
+      maxDevices?: string;
+    }) =>
+      viaDaemon(async (c) => {
+        const hub = await pickAdminHub(c, opts.hub);
+        if (opts.joinMode && opts.joinMode !== 'open' && opts.joinMode !== 'approval')
+          throw new Error('--join-mode is open or approval');
+        const count = (flag: string, v?: string) => {
+          if (v === undefined) return undefined;
+          if (!/^\d+$/.test(v)) throw new Error(`${flag} is a whole number (0: no limit)`);
+          return Number(v);
+        };
+        const limits = {
+          signups_per_hour: count('--signups-per-hour', opts.signupsPerHour),
+          max_files_per_device: count('--max-files', opts.maxFiles),
+          max_devices_per_account: count('--max-devices', opts.maxDevices),
+        };
+        const change = {
+          ...(opts.joinMode ? { join_mode: opts.joinMode } : {}),
+          ...(opts.clearName ? { name: null } : opts.name ? { name: opts.name } : {}),
+          ...Object.fromEntries(Object.entries(limits).filter(([, v]) => v !== undefined)),
+        };
+        type Settings = { join_mode: string; name: string | null } & Partial<
+          Record<keyof typeof limits, number>
+        >;
+        const s = Object.keys(change).length
+          ? await c.put<Settings>(adminPath(hub, '/settings'), change)
+          : await c.get<Settings>(adminPath(hub, '/settings'));
+        console.log(`join_mode = ${s.join_mode}`);
+        console.log(`name = ${s.name ?? '(none: people see the address)'}`);
+        for (const k of Object.keys(limits) as (keyof typeof limits)[]) {
+          const v = s[k];
+          if (v !== undefined) console.log(`${k} = ${v || 'no limit'}`);
+        }
+      }),
   );
 
 admin

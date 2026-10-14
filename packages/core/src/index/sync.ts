@@ -2,6 +2,7 @@ import { pino, type Logger } from 'pino';
 import type { HubBody } from '@communal/protocol';
 import type { HubManager } from '../hub-manager.js';
 import type { FileRow, IndexStore } from './store.js';
+import { HubError } from '../hub-client.js';
 
 /** Max entries per snapshot page / delta (HANDOFF §5: pages of ~5,000). */
 export const PAGE = 5_000;
@@ -79,8 +80,11 @@ export class IndexSync {
           await this.sync(hub);
         } while (this.again.has(hub));
       } catch (err) {
-        // Disconnects reject in-flight requests; the next `ready` starts over.
-        this.log.debug({ hub, err: (err as Error).message }, 'index sync interrupted');
+        // Disconnects reject in-flight requests; the next `ready` starts over. A refusal (say,
+        // more files than the hub takes, ADR 0022) is tried again on the next change.
+        if (err instanceof HubError && err.code !== 'internal')
+          this.log.warn({ hub, code: err.code, err: err.message }, 'hub refused the index');
+        else this.log.debug({ hub, err: (err as Error).message }, 'index sync interrupted');
       } finally {
         this.running.delete(hub);
       }

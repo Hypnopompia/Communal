@@ -96,10 +96,14 @@ const NOTHING_KNOWN = { nat: 'unknown', upnp: false, ipv6: false, cgnat: false }
 
 const newTransferId = () => 't_' + toBase32(randomBytes(10));
 
-/** File names from the network are untrusted: keep only a safe base name. */
+/**
+ * File names from the network are untrusted: keep only a safe base name. Direction overrides
+ * go, so `photo\u202egpj.exe` can't be saved looking like `photoexe.jpg` (ADR 0022).
+ */
 export function safeName(name: string): string {
   const base = basename(name.replace(/\\/g, '/'))
-    .replace(/[\0<>:"|?*]/g, '_')
+    .replace(/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '')
+    .replace(/[\p{Cc}<>:"|?*]/gu, '_')
     .trim();
   return base && base !== '.' && base !== '..' ? base.slice(0, 240) : 'download';
 }

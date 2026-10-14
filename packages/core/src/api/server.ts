@@ -85,6 +85,9 @@ const AdminSettingsChange = z
   .object({
     join_mode: z.enum(['open', 'approval']).optional(),
     name: z.string().trim().min(1).max(64).nullable().optional(),
+    signups_per_hour: z.number().int().min(0).max(10_000).optional(),
+    max_files_per_device: z.number().int().min(0).max(100_000_000).optional(),
+    max_devices_per_account: z.number().int().min(0).max(1_000).optional(),
   })
   .strict();
 const AdminLogQuery = z.object({
