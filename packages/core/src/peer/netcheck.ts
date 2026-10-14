@@ -255,7 +255,16 @@ export class RouterPortMapper implements PortMapper {
   private pmp?: { gateway: Gateway; port: number; timer: NodeJS.Timeout };
   private readonly log: Logger;
 
-  constructor(private readonly o: { timeoutMs?: number; ttlS?: number; log?: Logger } = {}) {
+  constructor(
+    private readonly o: {
+      timeoutMs?: number;
+      ttlS?: number;
+      log?: Logger;
+      /** Tests: the NAT-PMP gateway to ask, and whether to try UPnP at all. */
+      gateway?: () => Promise<string | null>;
+      upnp?: boolean;
+    } = {},
+  ) {
     this.log = o.log ?? pino({ name: 'portmap' });
   }
 
@@ -277,7 +286,7 @@ export class RouterPortMapper implements PortMapper {
     let routerIp: string | null = null;
 
     const viaPmp = async (): Promise<PortMapping> => {
-      const gw = await defaultGateway();
+      const gw = await (this.o.gateway ?? defaultGateway)();
       if (!gw) throw new Error('no default gateway');
       const g = lib.pmpNat(gw);
       (g as unknown as NodeJS.EventEmitter).on?.('error', () => {});
@@ -302,6 +311,7 @@ export class RouterPortMapper implements PortMapper {
       return { method: 'pmp', host: m.externalHost, port: m.externalPort };
     };
     const viaUpnp = async (): Promise<PortMapping> => {
+      if (this.o.upnp === false) throw new Error('UPnP turned off');
       for await (const g of lib.upnpNat().findGateways({ signal })) {
         if (g.family !== 'IPv4') continue;
         this.gateways.push(g);
@@ -333,9 +343,16 @@ export class RouterPortMapper implements PortMapper {
     this.gateways = [];
     if (this.pmp) {
       clearInterval(this.pmp.timer);
-      await this.pmp.gateway
-        .unmap(this.pmp.port, { signal: AbortSignal.timeout(2_000) })
-        .catch(() => {});
+      // unmap() is map() with a zero lease and these options (its type says AbortOptions).
+      // Without the protocol it removes a TCP mapping instead of ours, and without
+      // autoRefresh: false the library schedules a refresh of the removal at 0 - 60 s
+      // (TimeoutNegativeWarning), which re-sent it in a loop and kept the daemon from exiting.
+      const unmapOpts = {
+        signal: AbortSignal.timeout(2_000),
+        protocol: 'UDP' as const,
+        autoRefresh: false,
+      };
+      await this.pmp.gateway.unmap(this.pmp.port, unmapOpts).catch(() => {});
       this.pmp = undefined;
     }
     await Promise.all(

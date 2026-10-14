@@ -41,6 +41,7 @@ import {
   type MergedSearch,
   apiSocketPath,
   discoverApi,
+  headlessDataDir,
   seenLabel,
   RouterPortMapper,
   type Explained,
@@ -54,7 +55,7 @@ const VERSION = (
   }
 ).version;
 const log = pino({ name: 'communal', level: process.env.LOG_LEVEL ?? 'info' });
-const dataDir = process.env.COMMUNAL_DATA ?? join(process.env.HOME ?? '.', '.communal');
+const dataDir = headlessDataDir();
 /** Dev-only conveniences need a dev build (see docs/adr/0006-hub-sessions-and-tls.md). */
 const devBuild = (process.env.COMMUNAL_BUILD ?? 'release') === 'dev';
 const insecureTls = devBuild && process.env.COMMUNAL_DEV_TLS === 'self-signed';
@@ -2116,6 +2117,12 @@ program
       process.once('SIGTERM', done);
       process.once('SIGINT', done);
     });
+    // Should anything still hold the event loop after stopping (a library timer or socket),
+    // exit anyway rather than wait for systemd's SIGKILL, and name what was left open.
+    setTimeout(() => {
+      log.warn({ open: process.getActiveResourcesInfo() }, 'still running after stop; exiting');
+      process.exit();
+    }, 10_000).unref();
     await localApi.close();
     await core.stop();
     log.info('daemon stopped');

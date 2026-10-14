@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { LocalApiClient } from './client.js';
 
@@ -13,6 +13,32 @@ export function apiSocketPath(dataDir: string): string {
     return `\\\\.\\pipe\\communal-${id}`;
   }
   return join(dataDir, 'api.sock');
+}
+
+/** Where the Linux package's service keeps its data (apps/cli/packaging/communal.service). */
+export const SERVICE_DATA_DIR = '/var/lib/communal';
+
+/**
+ * The headless client's data dir: `COMMUNAL_DATA`, else the service's when running as its
+ * `communal` user on Linux (so `sudo -u communal communal status` finds the daemon), else
+ * ~/.communal.
+ */
+export function headlessDataDir(
+  env: NodeJS.ProcessEnv = process.env,
+  user: string | undefined = currentUser(),
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (env.COMMUNAL_DATA) return env.COMMUNAL_DATA;
+  if (platform === 'linux' && user === 'communal') return SERVICE_DATA_DIR;
+  return join(env.HOME ?? homedir(), '.communal');
+}
+
+function currentUser(): string | undefined {
+  try {
+    return userInfo().username;
+  } catch {
+    return undefined; // no passwd entry for this uid (some containers)
+  }
 }
 
 /** The desktop app's core data dir (Electron's userData + /core), per platform. */
@@ -33,7 +59,7 @@ export interface FoundApi {
 
 /**
  * Finds a running core to talk to, in order: `COMMUNAL_API_SOCKET`, the headless daemon
- * (`COMMUNAL_DATA` or ~/.communal), then the desktop app (which serves this only while
+ * (`headlessDataDir`), then the desktop app (which serves this only while
  * "Allow control from the CLI and AI agents" is on). Null when none answers.
  */
 export async function discoverApi(env: NodeJS.ProcessEnv = process.env): Promise<FoundApi | null> {
@@ -42,7 +68,7 @@ export async function discoverApi(env: NodeJS.ProcessEnv = process.env): Promise
     candidates.push({ kind: 'custom', socketPath: env.COMMUNAL_API_SOCKET });
   candidates.push({
     kind: 'headless',
-    socketPath: apiSocketPath(env.COMMUNAL_DATA ?? join(homedir(), '.communal')),
+    socketPath: apiSocketPath(headlessDataDir(env)),
   });
   candidates.push({ kind: 'desktop', socketPath: apiSocketPath(desktopDataDir(env)) });
   for (const c of candidates) {

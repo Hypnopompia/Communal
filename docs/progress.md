@@ -15,7 +15,7 @@ These need a person or hardware that CI doesn't have.
 - **The Windows build** has only been smoke-tested in CI and has never run on a Windows machine.
 - **1 GiB between two physical machines on a LAN** (open since M0).
 - **A slow Wi-Fi download, explained** (ADR 0024). Compare with AirDrop or a Finder copy between the same laptops, and read the uploader's `upload finished` link stats (start the desktop app from Terminal). Then decide how to ship the libudx reorder-window fix (`docs/questions.md`).
-- **The headless tarball on a real systemd host.** Only `systemd-analyze verify` and `sh -n` have checked it so far (M9).
+- **The headless tarball on a real systemd host.** 0.1.8 ran on an Ubuntu 24.04 LXC and turned up the two bugs fixed on 2026-10-14 below. Recheck on the next release: `sudo -u communal communal status` right after `install.sh`, and `systemctl restart communal` finishing in a few seconds.
 - **A real UPnP/NAT-PMP mapping.** The NAT lab has no UPnP router, so it stops at "no gateway found". A miniupnpd router container could cover this (M5).
 
 ### Security
@@ -81,6 +81,15 @@ These are fine for now. Fix them if they start to bite.
 
 - **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
 - **From HANDOFF §15:** hubs caching thumbnails of hub-wide files.
+
+## Headless package: the CLI couldn't find the service, and stopping took 90 s (2026-10-14)
+
+Found installing 0.1.8 on a Linux server (Ubuntu 24.04 LXC).
+
+- **CLI:** the installer says to run `sudo -u communal communal status`, but the CLI then looked in `$HOME/.communal` (`/var/lib/communal/.communal`) while the service uses `COMMUNAL_DATA=/var/lib/communal`, so it reported the daemon stopped. New `headlessDataDir()` in core `api/discover.ts`, used by the CLI and `discoverApi`: `COMMUNAL_DATA`, else `/var/lib/communal` when running as the `communal` user on Linux, else `~/.communal`. Test: `packages/core/src/api/discover.test.ts`.
+- **Stopping:** `RouterPortMapper.stop()` removed its NAT-PMP mapping with the library's `unmap()`, which is `map()` with a zero lease and the default options. So it scheduled an auto-refresh of the removal at 0 − 60 s (the `TimeoutNegativeWarning: -60000` in the log), and it removed a TCP mapping rather than our UDP one, leaving the real mapping on the router until its lease ran out. It now passes `protocol: 'UDP'` and `autoRefresh: false`. Test: `packages/core/src/peer/portmap.test.ts`, against a fake NAT-PMP router on 127.0.0.1:5351. It fails on the old code with that exact warning. It skips when port 5350 is taken, as on a Mac with the Communal app open; it was run in a `node:24` container.
+- **Safety net:** the daemon now exits 10 s after SIGTERM/SIGINT even if something still holds the event loop, and logs `process.getActiveResourcesInfo()` when it has to, so a future leak shows its cause instead of waiting for systemd's SIGKILL.
+- **Not verified on the server itself:** the next release needs installing there to confirm both.
 
 ## Slow Wi-Fi transfers: packet reordering, not loss (2026-10-14)
 
