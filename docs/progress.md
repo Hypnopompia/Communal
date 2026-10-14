@@ -72,6 +72,12 @@ These are fine for now. Fix them if they start to bite.
 - **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
 - **From HANDOFF §15:** hubs caching thumbnails of hub-wide files, and mobile clients.
 
+## Synced folder: two flaky tests, one real race (2026-10-14)
+
+- CI's `m10-sync-folder` failed now and then on Ubuntu. Two causes:
+  - **The three-computer test** edited a file within the same second it was written, before the computer that wrote it had heard the others had it. That computer then judged the edit as a possible conflict, decided by modification time, and a same-second tie can go either way. The test now waits for that (`echoed()`), as a person would. A real edit only hits this within seconds of a file arriving.
+  - **A real race in the delete/edit crossing:** the editing computer could restore its own set-aside edit when another computer echoed it back, leaving both names on both computers. Fixed in `ownSetAside` (ADR 0019). The file's suite passed 12 runs in a row afterwards; it failed about 1 in 7 before.
+
 ## Clear buttons on Transfers and Activity (2026-10-14)
 
 - **Transfers › Finished › Clear** removes finished downloads (done, failed, cancelled) from the list. The files stay, and a failed download's `.part`/`.partmap` is deleted. Downloads a subscription is still waiting on are kept, since they settle that file after a restart.

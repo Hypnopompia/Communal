@@ -139,6 +139,26 @@ async function published(h: TestHub, cores: Core[], rel: string, hash: string) {
   );
 }
 
+/**
+ * Waits until every computer has recorded `rel` at `hash` from each of the others. Until then a
+ * computer that wrote the file doesn't know the others have it, so an edit from one of them
+ * arriving first is judged as a possible conflict, by modification time.
+ */
+async function echoed(cores: Core[], rel: string, hash: string) {
+  const path = `Communal/${rel}`;
+  await until(
+    () =>
+      cores.every(
+        (c) =>
+          c.store.subFilesWithHash(hash).filter((f) => f.path === path && f.state === 'done')
+            .length ===
+          cores.length - 1,
+      ),
+    20_000,
+    () => `every computer to have ${rel} from every other`,
+  );
+}
+
 /** Waits until each computer follows each of the others. */
 async function meshed(cores: Core[]) {
   for (const c of cores)
@@ -215,7 +235,10 @@ describe('the synced folder', () => {
     const todoHash = (await hashFile(join(roots[1]!, 'notes', 'todo.txt'))).hash;
     expect(nas.store.transfers().filter((t) => t.hash === todoHash).length).toBeLessThanOrEqual(1);
 
-    // An edit on the NAS replaces the others' copies (the old one goes to the trash).
+    // An edit on the NAS replaces the others' copies (the old one goes to the trash). Edited
+    // once every computer knows the others have the file, as a person would: an edit within
+    // the same second as the write it replaces, before that's settled, can count as a conflict.
+    await echoed(cores, 'notes/todo.txt', todoHash);
     await writeFile(join(roots[2]!, 'notes', 'todo.txt'), 'buy oat milk');
     want = { ...want, 'notes/todo.txt': 'buy oat milk' };
     await allHold(cores, want);

@@ -454,6 +454,7 @@ export class Subscriptions {
       return;
     }
     if (await this.stale(sub, row, here)) return;
+    if (await this.ownSetAside(sub, row, here)) return;
     const staging = join(sub.dest_dir, SYNC_STAGING);
     const have = await this.localCopy(sub, e, leaving);
     if (have) {
@@ -550,6 +551,20 @@ export class Subscriptions {
     if (!this.o.store.syncHad(f.path, f.hash, sub.id)) return false;
     // Still the version some source gave us: an update replaces it as usual.
     if (await this.synced(here)) return false;
+    this.o.store.putSubFile({ ...f, state: 'done', transfer_id: null, local: null, prev: null });
+    return true;
+  }
+
+  /**
+   * Our own edit coming back: a deletion crossed it, so we moved it aside under its conflict
+   * name (`removedSync`), but another computer had already restored it under its name and lists
+   * it. Restoring it here too would leave both names on every computer. Nothing to place;
+   * recorded as done with no local copy, like `stale`.
+   */
+  private async ownSetAside(sub: SubscriptionRow, f: SubFileRow, here: string): Promise<boolean> {
+    if (f.mtime == null || (await exists(here))) return false;
+    const aside = join(dirname(here), conflictName(basename(here), f.hash, f.mtime));
+    if (!(await hasHash(aside, f.hash))) return false;
     this.o.store.putSubFile({ ...f, state: 'done', transfer_id: null, local: null, prev: null });
     return true;
   }
