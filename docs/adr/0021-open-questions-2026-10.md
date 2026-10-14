@@ -48,6 +48,8 @@ Re-shared files starting as "only me", or taking the narrower audience, were rej
 - keep the first computer and the recovery key safe;
 - if either is stolen, start a new account.
 
+Built (2026-10-13): Settings › Account (next to "Save recovery key"), the recovery words dialog, the Devices "First computer" tag, `communal recovery export`, and the guide.
+
 If this is ever fixed, the preferred design is a separate root key that lives only in the recovery file (option 3 in the old question), because every device could then be revoked. Key rotation was rejected because it sets off the "verified key changed" warning for everyone.
 
 ### 5. People on several hubs

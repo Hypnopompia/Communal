@@ -103,11 +103,14 @@ function Account() {
           Keep it somewhere safe and private: whoever has it can use your account.
         </p>
         {a.holds_root_key ? (
-          <div>
-            <button className="btn primary" onClick={() => setExporting(true)}>
-              Save recovery key…
-            </button>
-          </div>
+          <>
+            <div>
+              <button className="btn primary" onClick={() => setExporting(true)}>
+                Save recovery key…
+              </button>
+            </div>
+            <FirstComputerNote />
+          </>
         ) : (
           <div className="notice">
             Only your first computer{first ? ` (${first.name})` : ''} can save the recovery key.
@@ -117,6 +120,20 @@ function Account() {
       </div>
       {exporting && <ExportRecovery onClose={() => setExporting(false)} />}
     </>
+  );
+}
+
+/**
+ * The first computer holds the account root and can't be removed (ADR 0014); losing it or the
+ * recovery key to a thief means starting over (ADR 0021: accepted for v1, so say it plainly).
+ */
+function FirstComputerNote() {
+  return (
+    <div className="notice small">
+      <b>Look after this computer and the recovery key.</b> Your other computers can be removed if
+      they’re lost or stolen, but this one holds your account’s master key and can’t be. If either
+      is ever stolen, start a new account and ask people to connect with you again.
+    </div>
   );
 }
 
@@ -147,7 +164,7 @@ function ExportRecovery({ onClose }: { onClose: () => void }) {
       <Dialog title="Your recovery words" onClose={onClose}>
         <p className="muted">
           Write these down in order and keep them somewhere safe. Anyone with them can use your
-          account.
+          account, and it can’t be taken back from them: you’d have to start a new account.
         </p>
         <ol style={{ columns: 3, margin: 0, paddingLeft: 24, fontWeight: 600, lineHeight: 1.9 }}>
           {words.map((w, i) => (
@@ -328,7 +345,11 @@ function Devices() {
                         </span>
                       )}
                       {d.root && (
-                        <span className="tag" style={{ marginLeft: 8 }}>
+                        <span
+                          className="tag"
+                          style={{ marginLeft: 8 }}
+                          title="Holds your account’s master key, so it can’t be removed. Keep it safe."
+                        >
                           First computer
                         </span>
                       )}

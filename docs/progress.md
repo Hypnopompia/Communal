@@ -29,10 +29,6 @@ These need a person or hardware that CI doesn't have.
 - **Show the access preview in the app.** `POST /v1/acl/preview` already says which files would be seen by whom. The audience picker in My shares could show the same thing before saving.
 - **A message to send to the person with the easier fix.** Transfers shows who can fix a failed connection, but there's no ready-made note to send them (M5, HANDOFF §8).
 
-### Decided, ready to build
-
-- **First-device guidance** (ADR 0021): the guide and recovery-key screens say to keep the first computer and the recovery key safe, and to start a new account if either is stolen.
-
 ### Waiting for user feedback
 
 The plan is in `docs/plans/downloads.md`.
@@ -68,6 +64,16 @@ These are fine for now. Fix them if they start to bite.
 
 - **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
 - **From HANDOFF §15:** hubs caching thumbnails of hub-wide files, and mobile clients.
+
+## First-computer guidance (2026-10-13)
+
+- **ADR 0021, item 4.** The first computer can't be removed, so the app now says so plainly:
+  - Settings › Account, under "Save recovery key", tells people to look after this computer and the key, and to start a new account if either is stolen.
+  - The recovery words dialog says a stolen key can't be taken back.
+  - The "First computer" tag in Devices explains itself on hover.
+  - `communal recovery export` prints the same.
+  - The guide has a paragraph on it under Settings › Account and Devices.
+- That finishes the "Decided, ready to build" list.
 
 ## People across hubs, and quitting shows offline at once (2026-10-13)
 

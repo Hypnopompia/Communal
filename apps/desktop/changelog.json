@@ -1,5 +1,19 @@
 [
   {
+    "version": "0.1.6",
+    "date": "2026-10-13",
+    "changes": [
+      "If you run a hub, you can now manage it from the app: Settings › Hubs › Manage. Let in people who are waiting, ban and unban, rename the hub, choose whether new people need approval, see who's connected to whom, and read a log of every admin action. The first person to join a hub is its admin. This needs your hub to be updated too.",
+      "When someone is waiting to join a hub you manage, a banner says so.",
+      "Someone you know on several hubs is listed once in People, with what's going on with them on each hub.",
+      "Quitting Communal now shows your computer as offline to others straight away, instead of after a minute and a half. This needs your hub to be updated too.",
+      "Saving a download into one of your shared folders shares it as well. Communal now tells you who will be able to see it, and asks first.",
+      "Settings › Account explains why your first computer and your recovery key need looking after.",
+      "AI assistants can look at thumbnails, check what a change to who-can-see-what would do before making it, check where a download would be shared, and help manage a hub you run.",
+      "Long folder paths no longer push the buttons next to them out of view."
+    ]
+  },
+  {
     "version": "0.1.5",
     "date": "2026-10-13",
     "changes": [

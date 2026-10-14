@@ -1543,7 +1543,8 @@ recovery
     }
     if (opts.words) {
       console.log('Write these words down and keep them somewhere safe. Anyone who has them');
-      console.log('can take over your account.\n');
+      console.log('can take over your account, and it can’t be taken back: you would have to');
+      console.log('start a new account. The same goes for this computer, the first one.\n');
       const words = rootSecretToWords(secret);
       for (let i = 0; i < words.length; i += 6)
         console.log(
@@ -1585,7 +1586,9 @@ recovery
     const rec = await exportRecoveryFile(secret, account.user_id, passphrase, undefined, hubs);
     writeFileSync(out, JSON.stringify(rec, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
     console.log(`Recovery file written to ${out}`);
-    console.log('Keep it and its passphrase safe: together they can take over your account.');
+    console.log('Keep it and its passphrase safe: together they can take over your account,');
+    console.log('and that can’t be undone (you would start a new account). Look after this');
+    console.log('computer too: it holds the account’s master key and can’t be removed.');
   });
 
 type DeviceView = {
