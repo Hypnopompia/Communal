@@ -17,6 +17,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -132,7 +135,11 @@ fun ActionSheet(model: AppModel, target: Target, onClose: () -> Unit) {
         if (r.destinations.size > 1) choosing = r to act else act(null)
     }
     ModalBottomSheet(onDismissRequest = onClose) {
-        Column(Modifier.padding(bottom = 24.dp)) {
+        // With several computers the options outgrow the screen: scroll, and keep the last one
+        // clear of the navigation bar.
+        Column(
+            Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 16.dp),
+        ) {
             Text(
                 target.title,
                 Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
@@ -164,8 +171,16 @@ fun ActionSheet(model: AppModel, target: Target, onClose: () -> Unit) {
                     else -> "Saved in its downloads folder"
                 }
                 val usable = d.online && r.allowed == true
-                Option(Icons.Default.Computer, "Download to ${d.name}", why, enabled = usable) {
-                    onComputer(r) { dest ->
+                // One row per destination it names (ADR 0018), its downloads folder first.
+                val dests = if (usable && r.destinations.size > 1) r.destinations else listOf(null)
+                for ((i, label) in dests.withIndex()) {
+                    val dest = if (i == 0) null else label
+                    Option(
+                        Icons.Default.Computer,
+                        if (label == null) "Download to ${d.name}" else "Download to ${d.name}: $label",
+                        if (usable && label != null) (if (i == 0) "Its downloads folder" else "Its $label folder") else why,
+                        enabled = usable,
+                    ) {
                         onClose()
                         val into = dest?.let { " into $it" }.orEmpty()
                         when (target) {
@@ -179,7 +194,8 @@ fun ActionSheet(model: AppModel, target: Target, onClose: () -> Unit) {
                     }
                 }
                 if (target is Target.Folder) {
-                    Option(Icons.Default.Sync, "Keep in sync on ${d.name}", why, enabled = usable) {
+                    val syncWhy = if (usable && r.destinations.size > 1) "Choose: ${r.destinations.joinToString(", ")}" else why
+                    Option(Icons.Default.Sync, "Keep in sync on ${d.name}", syncWhy, enabled = usable) {
                         following = d.device_id
                     }
                 }

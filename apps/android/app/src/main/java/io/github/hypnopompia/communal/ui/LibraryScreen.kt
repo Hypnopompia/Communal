@@ -94,7 +94,9 @@ fun BrowseScreen(model: AppModel, place: Place, go: (Place?) -> Unit) {
 
     LaunchedEffect(place, tick) {
         runCatching { model.api.browse(place.hub, place.device, place.path) }
-            .onSuccess { l ->
+            .onSuccess { raw ->
+                // Like the desktop: dotfiles (the synced folder's .communal-sync marker) stay out.
+                val l = raw.copy(files = raw.files.filter { !it.name.startsWith(".") })
                 listing = l
                 error = null
                 val hashes = l.files.filter { it.thumb && it.hash != null }.map { it.hash!! }

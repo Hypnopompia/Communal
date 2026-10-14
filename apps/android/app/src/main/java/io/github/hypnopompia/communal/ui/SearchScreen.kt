@@ -63,7 +63,9 @@ fun SearchScreen(model: AppModel) {
         error = null
         val r = runCatching { model.api.search(query.trim(), kind) }
         busy = false
-        r.onSuccess { result ->
+        r.onSuccess { found ->
+            // Like Browse: dotfiles (the synced folder's .communal-sync marker) stay out.
+            val result = found.copy(hits = found.hits.filter { !it.name.startsWith(".") })
             hits = result.hits
             // Thumbnails come from each file's online source, one batch per device.
             result.hits.filter { it.thumb }
