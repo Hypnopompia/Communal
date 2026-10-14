@@ -687,6 +687,22 @@ export class IndexStore {
     return rows.map(parseTransfer);
   }
 
+  /**
+   * Forgets finished downloads (done, failed, cancelled) and returns them. A transfer a
+   * subscription is still waiting on stays: it settles that file after a restart.
+   */
+  clearFinishedTransfers(): TransferRow[] {
+    const where = `state IN ('done', 'failed', 'cancelled') AND id NOT IN (
+      SELECT transfer_id FROM sub_files WHERE transfer_id IS NOT NULL)`;
+    return this.raw.transaction(() => {
+      const rows = this.raw
+        .prepare(`SELECT * FROM transfers WHERE ${where}`)
+        .all() as RawTransfer[];
+      this.raw.prepare(`DELETE FROM transfers WHERE ${where}`).run();
+      return rows.map(parseTransfer);
+    })();
+  }
+
   // ── subscriptions (M7) ────────────────────────────────────────────────────
 
   addSubscription(
@@ -868,6 +884,11 @@ export class IndexStore {
         prefix: filter.pathPrefix,
         limit: filter.limit ?? 100,
       }) as UploadLogRow[];
+  }
+
+  /** Empties the upload log (Activity › Clear). Returns how many entries went. */
+  clearUploadLog(): number {
+    return this.raw.prepare('DELETE FROM upload_log').run().changes;
   }
 
   /** Configurable retention (HANDOFF §7). */

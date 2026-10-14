@@ -1096,8 +1096,14 @@ program
 program
   .command('transfers')
   .description('downloads: queued, in progress, waiting for a source, done, failed')
-  .action(() =>
+  .option('--clear', 'remove finished downloads from the list (the files stay)')
+  .action((opts: { clear?: boolean }) =>
     viaDaemon(async (c) => {
+      if (opts.clear) {
+        const { cleared } = await c.post<{ cleared: number }>('/v1/downloads/clear', {});
+        console.log(`cleared ${cleared} finished download${cleared === 1 ? '' : 's'}`);
+        return;
+      }
       const { downloads } = await c.get<{ downloads: Download[] }>('/v1/downloads');
       if (downloads.length === 0) console.log('no downloads');
       for (const d of downloads) {
@@ -1189,8 +1195,14 @@ program
   .option('--user <user_id>', 'only this person')
   .option('--path <prefix>', 'only files under this share path, e.g. Photos/')
   .option('--limit <n>', 'entries', '50')
-  .action((opts: { user?: string; path?: string; limit: string }) =>
+  .option('--clear', 'forget the whole log (it only ever lived on this device)')
+  .action((opts: { user?: string; path?: string; limit: string; clear?: boolean }) =>
     viaDaemon(async (c) => {
+      if (opts.clear) {
+        const { cleared } = await c.post<{ cleared: number }>('/v1/uploads/log/clear', {});
+        console.log(`cleared ${cleared} log entr${cleared === 1 ? 'y' : 'ies'}`);
+        return;
+      }
       const p = new URLSearchParams({ limit: opts.limit });
       if (opts.user) p.set('user', opts.user);
       if (opts.path) p.set('path', opts.path);

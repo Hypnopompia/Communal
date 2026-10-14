@@ -438,6 +438,12 @@ export class LocalApi {
       });
       return { folder, ...(await this.reshared(folder.dest)) };
     });
+    // Finished downloads leave the list; the files stay.
+    route('POST', '/v1/downloads/clear', async () => {
+      const cleared = await this.core.downloads.clearFinished();
+      this.notify('transfers');
+      return { cleared };
+    });
     route('DELETE', '/v1/downloads/:id', async (req, url) => {
       if (!this.core.downloads.cancel(param(req, url, 1)))
         throw new CoreError('not_found', 'no such download');
@@ -504,6 +510,11 @@ export class LocalApi {
       return {
         log: this.core.store.uploadLog({ user: p.user, pathPrefix: p.path, limit: p.limit }),
       };
+    });
+    route('POST', '/v1/uploads/log/clear', async () => {
+      const cleared = this.core.store.clearUploadLog();
+      this.notify('transfers');
+      return { cleared };
     });
     route('GET', '/v1/network', async () => this.core.network.summary());
     route('POST', '/v1/network/check', async () => {

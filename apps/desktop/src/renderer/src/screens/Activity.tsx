@@ -3,11 +3,11 @@
  * computer; the hub doesn't have it.
  */
 import { useState } from 'react';
-import { qs, type UploadLogRow } from '../api';
+import { api, qs, type UploadLogRow } from '../api';
 import { ago, size } from '../format';
 import { useNames } from '../hubs';
 import { useApi } from '../query';
-import { Empty, ErrorNote } from '../ui/kit';
+import { Dialog, Empty, ErrorNote, useAction } from '../ui/kit';
 import { VerifiedMark } from '../ui/VerifiedMark';
 
 const STATUS: Record<UploadLogRow['status'], string> = {
@@ -25,6 +25,11 @@ export function Activity() {
     { refetchInterval: 15_000 },
   );
   const names = useNames();
+  const [confirm, setConfirm] = useState(false);
+  const clear = useAction(() => api.post('/v1/uploads/log/clear'), {
+    topics: ['transfers'],
+    onDone: () => setConfirm(false),
+  });
   const rows = (log.data?.log ?? []).filter((r) => thumbs || r.kind === 'file');
   return (
     <div className="page">
@@ -45,9 +50,31 @@ export function Activity() {
             />
             <span>Include previews</span>
           </label>
+          {(log.data?.log.length ?? 0) > 0 && (
+            <button className="btn quiet" onClick={() => setConfirm(true)}>
+              Clear…
+            </button>
+          )}
         </div>
       </div>
       <ErrorNote error={log.error} />
+      {confirm && (
+        <Dialog title="Clear the activity list?" onClose={() => setConfirm(false)}>
+          <p className="muted">
+            This forgets who got which files from this computer, previews included. It can’t be
+            undone. Nothing changes for anyone else: the list only ever lived here.
+          </p>
+          <ErrorNote error={clear.error} />
+          <div className="dialog-actions">
+            <button className="btn" onClick={() => setConfirm(false)}>
+              Keep it
+            </button>
+            <button className="btn primary" disabled={clear.busy} onClick={() => void clear.run()}>
+              Clear
+            </button>
+          </div>
+        </Dialog>
+      )}
       {log.data && rows.length === 0 && (
         <Empty title="Nobody has downloaded anything yet">
           When someone gets a file you share, it’s listed here.

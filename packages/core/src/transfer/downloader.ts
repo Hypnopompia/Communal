@@ -195,6 +195,21 @@ export class Downloads extends EventEmitter<DownloadEvents> {
     return this.o.store.transfers();
   }
 
+  /**
+   * Removes finished downloads from the list. Downloaded files stay where they are; a failed
+   * download's partial file goes, since nothing will resume it. Returns how many went.
+   */
+  async clearFinished(): Promise<number> {
+    const gone = this.o.store.clearFinishedTransfers();
+    for (const t of gone) {
+      if (t.state !== 'failed') continue;
+      const part = join(t.dest_dir, `${t.name}.part`);
+      await rm(part, { force: true }).catch(() => undefined);
+      await rm(`${part}map`, { force: true }).catch(() => undefined);
+    }
+    return gone.length;
+  }
+
   /** The sources a running download is fetching from right now, with their speeds. */
   liveSources(id: string): LiveSource[] {
     const now = Date.now();

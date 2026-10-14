@@ -72,6 +72,12 @@ These are fine for now. Fix them if they start to bite.
 - **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
 - **From HANDOFF §15:** hubs caching thumbnails of hub-wide files, and mobile clients.
 
+## Clear buttons on Transfers and Activity (2026-10-14)
+
+- **Transfers › Finished › Clear** removes finished downloads (done, failed, cancelled) from the list. The files stay, and a failed download's `.part`/`.partmap` is deleted. Downloads a subscription is still waiting on are kept, since they settle that file after a restart.
+- **Activity › Clear…** empties the upload log, after a confirmation (it can't be undone, and it only ever lived on this computer).
+- API: `POST /v1/downloads/clear` and `POST /v1/uploads/log/clear`. CLI: `communal transfers --clear` and `communal log --clear`. Tests in `packages/core/src/index/clear.test.ts`.
+
 ## Abuse limits and a security audit (2026-10-14)
 
 - **ADR 0022.** The hub now limits:

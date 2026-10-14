@@ -21,6 +21,8 @@ export function Transfers() {
   const cancel = useAction((id: string) => api.del(`/v1/downloads/${id}`), {
     topics: ['transfers'],
   });
+  // Only the list: downloaded files stay where they are.
+  const clear = useAction(() => api.post('/v1/downloads/clear'), { topics: ['transfers'] });
   const all = list.data?.downloads ?? [];
   const running = all.filter((d) => ACTIVE.includes(d.state));
   const finished = all
@@ -34,7 +36,7 @@ export function Transfers() {
           <p className="lede">Downloads come straight from the computers that have the file.</p>
         </div>
       </div>
-      <ErrorNote error={list.error ?? cancel.error} />
+      <ErrorNote error={list.error ?? cancel.error ?? clear.error} />
       {list.data && all.length === 0 && (
         <Empty title="No downloads yet">
           Find something in Search or the Library and choose Download.
@@ -49,7 +51,17 @@ export function Transfers() {
       )}
       {finished.length > 0 && (
         <section className="section">
-          <h2>Finished</h2>
+          <div className="section-head" style={{ alignItems: 'center' }}>
+            <h2 style={{ flex: 1 }}>Finished</h2>
+            <button
+              className="btn small quiet"
+              disabled={clear.busy}
+              title="Removes finished downloads from this list. The files stay where they are."
+              onClick={() => void clear.run()}
+            >
+              Clear
+            </button>
+          </div>
           <div className="panel rows">
             {finished.slice(0, 100).map((t) => (
               <TransferRow key={t.id} t={t} />
