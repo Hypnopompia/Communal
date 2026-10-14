@@ -437,3 +437,10 @@ export interface RemoteTransfer {
   requested_by: string | null;
   updated_at: number;
 }
+
+/** `GET /v1/destinations`: a named place to save (ADR 0018). "Downloads" is built in. */
+export interface Destination {
+  name: string;
+  path: string;
+  builtin: boolean;
+}

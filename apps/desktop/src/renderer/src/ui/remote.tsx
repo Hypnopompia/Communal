@@ -18,7 +18,9 @@ export async function remote<T>(device: string, request: object): Promise<T> {
  * Your other devices that take requests now: online, and with remote control switched on.
  * Phones are left out: they only run while open, so they can't be relied on to download.
  */
-export function useRemoteTargets(): RemoteDevice[] {
+export type RemoteTarget = RemoteDevice & { destinations: string[] };
+
+export function useRemoteTargets(): RemoteTarget[] {
   const q = useQuery({
     // Tagged like useApi's keys, so device and presence hints refresh it.
     queryKey: ['api', ['devices', 'presence'], 'remote-targets'],
@@ -27,13 +29,15 @@ export function useRemoteTargets(): RemoteDevice[] {
       const candidates = devices.filter((d) => d.online && d.platform !== 'android');
       const answers = await Promise.all(
         candidates.map((d) =>
-          remote<{ allowed: boolean }>(d.device_id, { op: 'hello' }).then(
-            (r) => r.allowed,
-            () => false,
-          ),
+          remote<{ allowed: boolean; destinations?: string[] }>(d.device_id, {
+            op: 'hello',
+          }).catch(() => null),
         ),
       );
-      return candidates.filter((_, i) => answers[i]);
+      return candidates.flatMap((d, i) => {
+        const a = answers[i];
+        return a?.allowed ? [{ ...d, destinations: a.destinations ?? ['Downloads'] }] : [];
+      });
     },
     staleTime: 30_000,
     retry: false,
@@ -44,11 +48,21 @@ export function useRemoteTargets(): RemoteDevice[] {
 /** Has another device download a file into its downloads folder. */
 export function useRemoteDownload() {
   return useAction(
-    async (device: RemoteDevice, hash: string, name: string) => {
-      await remote(device.device_id, { op: 'download', hash, name });
-      return { device, name };
+    async (device: RemoteDevice, hash: string, name: string, destination?: string) => {
+      await remote(device.device_id, {
+        op: 'download',
+        hash,
+        name,
+        ...(destination ? { destination } : {}),
+      });
+      return { device, name, destination };
     },
-    { done: (r) => `${r.device.name} is downloading ${r.name}`, toastErrors: true },
+    {
+      done: (r) =>
+        `${r.device.name} is downloading ${r.name}` +
+        (r.destination ? ` into ${r.destination}` : ''),
+      toastErrors: true,
+    },
   );
 }
 
@@ -145,5 +159,36 @@ export function RemoteTransfers({ device }: { device: RemoteDevice }) {
         );
       })}
     </div>
+  );
+}
+
+/** Which of the other device's destinations (names only; its first is its downloads folder). */
+export function RemoteDestinationField({
+  target,
+  value,
+  onChange,
+}: {
+  target: RemoteTarget;
+  value: string | null;
+  onChange: (destination: string | null) => void;
+}) {
+  if (target.destinations.length <= 1)
+    return <p className="muted small">Into {target.name}’s downloads folder.</p>;
+  return (
+    <label className="field">
+      <span>Destination on {target.name}</span>
+      <select
+        className="input"
+        style={{ width: 'auto' }}
+        value={value ?? ''}
+        onChange={(e) => onChange(e.target.value || null)}
+      >
+        {target.destinations.map((d, i) => (
+          <option key={d} value={i === 0 ? '' : d}>
+            {d}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }

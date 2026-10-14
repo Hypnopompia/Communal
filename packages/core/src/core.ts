@@ -39,7 +39,7 @@ import {
   type UploadLimits,
   type UploaderTestHooks,
 } from './transfer/uploader.js';
-import { Downloads, type DownloadOptions } from './transfer/downloader.js';
+import { Downloads, safeName, type DownloadOptions } from './transfer/downloader.js';
 import { Streams } from './transfer/stream.js';
 import { downloadFolder } from './transfer/folder.js';
 import { Subscriptions, type TrashFn } from './subscriptions.js';
@@ -116,7 +116,19 @@ export interface SavedSettings {
   downloads_dir?: string | null;
   /** Other devices of this account may start downloads here (ADR 0023). Off unless set. */
   remote_control?: boolean;
+  /** Named places to save (ADR 0018): what other devices can ask for, never a raw path. */
+  destinations?: { name: string; path: string }[];
 }
+
+/** A named place to save into. "Downloads" is built in and follows the downloads folder. */
+export interface Destination {
+  name: string;
+  path: string;
+  builtin: boolean;
+}
+
+export const DOWNLOADS_DESTINATION = 'Downloads';
+const DESTINATION_NAME = /^[^/\\\0\p{Cc}]{1,40}$/u;
 
 /** A link request waiting for this device's approval (ADR 0014). */
 export interface PendingLink {
@@ -828,7 +840,7 @@ export class CommunalCore {
   /** Starts downloading a file by hash. Without a name, the first source's file name is used. */
   async download(
     hash: string,
-    opts: { name?: string; destDir?: string; requestedBy?: string } = {},
+    opts: { name?: string; destDir?: string; destination?: string; requestedBy?: string } = {},
   ) {
     let name = opts.name;
     if (!name) {
@@ -841,7 +853,11 @@ export class CommunalCore {
       }
     }
     if (!name) throw new CoreError('not_found', 'no visible source has that file');
-    const destDir = opts.destDir ? await usableFolder(opts.destDir) : undefined;
+    const destDir = opts.destination
+      ? await usableFolder(this.destinationPath(opts.destination))
+      : opts.destDir
+        ? await usableFolder(opts.destDir)
+        : undefined;
     return this.downloads.add({
       hash,
       name,
@@ -858,17 +874,78 @@ export class CommunalCore {
     hub: string,
     device: string,
     path: string,
-    opts: { destDir?: string; requestedBy?: string } = {},
+    opts: { destDir?: string; destination?: string; requestedBy?: string } = {},
   ) {
     if (device === this.deviceId)
       throw new CoreError('bad_request', 'those files are already on this computer');
+    const dir = opts.destination ? this.destinationPath(opts.destination) : opts.destDir;
     return downloadFolder(this, {
       hub,
       device,
       path,
-      destDir: opts.destDir ? await usableFolder(opts.destDir) : this.downloadsDir,
+      destDir: dir ? await usableFolder(dir) : this.downloadsDir,
       ...(opts.requestedBy ? { requestedBy: opts.requestedBy } : {}),
     });
+  }
+
+  // ── destinations (ADR 0018) ───────────────────────────────────────────────
+
+  /** Named places to save into: "Downloads" first, then the person's own. */
+  destinations(): Destination[] {
+    return [
+      { name: DOWNLOADS_DESTINATION, path: this.downloadsDir, builtin: true },
+      ...(this.loadSettings().destinations ?? []).map((d) => ({ ...d, builtin: false })),
+    ];
+  }
+
+  /** The folder a destination name stands for (any case), or `not_found`. */
+  destinationPath(name: string): string {
+    const d = this.destinations().find((x) => x.name.toLowerCase() === name.toLowerCase());
+    if (!d) throw new CoreError('not_found', `no destination called ${name}`);
+    return d.path;
+  }
+
+  /**
+   * Adds a destination, or changes one (`was` is its current name). The folder must be an
+   * absolute path; it's created if missing.
+   */
+  async saveDestination(name: string, path: string, was?: string) {
+    const n = name.trim();
+    if (!DESTINATION_NAME.test(n))
+      throw new CoreError('bad_request', 'give it a name of 1 to 40 characters, without slashes');
+    const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+    if (same(n, DOWNLOADS_DESTINATION) || (was && same(was, DOWNLOADS_DESTINATION)))
+      throw new CoreError(
+        'bad_request',
+        `${DOWNLOADS_DESTINATION} is the downloads folder: change it there`,
+      );
+    const dir = await usableFolder(path);
+    const saved = this.loadSettings();
+    const list = saved.destinations ?? [];
+    if (was && !list.some((d) => same(d.name, was)))
+      throw new CoreError('not_found', `no destination called ${was}`);
+    if (list.some((d) => same(d.name, n) && !(was && same(d.name, was))))
+      throw new CoreError('conflict', `there's already a destination called ${n}`);
+    const next = was
+      ? list.map((d) => (same(d.name, was) ? { name: n, path: dir } : d))
+      : [...list, { name: n, path: dir }];
+    await this.updateSettings({ destinations: next });
+    return this.destinations();
+  }
+
+  async removeDestination(name: string) {
+    const list = this.loadSettings().destinations ?? [];
+    const next = list.filter((d) => d.name.toLowerCase() !== name.toLowerCase());
+    if (next.length === list.length)
+      throw new CoreError('not_found', `no destination called ${name}`);
+    await this.updateSettings({ destinations: next });
+    return this.destinations();
+  }
+
+  /** Where a followed folder goes in a destination: `<destination>/<folder name>`. */
+  destinationFolder(name: string, path: string): string {
+    const leaf = path.replace(/\/$/, '').split('/').pop() ?? path;
+    return join(this.destinationPath(name), safeName(leaf));
   }
 
   // ── remote control (ADR 0023) ─────────────────────────────────────────────
@@ -885,16 +962,22 @@ export class CommunalCore {
     };
     switch (req.op) {
       case 'hello':
-        return { allowed: this.remoteAllowed };
+        // Names only: the folders they stand for never leave this device.
+        return {
+          allowed: this.remoteAllowed,
+          destinations: this.destinations().map((d) => d.name),
+        };
       case 'download': {
         const t = await this.download(req.hash, {
           ...(req.name ? { name: req.name } : {}),
+          ...(req.destination ? { destination: req.destination } : {}),
           requestedBy: from,
         });
         return { id: t.id, name: t.name };
       }
       case 'download_folder': {
         const f = await this.downloadFolder(hubId(req.hub), req.device_id, req.path, {
+          ...(req.destination ? { destination: req.destination } : {}),
           requestedBy: from,
         });
         const { dest, ...counts } = f;
@@ -907,6 +990,7 @@ export class CommunalCore {
           path: req.path,
           mirrorDeletes: req.mirror_deletes,
           recursive: true,
+          ...(req.destination ? { dest: this.destinationFolder(req.destination, req.path) } : {}),
         });
         return { id: s.id };
       }
@@ -1060,6 +1144,7 @@ export class CommunalCore {
       saved.downloads_dir = dir;
       this.chosenDownloadsDir = dir ?? undefined;
     }
+    if (change.destinations !== undefined) saved.destinations = change.destinations;
     if (change.remote_control !== undefined) {
       saved.remote_control = change.remote_control;
       this.remoteAllowed = change.remote_control;

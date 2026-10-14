@@ -331,9 +331,10 @@ function Browse({
                         ? {}
                         : {
                             onDownload: () => void download.run(f.hash!, f.name),
-                            onSaveTo: () => void download.run(f.hash!, f.name, true),
+                            onSaveTo: (where?: string) =>
+                              void download.run(f.hash!, f.name, where ?? true),
                           })}
-                      onRemote={(d) => void remoteDownload.run(d, f.hash!, f.name)}
+                      onRemote={(d, where) => void remoteDownload.run(d, f.hash!, f.name, where)}
                     />
                   ) : (
                     <span className="faint small">Still being prepared</span>

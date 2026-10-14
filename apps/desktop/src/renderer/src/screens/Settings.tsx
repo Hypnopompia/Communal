@@ -7,6 +7,7 @@ import type { AgentsState } from '../../../shared/bridge';
 import {
   api,
   type Device,
+  type Destination,
   type DownloadSettings,
   type LinkRequest,
   type NetworkSummary,
@@ -861,8 +862,126 @@ function Downloads() {
           </div>
         )}
       </div>
+      <Destinations />
       <RemoteControl />
     </>
+  );
+}
+
+/**
+ * Named destinations (ADR 0018): "Save to Movies" here, and the only places your other devices
+ * can ask this computer to save into. Their folders never leave this computer.
+ */
+function Destinations() {
+  const q = useApi<{ destinations: Destination[] }>([], '/v1/destinations');
+  const [adding, setAdding] = useState<{ path: string; name: string } | null>(null);
+  const save = useAction(
+    (name: string, path: string, was?: string) =>
+      was
+        ? api.put(`/v1/destinations/${encodeURIComponent(was)}`, { name, path })
+        : api.post('/v1/destinations', { name, path }),
+    {
+      onDone: () => {
+        setAdding(null);
+        void q.refetch();
+      },
+    },
+  );
+  const remove = useAction(
+    (name: string) => api.del(`/v1/destinations/${encodeURIComponent(name)}`),
+    { onDone: () => void q.refetch() },
+  );
+  const named = (q.data?.destinations ?? []).filter((d) => !d.builtin);
+  const add = async () => {
+    const path = await window.communal.pickFolder('Choose the destination’s folder');
+    if (path) setAdding({ path, name: path.split(/[\\/]/).filter(Boolean).pop() ?? '' });
+  };
+  const move = async (d: Destination) => {
+    const path = await window.communal.pickFolder(`Folder for ${d.name}`, d.path);
+    if (path) void save.run(d.name, path, d.name);
+  };
+  return (
+    <div className="panel panel-pad section" style={{ maxWidth: 560 }}>
+      <h2>Destinations</h2>
+      <p className="muted">
+        Named folders, like Movies or Music. They show up under the arrow next to Download, and
+        they’re the only places your other devices can ask this computer to save into: they see the
+        names, never the folders.
+      </p>
+      {named.map((d) => (
+        <div key={d.name} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <b style={{ minWidth: 90 }}>{d.name}</b>
+          <span
+            className="muted"
+            style={{
+              flex: 1,
+              minWidth: 0,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+            title={d.path}
+          >
+            {d.path}
+          </span>
+          <button className="btn small" disabled={save.busy} onClick={() => void move(d)}>
+            Change…
+          </button>
+          <button
+            className="btn small quiet"
+            disabled={remove.busy}
+            onClick={() => void remove.run(d.name)}
+          >
+            Remove
+          </button>
+        </div>
+      ))}
+      {adding ? (
+        <form
+          style={{ display: 'flex', alignItems: 'center', gap: 10 }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save.run(adding.name, adding.path);
+          }}
+        >
+          <input
+            className="input"
+            style={{ width: 140 }}
+            autoFocus
+            maxLength={40}
+            value={adding.name}
+            onChange={(e) => setAdding({ ...adding, name: e.target.value })}
+            aria-label="Name"
+          />
+          <span
+            className="muted"
+            style={{
+              flex: 1,
+              minWidth: 0,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+            title={adding.path}
+          >
+            {adding.path}
+          </span>
+          <button className="btn small primary" disabled={save.busy || !adding.name.trim()}>
+            Add
+          </button>
+          <button type="button" className="btn small quiet" onClick={() => setAdding(null)}>
+            Cancel
+          </button>
+        </form>
+      ) : (
+        <div>
+          <button className="btn" onClick={() => void add()}>
+            Add a destination…
+          </button>
+        </div>
+      )}
+      <ErrorNote error={q.error ?? save.error ?? remove.error} />
+    </div>
   );
 }
 

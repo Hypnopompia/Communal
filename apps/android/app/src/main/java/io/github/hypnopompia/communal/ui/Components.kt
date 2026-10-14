@@ -125,6 +125,12 @@ sealed interface Target {
 fun ActionSheet(model: AppModel, target: Target, onClose: () -> Unit) {
     val remotes by model.remotes.collectAsStateWithLifecycle()
     var following by remember { mutableStateOf<String?>(null) } // "phone" or a device id
+    // A computer action waiting for the person to pick one of its destinations (ADR 0018).
+    var choosing by remember { mutableStateOf<Pair<Remote, (String?) -> Unit>?>(null) }
+    /** Runs `act` on that computer, asking which destination first when it has several. */
+    fun onComputer(r: Remote, act: (String?) -> Unit) {
+        if (r.destinations.size > 1) choosing = r to act else act(null)
+    }
     ModalBottomSheet(onDismissRequest = onClose) {
         Column(Modifier.padding(bottom = 24.dp)) {
             Text(
@@ -159,13 +165,16 @@ fun ActionSheet(model: AppModel, target: Target, onClose: () -> Unit) {
                 }
                 val usable = d.online && r.allowed == true
                 Option(Icons.Default.Computer, "Download to ${d.name}", why, enabled = usable) {
-                    onClose()
-                    when (target) {
-                        is Target.File -> model.act("${d.name} is downloading ${target.name}") {
-                            model.api.remoteDownload(d.device_id, target.hash, target.name)
-                        }
-                        is Target.Folder -> model.act("${d.name} is downloading ${target.title}") {
-                            model.api.remoteDownloadFolder(d.device_id, target.hubUrl, target.device, target.path)
+                    onComputer(r) { dest ->
+                        onClose()
+                        val into = dest?.let { " into $it" }.orEmpty()
+                        when (target) {
+                            is Target.File -> model.act("${d.name} is downloading ${target.name}$into") {
+                                model.api.remoteDownload(d.device_id, target.hash, target.name, dest)
+                            }
+                            is Target.Folder -> model.act("${d.name} is downloading ${target.title}$into") {
+                                model.api.remoteDownloadFolder(d.device_id, target.hubUrl, target.device, target.path, dest)
+                            }
                         }
                     }
                 }
@@ -184,17 +193,44 @@ fun ActionSheet(model: AppModel, target: Target, onClose: () -> Unit) {
             onCancel = { following = null },
         ) { mirror ->
             following = null
-            onClose()
             if (f == "phone") {
+                onClose()
                 model.act("Keeping ${target.title} in sync") {
                     model.api.subscribe(target.hubId, target.device, target.path, mirror)
                 }
             } else {
-                model.act("Keeping ${target.title} in sync on the computer") {
-                    model.api.remoteSubscribe(f, target.hubUrl, target.device, target.path, mirror)
+                val r = remotes.firstOrNull { it.device.device_id == f }
+                val go: (String?) -> Unit = { dest ->
+                    onClose()
+                    model.act("Keeping ${target.title} in sync on the computer" + (dest?.let { " in $it" } ?: "")) {
+                        model.api.remoteSubscribe(f, target.hubUrl, target.device, target.path, mirror, dest)
+                    }
                 }
+                if (r != null) onComputer(r, go) else go(null)
             }
         }
+    }
+    choosing?.let { (r, act) ->
+        AlertDialog(
+            onDismissRequest = { choosing = null },
+            title = { Text("Where on ${r.device.name}?") },
+            text = {
+                Column {
+                    r.destinations.forEachIndexed { i, dest ->
+                        ListItem(
+                            headlineContent = { Text(dest) },
+                            supportingContent = if (i == 0) ({ Text("Its downloads folder") }) else null,
+                            modifier = Modifier.clickableRow {
+                                choosing = null
+                                act(if (i == 0) null else dest)
+                            },
+                        )
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton({ choosing = null }) { Text("Cancel") } },
+        )
     }
 }
 

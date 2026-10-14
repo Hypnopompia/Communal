@@ -18,10 +18,10 @@ import {
   REMOTE_MAX_BODY,
   REMOTE_SKEW_S,
   RemoteBody,
+  RemoteRequest,
   type HubBody,
   type RemoteErrorCode,
   type RemoteReply,
-  type RemoteRequest,
 } from '@communal/protocol';
 import type { AccountIdentity, Revocations } from './account.js';
 import { CoreError } from './errors.js';
@@ -129,6 +129,9 @@ export class RemoteControl {
 
   /** Sends a request to another device of this account and waits for its answer. */
   async request(target: string, req: RemoteRequest): Promise<unknown> {
+    // The receiver drops anything malformed without a word: refuse it here instead.
+    const checked = RemoteRequest.safeParse(req);
+    if (!checked.success) throw new CoreError('bad_request', 'that request is malformed');
     if (!this.known.has(target)) await this.devices();
     const k = this.known.get(target);
     if (!k) throw new CoreError('not_found', 'not one of your devices');
@@ -214,7 +217,9 @@ export class RemoteControl {
   private async answer(body: RemoteBody): Promise<RemoteReply> {
     const req = body.request!;
     const allowed = this.o.allowed();
-    if (req.op === 'hello') return { ok: true, result: { allowed } };
+    // Hello is answered even while remote control is off, so the asker can say why.
+    if (req.op === 'hello')
+      return { ok: true, result: await this.o.run(req, { device_id: body.from, name: '' }) };
     if (!allowed)
       return { ok: false, code: 'not_allowed', message: 'remote control is off on that device' };
     // The asking device's name, for the transfer list: refreshed when it's new to us.

@@ -20,16 +20,27 @@ export const REMOTE_SKEW_S = 120;
 
 /** Hubs are named by URL: each device numbers its own hubs. */
 const HubUrl = z.string().min(1).max(512);
+/**
+ * Where on the receiving device: the name of one of its destinations (ADR 0018), never a path.
+ * Left out: its downloads folder.
+ */
+const DestinationName = z.string().min(1).max(40).optional();
 
 export const RemoteRequest = z.discriminatedUnion('op', [
-  /** Is remote control on, and what is this device called? */
+  /** Is remote control on here, and which destinations (names) can a request ask for? */
   z.object({ op: z.literal('hello') }),
-  z.object({ op: z.literal('download'), hash: Hash, name: z.string().min(1).max(255).optional() }),
+  z.object({
+    op: z.literal('download'),
+    hash: Hash,
+    name: z.string().min(1).max(255).optional(),
+    destination: DestinationName,
+  }),
   z.object({
     op: z.literal('download_folder'),
     hub: HubUrl,
     device_id: DeviceId,
     path: SharePath,
+    destination: DestinationName,
   }),
   z.object({
     op: z.literal('subscribe'),
@@ -37,6 +48,7 @@ export const RemoteRequest = z.discriminatedUnion('op', [
     device_id: DeviceId,
     path: SharePath,
     mirror_deletes: z.boolean(),
+    destination: DestinationName,
   }),
   z.object({ op: z.literal('transfers') }),
   z.object({ op: z.literal('cancel'), id: z.string().min(1).max(64) }),

@@ -19,7 +19,7 @@ import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.launch
 
 /** A computer this phone can send requests to, and whether it takes them (its setting). */
-data class Remote(val device: RemoteDevice, val allowed: Boolean?)
+data class Remote(val device: RemoteDevice, val allowed: Boolean?, val destinations: List<String> = emptyList())
 
 /**
  * The app's shared state, refreshed when the core says something changed (`/v1/events`) rather
@@ -88,10 +88,12 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         val computers = devices.filter { it.platform != "android" }
         phones.value = devices.filter { it.platform == "android" }.map { it.device_id }.toSet()
         val known = remotes.value.associateBy { it.device.device_id }
-        remotes.value = computers.map { Remote(it, known[it.device_id]?.allowed) }
+        remotes.value = computers.map { Remote(it, known[it.device_id]?.allowed, known[it.device_id]?.destinations.orEmpty()) }
         for (d in computers.filter { it.online }) {
-            val allowed = runCatching { api.remoteAllowed(d.device_id) }.getOrNull()
-            remotes.value = remotes.value.map { if (it.device.device_id == d.device_id) it.copy(allowed = allowed) else it }
+            val hello = runCatching { api.remoteHello(d.device_id) }.getOrNull()
+            remotes.value = remotes.value.map {
+                if (it.device.device_id == d.device_id) it.copy(allowed = hello?.allowed, destinations = hello?.destinations.orEmpty()) else it
+            }
         }
     }
 

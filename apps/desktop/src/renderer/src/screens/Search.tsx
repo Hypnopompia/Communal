@@ -292,8 +292,8 @@ function HitRow({ hit }: { hit: Hit }) {
         <DownloadButton
           small
           onDownload={() => void download.run(hit.hash, hit.name)}
-          onSaveTo={() => void download.run(hit.hash, hit.name, true)}
-          onRemote={(d) => void remoteDownload.run(d, hit.hash, hit.name)}
+          onSaveTo={(where) => void download.run(hit.hash, hit.name, where ?? true)}
+          onRemote={(d, where) => void remoteDownload.run(d, hit.hash, hit.name, where)}
         />
       </div>
       {preview && best && (

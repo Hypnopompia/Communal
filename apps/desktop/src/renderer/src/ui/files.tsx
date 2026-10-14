@@ -10,9 +10,10 @@ import {
   type Kind,
   type Meta,
   type RemoteDevice,
+  type Destination,
 } from '../api';
 import { useHubs } from '../hubs';
-import { remote, useRemoteTargets, WhereField } from './remote';
+import { remote, RemoteDestinationField, useRemoteTargets, WhereField } from './remote';
 import { baseName, date, duration, plural, size } from '../format';
 import { useApi } from '../query';
 import { Dialog, ErrorNote, useAction, useConfirm } from './kit';
@@ -196,13 +197,16 @@ export function DownloadButton({
   primary,
 }: {
   onDownload?: () => void;
-  onSaveTo?: () => void;
-  onRemote?: (device: RemoteDevice) => void;
+  /** With a destination's name, into it; without, into a folder the person picks. */
+  onSaveTo?: (destination?: string) => void;
+  onRemote?: (device: RemoteDevice, destination?: string) => void;
   small?: boolean;
   primary?: boolean;
 }) {
   const targets = useRemoteTargets();
   const remoteTargets = onRemote ? targets : [];
+  const mine = useApi<{ destinations: Destination[] }>([], onSaveTo ? '/v1/destinations' : null);
+  const named = (mine.data?.destinations ?? []).filter((d) => !d.builtin);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -253,6 +257,21 @@ export function DownloadButton({
       </button>
       {open && (
         <div className="menu" role="menu">
+          {onSaveTo &&
+            onDownload &&
+            named.map((d) => (
+              <button
+                key={d.name}
+                role="menuitem"
+                title={d.path}
+                onClick={() => {
+                  setOpen(false);
+                  onSaveTo(d.name);
+                }}
+              >
+                Save to {d.name}
+              </button>
+            ))}
           {onSaveTo && onDownload && (
             <button
               role="menuitem"
@@ -264,19 +283,35 @@ export function DownloadButton({
               Save to…
             </button>
           )}
-          {remoteTargets.map((d) => (
-            <button
-              key={d.device_id}
-              role="menuitem"
-              title={`Into ${d.name}’s downloads folder`}
-              onClick={() => {
-                setOpen(false);
-                onRemote!(d);
-              }}
-            >
-              Download on {d.name}
-            </button>
-          ))}
+          {remoteTargets.flatMap((d) =>
+            // Its downloads folder, or one of its named destinations (names only: ADR 0018).
+            d.destinations.length <= 1
+              ? [
+                  <button
+                    key={d.device_id}
+                    role="menuitem"
+                    title={`Into ${d.name}’s downloads folder`}
+                    onClick={() => {
+                      setOpen(false);
+                      onRemote!(d);
+                    }}
+                  >
+                    Download on {d.name}
+                  </button>,
+                ]
+              : d.destinations.map((dest, i) => (
+                  <button
+                    key={`${d.device_id}:${dest}`}
+                    role="menuitem"
+                    onClick={() => {
+                      setOpen(false);
+                      onRemote!(d, i === 0 ? undefined : dest);
+                    }}
+                  >
+                    On {d.name}: {dest}
+                  </button>
+                )),
+          )}
         </div>
       )}
     </div>
@@ -290,8 +325,15 @@ export function DownloadButton({
 export function useDownload() {
   const confirm = useConfirm();
   return useAction(
-    async (hash: string, name: string, saveTo = false) => {
+    async (hash: string, name: string, saveTo: boolean | string = false) => {
       let dest: string | null = null;
+      // A named destination (ADR 0018): no picker.
+      if (typeof saveTo === 'string')
+        return api.post<{ download: { name: string } }>('/v1/downloads', {
+          hash,
+          name,
+          destination: saveTo,
+        });
       if (saveTo) {
         const current = await api.get<DownloadSettings>('/v1/settings/downloads').catch(() => null);
         dest = await window.communal.pickFolder(`Save “${name}” to`, current?.dir);
@@ -391,6 +433,8 @@ export function DownloadFolderDialog({
   const { hubs } = useHubs();
   const [on, setOn] = useState<string | null>(null);
   const there = targets.find((t) => t.device_id === on) ?? (remoteOnly ? targets[0] : undefined);
+  // On another device: one of its destinations, by name (ADR 0018); null is its downloads folder.
+  const [remoteDest, setRemoteDest] = useState<string | null>(null);
   const name = baseName(path);
   const parent = dest ?? settings.data?.dir;
   const reshare = useExposure(there ? null : parent, `${name}/`);
@@ -406,6 +450,7 @@ export function DownloadFolderDialog({
               hub: hubs.find((h) => h.id === hub)?.url,
               device_id: device,
               path,
+              ...(remoteDest ? { destination: remoteDest } : {}),
             }),
           }
         : api.post<{ folder: FolderDownload; where?: string }>('/v1/downloads/folder', {
@@ -437,29 +482,32 @@ export function DownloadFolderDialog({
         here={!remoteOnly}
       />
       {there ? (
-        <p className="muted small">Into {there.name}’s downloads folder.</p>
+        <RemoteDestinationField target={there} value={remoteDest} onChange={setRemoteDest} />
       ) : (
-        <div className="field">
-          <span>Save to</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span
-              className="muted"
-              style={{
-                flex: 1,
-                minWidth: 0,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-              title={parent ? `${parent}/${name}` : undefined}
-            >
-              {parent ? `${shortPath(parent)} › ${name}` : '…'}
-            </span>
-            <button className="btn small" onClick={() => void pick()}>
-              Change…
-            </button>
+        <>
+          <LocalDestinations current={dest} onPick={setDest} />
+          <div className="field">
+            <span>Save to</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span
+                className="muted"
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+                title={parent ? `${parent}/${name}` : undefined}
+              >
+                {parent ? `${shortPath(parent)} › ${name}` : '…'}
+              </span>
+              <button className="btn small" onClick={() => void pick()}>
+                Change…
+              </button>
+            </div>
           </div>
-        </div>
+        </>
       )}
       <ReshareNote exposure={reshare.data} />
       <ErrorNote error={run.error ?? settings.error} />
@@ -505,6 +553,8 @@ export function SubscribeDialog({
   const { hubs } = useHubs();
   const [on, setOn] = useState<string | null>(null);
   const there = targets.find((t) => t.device_id === on) ?? (remoteOnly ? targets[0] : undefined);
+  // On another device: one of its destinations, by name (ADR 0018); null is its downloads folder.
+  const [remoteDest, setRemoteDest] = useState<string | null>(null);
   // Without a choice, files go to <downloads folder>/<folder name> (ADR 0013, 0018).
   const reshare = useExposure(
     there ? null : (dest ?? settings.data?.dir),
@@ -519,6 +569,7 @@ export function SubscribeDialog({
             device_id: device,
             path,
             mirror_deletes: mirror,
+            ...(remoteDest ? { destination: remoteDest } : {}),
           })
         : api.post('/v1/subscriptions', {
             hub,
@@ -560,29 +611,32 @@ export function SubscribeDialog({
         here={!remoteOnly}
       />
       {there ? (
-        <p className="muted small">Into {there.name}’s downloads folder.</p>
+        <RemoteDestinationField target={there} value={remoteDest} onChange={setRemoteDest} />
       ) : (
-        <div className="field">
-          <span>Save to</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span
-              className="muted"
-              style={{
-                flex: 1,
-                minWidth: 0,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {dest ??
-                (settings.data ? `${shortPath(settings.data.dir)} › ${baseName(path)}` : '…')}
-            </span>
-            <button className="btn small" onClick={() => void pick()}>
-              Change…
-            </button>
+        <>
+          <LocalDestinations current={dest} onPick={setDest} />
+          <div className="field">
+            <span>Save to</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span
+                className="muted"
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {dest ??
+                  (settings.data ? `${shortPath(settings.data.dir)} › ${baseName(path)}` : '…')}
+              </span>
+              <button className="btn small" onClick={() => void pick()}>
+                Change…
+              </button>
+            </div>
           </div>
-        </div>
+        </>
       )}
       <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
         <legend style={{ fontWeight: 600, marginBottom: 8 }}>
@@ -620,5 +674,40 @@ export function SubscribeDialog({
         </button>
       </div>
     </Dialog>
+  );
+}
+
+/** This computer's named destinations, as shortcuts for "Save to" (ADR 0018). */
+function LocalDestinations({
+  current,
+  onPick,
+}: {
+  current: string | null;
+  onPick: (path: string | null) => void;
+}) {
+  const q = useApi<{ destinations: Destination[] }>([], '/v1/destinations');
+  const list = q.data?.destinations ?? [];
+  if (list.length <= 1) return null;
+  const chosen = list.find((d) => d.path === current) ?? (current ? null : list[0]);
+  return (
+    <label className="field">
+      <span>Destination</span>
+      <select
+        className="input"
+        style={{ width: 'auto' }}
+        value={chosen?.name ?? ''}
+        onChange={(e) => {
+          const d = list.find((x) => x.name === e.target.value);
+          onPick(d && !d.builtin ? d.path : null);
+        }}
+      >
+        {!chosen && <option value="">The folder below</option>}
+        {list.map((d) => (
+          <option key={d.name} value={d.name}>
+            {d.name}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }

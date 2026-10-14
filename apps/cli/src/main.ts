@@ -1055,16 +1055,20 @@ program
   .description('download a file by its hash (see `communal search`), from every online source')
   .option('--name <file>', 'save as (default: the name the owner uses)')
   .option('--dest <dir>', 'folder to save into')
-  .option('--on <device>', 'have another device of yours download it, into its downloads folder')
-  .action((hash: string, opts: { name?: string; dest?: string; on?: string }) =>
+  .option('--to <destination>', 'a named destination (`communal dest`), here or on --on')
+  .option('--on <device>', 'have another device of yours download it')
+  .action((hash: string, opts: { name?: string; dest?: string; to?: string; on?: string }) =>
     viaDaemon(async (c) => {
+      if (opts.dest && opts.to) throw new Error('use --dest or --to, not both');
       if (opts.on) {
-        if (opts.dest) throw new Error('--dest is for this device; --on saves into its own folder');
+        if (opts.dest)
+          throw new Error('--dest is a folder here; on another device use --to <destination>');
         const d = await remoteDevice(c, opts.on);
         const t = await remote<{ id: string; name: string }>(c, d, {
           op: 'download',
           hash,
           ...(opts.name ? { name: opts.name } : {}),
+          ...(opts.to ? { destination: opts.to } : {}),
         });
         console.log(
           `${t.id}  ${d.name} queued ${t.name}  (\`communal transfers --on ${opts.on}\`)`,
@@ -1077,6 +1081,7 @@ program
           hash,
           ...(opts.name ? { name: opts.name } : {}),
           ...(opts.dest ? { dest: resolve(opts.dest) } : {}),
+          ...(opts.to ? { destination: opts.to } : {}),
         },
       );
       const { download } = r;
@@ -1090,51 +1095,64 @@ program
   .description('download a folder of another device once, with its subfolders')
   .option('--hub <id>', 'the hub to list it through (needed when on several)')
   .option('--dest <dir>', 'folder to save into (default: the downloads folder)')
-  .option(
-    '--on <device_name>',
-    'have another device of yours download it, into its downloads folder',
-  )
-  .action((device: string, path: string, opts: { hub?: string; dest?: string; on?: string }) =>
-    viaDaemon(async (c) => {
-      if (opts.on) {
-        if (opts.dest) throw new Error('--dest is for this device; --on saves into its own folder');
-        const d = await remoteDevice(c, opts.on);
-        const f = await remote<{ folder: string; queued: number; copied: number; skipped: number }>(
-          c,
-          d,
-          { op: 'download_folder', hub: await hubUrl(c, opts.hub), device_id: device, path },
-        );
-        console.log(
-          `${d.name}: ${f.folder}, ${f.queued} queued, ${f.copied} copied, ${f.skipped} already there`,
-        );
-        return;
-      }
-      const hubId = await pickHub(c, opts.hub);
-      const r = await c.post<{
-        reshared?: { summary: string };
-        folder: {
-          dest: string;
-          queued: number;
-          copied: number;
-          skipped: number;
-          unprepared: number;
-          bytes: number;
-        };
-      }>('/v1/downloads/folder', {
-        hub: hubId,
-        device,
-        path,
-        ...(opts.dest ? { dest: resolve(opts.dest) } : {}),
-      });
-      const f = r.folder;
-      console.log(`→ ${f.dest}`);
-      warnReshared(r);
-      console.log(`  ${f.queued} queued (${f.bytes} bytes; follow with \`communal transfers\`)`);
-      if (f.copied) console.log(`  ${f.copied} copied from files already on this computer`);
-      if (f.skipped) console.log(`  ${f.skipped} already there`);
-      if (f.unprepared)
-        console.log(`  ${f.unprepared} left out: still being prepared by the owner`);
-    }),
+  .option('--to <destination>', 'a named destination (`communal dest`), here or on --on')
+  .option('--on <device_name>', 'have another device of yours download it')
+  .action(
+    (
+      device: string,
+      path: string,
+      opts: { hub?: string; dest?: string; to?: string; on?: string },
+    ) =>
+      viaDaemon(async (c) => {
+        if (opts.dest && opts.to) throw new Error('use --dest or --to, not both');
+        if (opts.on) {
+          if (opts.dest)
+            throw new Error('--dest is a folder here; on another device use --to <destination>');
+          const d = await remoteDevice(c, opts.on);
+          const f = await remote<{
+            folder: string;
+            queued: number;
+            copied: number;
+            skipped: number;
+          }>(c, d, {
+            op: 'download_folder',
+            hub: await hubUrl(c, opts.hub),
+            device_id: device,
+            path,
+            ...(opts.to ? { destination: opts.to } : {}),
+          });
+          console.log(
+            `${d.name}: ${f.folder}, ${f.queued} queued, ${f.copied} copied, ${f.skipped} already there`,
+          );
+          return;
+        }
+        const hubId = await pickHub(c, opts.hub);
+        const r = await c.post<{
+          reshared?: { summary: string };
+          folder: {
+            dest: string;
+            queued: number;
+            copied: number;
+            skipped: number;
+            unprepared: number;
+            bytes: number;
+          };
+        }>('/v1/downloads/folder', {
+          hub: hubId,
+          device,
+          path,
+          ...(opts.dest ? { dest: resolve(opts.dest) } : {}),
+          ...(opts.to ? { destination: opts.to } : {}),
+        });
+        const f = r.folder;
+        console.log(`→ ${f.dest}`);
+        warnReshared(r);
+        console.log(`  ${f.queued} queued (${f.bytes} bytes; follow with \`communal transfers\`)`);
+        if (f.copied) console.log(`  ${f.copied} copied from files already on this computer`);
+        if (f.skipped) console.log(`  ${f.skipped} already there`);
+        if (f.unprepared)
+          console.log(`  ${f.unprepared} left out: still being prepared by the owner`);
+      }),
   );
 
 program
@@ -1207,6 +1225,63 @@ program
     }),
   );
 
+type Destination = { name: string; path: string; builtin: boolean };
+const printDestinations = (list: Destination[]) => {
+  for (const d of list)
+    console.log(`${d.name.padEnd(20)} ${d.path}${d.builtin ? '  (downloads folder)' : ''}`);
+};
+const destCmd = program
+  .command('dest')
+  .description(
+    'named places to save (ADR 0018): `--to <name>` on get, get-folder and subscribe, also from your other devices',
+  );
+destCmd
+  .command('list', { isDefault: true })
+  .description('this device’s destinations')
+  .action(() =>
+    viaDaemon(async (c) => {
+      printDestinations(
+        (await c.get<{ destinations: Destination[] }>('/v1/destinations')).destinations,
+      );
+    }),
+  );
+destCmd
+  .command('add <name> <folder>')
+  .description('add a destination, e.g. `communal dest add Movies /media/movies`')
+  .action((name: string, folder: string) =>
+    viaDaemon(async (c) => {
+      const r = await c.post<{ destinations: Destination[] }>('/v1/destinations', {
+        name,
+        path: resolve(folder),
+      });
+      printDestinations(r.destinations);
+    }),
+  );
+destCmd
+  .command('set <name> <folder>')
+  .description('point a destination at another folder')
+  .option('--rename <new_name>', 'and call it something else')
+  .action((name: string, folder: string, opts: { rename?: string }) =>
+    viaDaemon(async (c) => {
+      const r = await c.put<{ destinations: Destination[] }>(
+        `/v1/destinations/${encodeURIComponent(name)}`,
+        { name: opts.rename ?? name, path: resolve(folder) },
+      );
+      printDestinations(r.destinations);
+    }),
+  );
+destCmd
+  .command('remove <name>')
+  .description('forget a destination (the folder and its files stay)')
+  .action((name: string) =>
+    viaDaemon(async (c) => {
+      const r = await c.delete<{ destinations: Destination[] }>(
+        `/v1/destinations/${encodeURIComponent(name)}`,
+      );
+      printDestinations(r.destinations);
+    }),
+  );
+
 const remoteCmd = program
   .command('remote')
   .description(
@@ -1223,12 +1298,19 @@ remoteCmd
       );
       const { devices } = await c.get<{ devices: RemoteDevice[] }>('/v1/remote/devices');
       for (const d of devices) {
-        const state = d.online
-          ? (await remote<{ allowed: boolean }>(c, d, { op: 'hello' }).catch(() => null))?.allowed
+        const hello = d.online
+          ? await remote<{ allowed: boolean; destinations?: string[] }>(c, d, {
+              op: 'hello',
+            }).catch(() => null)
+          : null;
+        const state = !d.online
+          ? 'offline'
+          : hello?.allowed
             ? 'takes requests'
-            : "doesn't take requests"
-          : 'offline';
+            : "doesn't take requests";
         console.log(`  ${d.name.padEnd(24)} ${d.platform.padEnd(8)} ${state}  ${d.device_id}`);
+        if (hello?.allowed && hello.destinations)
+          console.log(`    destinations: ${hello.destinations.join(', ')}`);
       }
     }),
   );
@@ -1401,17 +1483,28 @@ program
   .option('--mirror-deletes', 'move local copies to the trash when deleted at the source')
   .option('--no-mirror-deletes', 'keep local copies when files are deleted at the source')
   .option('--flat', 'only the files directly in the folder, not its subfolders')
-  .option('--on <device_name>', 'have another device of yours follow it, into its downloads folder')
+  .option('--to <destination>', 'a named destination (`communal dest`), here or on --on')
+  .option('--on <device_name>', 'have another device of yours follow it')
   .action(
     (
       device: string,
       path: string,
-      opts: { hub?: string; dest?: string; mirrorDeletes?: boolean; flat?: boolean; on?: string },
+      opts: {
+        hub?: string;
+        dest?: string;
+        to?: string;
+        mirrorDeletes?: boolean;
+        flat?: boolean;
+        on?: string;
+      },
     ) =>
       viaDaemon(async (c) => {
+        if (opts.dest && opts.to) throw new Error('use --dest or --to, not both');
         if (opts.on) {
           if (opts.dest || opts.flat)
-            throw new Error('--dest and --flat are for this device; --on follows the whole folder');
+            throw new Error(
+              '--dest and --flat are for this device; on another, use --to <destination>',
+            );
           const d = await remoteDevice(c, opts.on);
           const mirror = opts.mirrorDeletes ?? (await askMirrorDeletes());
           const s = await remote<{ id: string }>(c, d, {
@@ -1420,6 +1513,7 @@ program
             device_id: device,
             path,
             mirror_deletes: mirror,
+            ...(opts.to ? { destination: opts.to } : {}),
           });
           console.log(`${s.id}  ${d.name} is following ${path}`);
           return;
@@ -1435,6 +1529,7 @@ program
             mirror_deletes: mirror,
             recursive: !opts.flat,
             ...(opts.dest ? { dest: resolve(opts.dest) } : {}),
+            ...(opts.to ? { destination: opts.to } : {}),
           },
         );
         const s = r.subscription;

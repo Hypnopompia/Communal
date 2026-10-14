@@ -410,9 +410,14 @@ export class LocalApi {
           hash: z.string().regex(/^[0-9a-f]{64}$/),
           name: z.string().min(1).max(255).optional(),
           dest: z.string().min(1).max(4096).optional(),
+          destination: z.string().min(1).max(40).optional(),
         })
         .parse(body);
-      const download = await this.core.download(b.hash, { name: b.name, destDir: b.dest });
+      const download = await this.core.download(b.hash, {
+        name: b.name,
+        destDir: b.dest,
+        ...(b.destination ? { destination: b.destination } : {}),
+      });
       return { download, ...(await this.reshared(download.dest_dir, download.name)) };
     });
     // Who would see files saved into a folder: the re-share warning (ADR 0021).
@@ -430,10 +435,12 @@ export class LocalApi {
           device: z.string(),
           path: z.string().min(1).max(4096),
           dest: z.string().min(1).max(4096).optional(),
+          destination: z.string().min(1).max(40).optional(),
         })
         .parse(body);
       const folder = await this.core.downloadFolder(b.hub, b.device, b.path, {
         ...(b.dest ? { destDir: b.dest } : {}),
+        ...(b.destination ? { destination: b.destination } : {}),
       });
       return { folder, ...(await this.reshared(folder.dest)) };
     });
@@ -459,6 +466,7 @@ export class LocalApi {
           device: z.string(),
           path: z.string().min(1).max(4096),
           dest: z.string().min(1).max(4096).optional(),
+          destination: z.string().min(1).max(40).optional(),
           // Asked at subscribe time (HANDOFF §5), so it's required here rather than defaulted.
           mirror_deletes: z.boolean(),
           recursive: z.boolean().default(true),
@@ -471,6 +479,9 @@ export class LocalApi {
         mirrorDeletes: b.mirror_deletes,
         recursive: b.recursive,
         ...(b.dest ? { dest: b.dest } : {}),
+        ...(b.destination && !b.dest
+          ? { dest: this.core.destinationFolder(b.destination, b.path) }
+          : {}),
       });
       return { subscription, ...(await this.reshared(subscription.dest_dir)) };
     });
@@ -486,6 +497,21 @@ export class LocalApi {
       await this.core.subscriptions.remove(param(req, url, 1));
       return { ok: true };
     });
+
+    // ── destinations (ADR 0018): named places to save, what other devices can ask for ──
+    const Dest = z.object({ name: z.string().min(1).max(40), path: z.string().min(1).max(4096) });
+    route('GET', '/v1/destinations', async () => ({ destinations: this.core.destinations() }));
+    route('POST', '/v1/destinations', async (_req, _url, body) => {
+      const b = Dest.parse(body);
+      return { destinations: await this.core.saveDestination(b.name, b.path) };
+    });
+    route('PUT', '/v1/destinations/:name', async (req, url, body) => {
+      const b = Dest.parse(body);
+      return { destinations: await this.core.saveDestination(b.name, b.path, param(req, url, 1)) };
+    });
+    route('DELETE', '/v1/destinations/:name', async (req, url) => ({
+      destinations: await this.core.removeDestination(param(req, url, 1)),
+    }));
 
     // ── remote control (ADR 0023) ──
     // This device's switch: may the account's other devices start downloads here?

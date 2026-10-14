@@ -237,9 +237,21 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
       hash: z.string().regex(/^[0-9a-f]{64}$/),
       name: z.string().max(255).optional().describe('File name to save as'),
       dest: z.string().max(4096).optional().describe('Folder to save into (absolute path)'),
+      destination: z
+        .string()
+        .max(40)
+        .optional()
+        .describe('A named destination from list_destinations, e.g. "Movies" (instead of dest)'),
     },
     CHANGE,
     (c, a) => c.post('/v1/downloads', a),
+  );
+  tool(
+    'list_destinations',
+    'The named places to save on this computer (ADR 0018), like Movies or Music, with their folders. "Downloads" is the downloads folder. Pass a name as destination to download_file, download_folder or subscribe_folder.',
+    {},
+    READ,
+    (c) => c.get('/v1/destinations'),
   );
   tool(
     'check_destination',
@@ -259,6 +271,11 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
       device: z.string().describe('The device_id of the computer the folder is on'),
       path: z.string().max(4096).describe('The folder, e.g. "Music/Albums/Blue/"'),
       dest: z.string().max(4096).optional().describe('Folder to save into (absolute path)'),
+      destination: z
+        .string()
+        .max(40)
+        .optional()
+        .describe('A named destination from list_destinations, e.g. "Movies" (instead of dest)'),
     },
     CHANGE,
     (c, a) => c.post('/v1/downloads/folder', a),
@@ -434,6 +451,11 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
       path: z.string().min(1).describe('Folder, e.g. "Photos/2024/"'),
       mirror_deletes: z.boolean(),
       dest: z.string().optional().describe('Local folder for the files (absolute path)'),
+      destination: z
+        .string()
+        .max(40)
+        .optional()
+        .describe('A named destination from list_destinations, e.g. "Movies" (instead of dest)'),
     },
     CHANGE,
     (c, a) => c.post('/v1/subscriptions', a),

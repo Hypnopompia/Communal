@@ -126,6 +126,7 @@ describe('remote control', () => {
     ]);
     expect(await phone.remote.request(desktop.deviceId, { op: 'hello' })).toEqual({
       allowed: false,
+      destinations: ['Downloads'],
     });
   });
 
@@ -224,5 +225,69 @@ describe('remote control', () => {
     // The desktop knows the hub as 127.0.0.1; the phone reaches it as localhost.
     const phone = await link(desktop, hubId, h.url.replace('127.0.0.1', 'localhost'), 'Pixel');
     expect(phone.hubs.list()).toHaveLength(1);
+  });
+
+  it('saves into a named destination when asked, and never into a path (ADR 0018)', async () => {
+    const { h, desktop, phone, bob, hash } = await world();
+    await desktop.updateSettings({ remote_control: true });
+    const movies = tmp('communal-m13-movies-');
+    await desktop.saveDestination('Movies', movies);
+    expect(await phone.remote.request(desktop.deviceId, { op: 'hello' })).toEqual({
+      allowed: true,
+      destinations: ['Downloads', 'Movies'],
+    });
+    // Any case; the file lands in the folder the name stands for.
+    await phone.remote.request(desktop.deviceId, { op: 'download', hash, destination: 'movies' });
+    await until(
+      () => desktop.downloads.list().some((t) => t.state === 'done'),
+      15_000,
+      'download done',
+    );
+    expect(desktop.downloads.list()[0]!.final_path).toBe(join(movies, 'song.mp3'));
+    // A path is just an unknown name (or too long to be one).
+    for (const destination of ['../etc', 'Music', '/tmp'])
+      await expect(
+        phone.remote.request(desktop.deviceId, { op: 'download', hash, destination }),
+      ).rejects.toMatchObject({ code: 'not_found' });
+    await expect(
+      phone.remote.request(desktop.deviceId, { op: 'download', hash, destination: movies }),
+    ).rejects.toMatchObject({ code: 'bad_request' });
+    // A followed folder goes to <destination>/<folder name>.
+    const s = (await phone.remote.request(desktop.deviceId, {
+      op: 'subscribe',
+      hub: h.url,
+      device_id: bob.deviceId,
+      path: 'Music/',
+      mirror_deletes: false,
+      destination: 'Movies',
+    })) as { id: string };
+    expect(desktop.subscriptions.list().find((x) => x.id === s.id)!.dest_dir).toBe(
+      join(movies, 'Music'),
+    );
+  });
+
+  it('keeps destinations sane: names, the built-in Downloads, renames and removal', async () => {
+    const desktop = await core('desktop');
+    const a = tmp('communal-m13-a-');
+    const b = tmp('communal-m13-b-');
+    await desktop.saveDestination('TV', a);
+    await expect(desktop.saveDestination('tv', b)).rejects.toMatchObject({ code: 'conflict' });
+    await expect(desktop.saveDestination('Downloads', b)).rejects.toMatchObject({
+      code: 'bad_request',
+    });
+    await expect(desktop.saveDestination('a/b', b)).rejects.toMatchObject({ code: 'bad_request' });
+    await expect(desktop.saveDestination('Rel', 'relative/path')).rejects.toMatchObject({
+      code: 'bad_request',
+    });
+    await desktop.saveDestination('TV Shows', b, 'tv');
+    expect(desktop.destinations().map((d) => [d.name, d.path, d.builtin])).toEqual([
+      ['Downloads', desktop.downloadsDir, true],
+      ['TV Shows', b, false],
+    ]);
+    await desktop.removeDestination('tv shows');
+    expect(desktop.destinations()).toHaveLength(1);
+    await expect(desktop.removeDestination('Downloads')).rejects.toMatchObject({
+      code: 'not_found',
+    });
   });
 });

@@ -177,6 +177,8 @@ data class RemoteTransfer(
 
 @Serializable data class RemoteTransfers(val transfers: List<RemoteTransfer>)
 
+@Serializable data class Hello(val allowed: Boolean, val destinations: List<String> = listOf("Downloads"))
+
 @Serializable data class LinkResult(val user_id: String, val fingerprint: String)
 
 /** A failed API call, with the core's error code and its message for people. */
@@ -310,34 +312,47 @@ class Api(private val host: CoreHost) {
     private suspend fun remote(device: String, request: JsonObject): JsonElement =
         json.parseToJsonElement(call("POST", "/v1/remote/${q(device)}", request)).jsonObject["result"]!!
 
-    /** Whether that computer takes requests from this phone (its setting). */
-    suspend fun remoteAllowed(device: String): Boolean =
-        remote(device, buildJsonObject { put("op", "hello") }).jsonObject["allowed"]?.jsonPrimitive?.content == "true"
+    /**
+     * Whether that computer takes requests from this phone (its setting), and the names of its
+     * destinations (ADR 0018), its downloads folder first. Names only: never its folders.
+     */
+    suspend fun remoteHello(device: String): Hello =
+        json.decodeFromJsonElement(Hello.serializer(), remote(device, buildJsonObject { put("op", "hello") }))
 
-    suspend fun remoteDownload(device: String, hash: String, name: String?) {
+    suspend fun remoteDownload(device: String, hash: String, name: String?, destination: String? = null) {
         remote(device, buildJsonObject {
             put("op", "download")
             put("hash", hash)
             name?.let { put("name", it) }
+            destination?.let { put("destination", it) }
         })
     }
 
-    suspend fun remoteDownloadFolder(device: String, hubUrl: String, owner: String, path: String) {
+    suspend fun remoteDownloadFolder(device: String, hubUrl: String, owner: String, path: String, destination: String? = null) {
         remote(device, buildJsonObject {
             put("op", "download_folder")
             put("hub", hubUrl)
             put("device_id", owner)
             put("path", path)
+            destination?.let { put("destination", it) }
         })
     }
 
-    suspend fun remoteSubscribe(device: String, hubUrl: String, owner: String, path: String, mirrorDeletes: Boolean) {
+    suspend fun remoteSubscribe(
+        device: String,
+        hubUrl: String,
+        owner: String,
+        path: String,
+        mirrorDeletes: Boolean,
+        destination: String? = null,
+    ) {
         remote(device, buildJsonObject {
             put("op", "subscribe")
             put("hub", hubUrl)
             put("device_id", owner)
             put("path", path)
             put("mirror_deletes", mirrorDeletes)
+            destination?.let { put("destination", it) }
         })
     }
 

@@ -17,6 +17,14 @@ The owner asked for downloads organized by kind (audio → Music…), whole-fold
   - There's no grouping in Transfers yet: each file is its own row. The reply counts what was queued, copied, skipped and left out, and the app shows that as a toast.
 - CLI: `communal get-folder <device> <path> [--hub] [--dest]`, `communal download-dir [dir] [--reset]`. MCP: `download_folder`, `set_downloads_folder`, and `get_settings` now includes the downloads folder.
 
+## Named destinations (2026-10-14)
+
+Remote control (ADR 0023) raised the question of where another device's download should go: a media server keeps Movies and TV in different folders. The owner didn't want requests to carry raw paths, and suggested named destinations, which also covers "download this folder to our Music directory".
+
+- **A device's destinations** are `SavedSettings.destinations` (`{name, path}`, 1–40 characters, no slashes or control characters, unique in any case). The folder must be an absolute path and is created if missing. "Downloads" is built in, always first, and follows the downloads folder; it can't be renamed or removed (`CommunalCore.destinations()`, `saveDestination()`, `removeDestination()`).
+- **Locally they're shortcuts.** `POST /v1/downloads`, `/v1/downloads/folder` and `/v1/subscriptions` take `destination` (a name) as well as `dest` (a path). A followed folder goes to `<destination>/<folder name>`, as with the downloads folder. Desktop: "Save to <name>" under the Download arrow, a Destination choice in the folder download and subscribe dialogs, and Settings › Downloads › Destinations to add, move or remove them. CLI: `communal dest [list|add|set|remove]` and `--to <name>` on `get`, `get-folder` and `subscribe`. MCP: `list_destinations`, and `destination` on `download_file`, `download_folder` and `subscribe_folder`.
+- **From another device, names are all there is.** Remote `download`, `download_folder` and `subscribe` take an optional `destination` name; `hello` answers with the names (never the folders, which don't leave the device). An unknown name is `not_found`, and a path is just an unknown name: a request can't write anywhere the receiving device's owner didn't name. The sender checks requests against the schema first, since the receiver drops a malformed one without answering.
+
 ## Not built, on purpose
 
 From the handoff, waiting for feedback:
