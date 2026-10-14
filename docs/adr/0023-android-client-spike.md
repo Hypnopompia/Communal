@@ -113,7 +113,41 @@ So the real app should embed Node **in-process** (`libnode.so` built with `--sha
 - Carrier-grade NAT. A phone on mobile data is often behind symmetric NAT or CGNAT, so with no relay (HANDOFF invariant) many phone ↔ home-desktop transfers will fail with `connect.failed`. ADR 0011 diagnostics will explain why, but the success rate on cellular is the biggest product risk, and it's the same for any runtime. Wi-Fi at home or on the same LAN is the case that works.
 - Doze and app-standby behaviour, network changes mid-transfer, battery.
 - Previews (thumbnails, peek, streaming). They use the same peer protocol as the download that worked, but weren't exercised.
-- The remote-control feature (a new `control` peer purpose).
+- Remote control (see "Remote control (later)").
+
+## Remote control (later)
+
+The phone asks one of your desktops to download something. Not built and not part of the spike. These are the decisions so far, including the owner's: "we can do a sealed fallback through the hub".
+
+**Primary path: a direct peer session.**
+
+- The phone opens a session with the new peer purpose `hello.purpose: 'control'`, over the normal udx + Noise transport (ADR 0001, 0010).
+- The desktop accepts it only when the peer's cert chain belongs to **the same account** and no device in it is revoked (`Revocations.revokedFor`).
+- The hub brokers it with a `connect.request` variant that it allows only between devices of the same account.
+
+**Commands are an allowlist:** download a file, download a folder, subscribe, list transfers, cancel.
+
+- Never devices, recovery, linking, sharing, access rules or hub admin. That's narrower than the MCP tool set (ADR 0017).
+- The phone does its own search and browse, so control doesn't need them.
+
+**The desktop opts in.** A setting, "Let my phone start downloads", is off by default. Every remote request shows in Activity with the phone as the requester.
+
+**Fallback (owner decision): sealed messages through the hub.** When no direct path exists (`connect.failed`), the phone sends the same command through the hub instead.
+
+- **Sealing:**
+  - The target device's Ed25519 key is converted to X25519 (`edwardsToMontgomery` in `@noble/curves`, already a dependency).
+  - The phone seals to it with an ephemeral X25519 key. The shared secret goes through HKDF-SHA256 into XChaCha20-Poly1305, the AEAD the recovery file already uses.
+  - A sealed box hides the sender, so the plaintext carries the phone's device id and cert chain, plus an Ed25519 signature over the command, its nonce and the target's device id. The desktop checks the chain against the account root and `Revocations.revokedFor`, exactly as for a peer session.
+- **Hub:** it forwards the opaque blob only between devices of the same account. A banned sender, or a revoked sender or target, is refused.
+- **Replies and status:** they come back the same way, sealed to the phone.
+- **Limits:** a small size cap, plus per-account rate and queue limits under ADR 0022. Messages for an offline device wait only briefly.
+- **Replay protection:** a random nonce and a timestamp. The desktop refuses anything older than a short expiry, and keeps a seen-set of nonces for that window.
+- **No file data ever goes through the hub.** Only commands and status do. The hub learns only that your devices exchanged messages, and when.
+- It needs new hub messages (record them in ADR 0004 when built) and hub tests: same account only, banned or revoked senders rejected.
+
+**A pending invariant change.** When this is built, "No relay, ever" in CLAUDE.md and HANDOFF becomes "no file data is ever relayed; only sealed control messages between your own devices". It isn't changed now.
+
+**Estimate:** about 3–5 weeks including the fallback, on top of the table below.
 
 ## Recommendation
 
@@ -133,4 +167,4 @@ So the real app should embed Node **in-process** (`libnode.so` built with `--sha
 | Release: signing, update channel (Play or direct APK), real-device testing on Wi-Fi and cellular         | 1 wk          |
 | **Total**                                                                                                | **8–10.5 wk** |
 
-A Kotlin port would add the earlier 4–8 weeks on top, plus the ongoing cost of keeping two implementations in sync. The remote-control feature isn't included in either estimate.
+A Kotlin port would add the earlier 4–8 weeks on top, plus the ongoing cost of keeping two implementations in sync. Remote control would add about 3–5 weeks to either (see "Remote control (later)").
