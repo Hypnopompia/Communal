@@ -9,7 +9,10 @@ import {
   type FolderDownload,
   type Kind,
   type Meta,
+  type RemoteDevice,
 } from '../api';
+import { useHubs } from '../hubs';
+import { remote, useRemoteTargets, WhereField } from './remote';
 import { baseName, date, duration, plural, size } from '../format';
 import { useApi } from '../query';
 import { Dialog, ErrorNote, useAction, useConfirm } from './kit';
@@ -181,19 +184,25 @@ export function PreviewDialog({
 }
 
 /**
- * Download, into the downloads folder; its menu offers Save to…, which asks where (ADR 0018).
+ * Download, into the downloads folder; its menu offers Save to…, which asks where (ADR 0018),
+ * and, with `onRemote`, each of your other devices that takes requests (ADR 0023). Without
+ * `onDownload` (a file already on this computer) only the other devices are offered.
  */
 export function DownloadButton({
   onDownload,
   onSaveTo,
+  onRemote,
   small,
   primary,
 }: {
-  onDownload: () => void;
+  onDownload?: () => void;
   onSaveTo?: () => void;
+  onRemote?: (device: RemoteDevice) => void;
   small?: boolean;
   primary?: boolean;
 }) {
+  const targets = useRemoteTargets();
+  const remoteTargets = onRemote ? targets : [];
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -214,17 +223,25 @@ export function DownloadButton({
     };
   }, [open]);
   const cls = `btn${small ? ' small' : ''}${primary ? ' primary' : ''}`;
-  if (!onSaveTo)
+  const menu = (onSaveTo && onDownload ? 1 : 0) + remoteTargets.length;
+  if (onDownload && menu === 0)
     return (
       <button className={cls} onClick={onDownload}>
         Download
       </button>
     );
+  if (!onDownload && remoteTargets.length === 0) return null;
   return (
     <div className="split" ref={ref}>
-      <button className={cls} onClick={onDownload} title="Into your downloads folder">
-        Download
-      </button>
+      {onDownload ? (
+        <button className={cls} onClick={onDownload} title="Into your downloads folder">
+          Download
+        </button>
+      ) : (
+        <button className={cls} onClick={() => setOpen(!open)} aria-haspopup="menu">
+          Download on…
+        </button>
+      )}
       <button
         className={cls}
         aria-label="Other ways to download"
@@ -236,15 +253,30 @@ export function DownloadButton({
       </button>
       {open && (
         <div className="menu" role="menu">
-          <button
-            role="menuitem"
-            onClick={() => {
-              setOpen(false);
-              onSaveTo();
-            }}
-          >
-            Save to…
-          </button>
+          {onSaveTo && onDownload && (
+            <button
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onSaveTo();
+              }}
+            >
+              Save to…
+            </button>
+          )}
+          {remoteTargets.map((d) => (
+            <button
+              key={d.device_id}
+              role="menuitem"
+              title={`Into ${d.name}’s downloads folder`}
+              onClick={() => {
+                setOpen(false);
+                onRemote!(d);
+              }}
+            >
+              Download on {d.name}
+            </button>
+          ))}
         </div>
       )}
     </div>
@@ -341,6 +373,7 @@ export function DownloadFolderDialog({
   device,
   path,
   owner,
+  remoteOnly,
   onClose,
 }: {
   hub: string;
@@ -348,25 +381,42 @@ export function DownloadFolderDialog({
   path: string;
   /** Whose folder it is; left out for your own other computers. */
   owner?: string;
+  /** The folder is on this computer: another of your devices downloads it (ADR 0023). */
+  remoteOnly?: boolean;
   onClose: () => void;
 }) {
   const settings = useApi<DownloadSettings>([], '/v1/settings/downloads');
   const [dest, setDest] = useState<string | null>(null);
+  const targets = useRemoteTargets();
+  const { hubs } = useHubs();
+  const [on, setOn] = useState<string | null>(null);
+  const there = targets.find((t) => t.device_id === on) ?? (remoteOnly ? targets[0] : undefined);
   const name = baseName(path);
   const parent = dest ?? settings.data?.dir;
-  const reshare = useExposure(parent, `${name}/`);
-  const shares = reshare.data?.shared && reshare.data.others;
+  const reshare = useExposure(there ? null : parent, `${name}/`);
+  const shares = !there && reshare.data?.shared && reshare.data.others;
   const run = useAction(
-    () =>
-      api.post<{ folder: FolderDownload }>('/v1/downloads/folder', {
-        hub,
-        device,
-        path,
-        ...(dest ? { dest } : {}),
-      }),
+    async () =>
+      there
+        ? {
+            where: there.name,
+            folder: await remote<FolderDownload>(there.device_id, {
+              op: 'download_folder',
+              // The other device numbers its hubs its own way: name this one by URL.
+              hub: hubs.find((h) => h.id === hub)?.url,
+              device_id: device,
+              path,
+            }),
+          }
+        : api.post<{ folder: FolderDownload; where?: string }>('/v1/downloads/folder', {
+            hub,
+            device,
+            path,
+            ...(dest ? { dest } : {}),
+          }),
     {
       topics: ['transfers'],
-      done: (r) => folderDownloadText(name, r.folder),
+      done: (r) => (r.where ? `On ${r.where}: ` : '') + folderDownloadText(name, r.folder),
       onDone: onClose,
     },
   );
@@ -380,27 +430,37 @@ export function DownloadFolderDialog({
         Everything in this folder{owner ? ` of ${owner}’s` : ''}, including the folders inside it,
         is downloaded once. Files you already have aren’t downloaded again.
       </p>
-      <div className="field">
-        <span>Save to</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span
-            className="muted"
-            style={{
-              flex: 1,
-              minWidth: 0,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-            title={parent ? `${parent}/${name}` : undefined}
-          >
-            {parent ? `${shortPath(parent)} › ${name}` : '…'}
-          </span>
-          <button className="btn small" onClick={() => void pick()}>
-            Change…
-          </button>
+      <WhereField
+        value={there?.device_id ?? null}
+        onChange={setOn}
+        targets={targets}
+        here={!remoteOnly}
+      />
+      {there ? (
+        <p className="muted small">Into {there.name}’s downloads folder.</p>
+      ) : (
+        <div className="field">
+          <span>Save to</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span
+              className="muted"
+              style={{
+                flex: 1,
+                minWidth: 0,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+              title={parent ? `${parent}/${name}` : undefined}
+            >
+              {parent ? `${shortPath(parent)} › ${name}` : '…'}
+            </span>
+            <button className="btn small" onClick={() => void pick()}>
+              Change…
+            </button>
+          </div>
         </div>
-      </div>
+      )}
       <ReshareNote exposure={reshare.data} />
       <ErrorNote error={run.error ?? settings.error} />
       <div className="dialog-actions">
@@ -425,6 +485,7 @@ export function SubscribeDialog({
   path,
   owner,
   ownDevice,
+  remoteOnly,
   onClose,
 }: {
   hub: string;
@@ -433,25 +494,44 @@ export function SubscribeDialog({
   owner: string;
   /** Set when the folder is on another of your own devices (its name). */
   ownDevice?: string;
+  /** The folder is on this computer: another of your devices follows it (ADR 0023). */
+  remoteOnly?: boolean;
   onClose: () => void;
 }) {
   const [dest, setDest] = useState<string | null>(null);
   const [mirror, setMirror] = useState(false);
   const settings = useApi<DownloadSettings>([], '/v1/settings/downloads');
+  const targets = useRemoteTargets();
+  const { hubs } = useHubs();
+  const [on, setOn] = useState<string | null>(null);
+  const there = targets.find((t) => t.device_id === on) ?? (remoteOnly ? targets[0] : undefined);
   // Without a choice, files go to <downloads folder>/<folder name> (ADR 0013, 0018).
-  const reshare = useExposure(dest ?? settings.data?.dir, dest ? undefined : `${baseName(path)}/`);
+  const reshare = useExposure(
+    there ? null : (dest ?? settings.data?.dir),
+    dest ? undefined : `${baseName(path)}/`,
+  );
   const sub = useAction(
     () =>
-      api.post('/v1/subscriptions', {
-        hub,
-        device,
-        path,
-        mirror_deletes: mirror,
-        ...(dest ? { dest } : {}),
-      }),
+      there
+        ? remote(there.device_id, {
+            op: 'subscribe',
+            hub: hubs.find((h) => h.id === hub)?.url,
+            device_id: device,
+            path,
+            mirror_deletes: mirror,
+          })
+        : api.post('/v1/subscriptions', {
+            hub,
+            device,
+            path,
+            mirror_deletes: mirror,
+            ...(dest ? { dest } : {}),
+          }),
     {
       topics: ['subscriptions', 'transfers'],
-      done: `Subscribed to ${baseName(path)}`,
+      done: there
+        ? `${there.name} subscribed to ${baseName(path)}`
+        : `Subscribed to ${baseName(path)}`,
       onDone: onClose,
     },
   );
@@ -473,26 +553,37 @@ export function SubscribeDialog({
           arrive automatically.
         </p>
       )}
-      <div className="field">
-        <span>Save to</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span
-            className="muted"
-            style={{
-              flex: 1,
-              minWidth: 0,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {dest ?? (settings.data ? `${shortPath(settings.data.dir)} › ${baseName(path)}` : '…')}
-          </span>
-          <button className="btn small" onClick={() => void pick()}>
-            Change…
-          </button>
+      <WhereField
+        value={there?.device_id ?? null}
+        onChange={setOn}
+        targets={targets}
+        here={!remoteOnly}
+      />
+      {there ? (
+        <p className="muted small">Into {there.name}’s downloads folder.</p>
+      ) : (
+        <div className="field">
+          <span>Save to</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span
+              className="muted"
+              style={{
+                flex: 1,
+                minWidth: 0,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {dest ??
+                (settings.data ? `${shortPath(settings.data.dir)} › ${baseName(path)}` : '…')}
+            </span>
+            <button className="btn small" onClick={() => void pick()}>
+              Change…
+            </button>
+          </div>
         </div>
-      </div>
+      )}
       <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
         <legend style={{ fontWeight: 600, marginBottom: 8 }}>
           {ownDevice

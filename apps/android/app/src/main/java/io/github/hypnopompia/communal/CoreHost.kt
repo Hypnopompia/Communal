@@ -118,7 +118,10 @@ class CoreHost(
             put("COMMUNAL_VERSION", BuildConfig.VERSION_NAME)
             put("COMMUNAL_BUILD", BuildConfig.COMMUNAL_BUILD)
             // Debug builds talk to a dev hub with a self-signed certificate (dev-only switch).
-            if (BuildConfig.DEBUG) put("COMMUNAL_DEV_TLS", "self-signed")
+            if (BuildConfig.DEBUG) {
+                put("COMMUNAL_DEV_TLS", "self-signed")
+                put("COMMUNAL_LOG", "debug")
+            }
         }
         val p = synchronized(this) {
             if (!current(gen)) return 0

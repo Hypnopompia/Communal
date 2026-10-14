@@ -2,6 +2,7 @@
  * Transfers (HANDOFF §11): the queue with progress and per-source speeds, and failures with
  * the hub's diagnosis, tips and who can fix it (ADR 0011).
  */
+import { useState } from 'react';
 import { api, type Transfer } from '../api';
 import { ago, rate, size, computerName } from '../format';
 import { useNames } from '../hubs';
@@ -9,10 +10,48 @@ import { useApi } from '../query';
 import { FileIcon, iconForName } from '../ui/icons';
 import { Empty, ErrorNote, Progress, useAction } from '../ui/kit';
 import { VerifiedMark } from '../ui/VerifiedMark';
+import { RemoteTransfers, useRemoteTargets } from '../ui/remote';
 
 const ACTIVE: Transfer['state'][] = ['active', 'queued', 'waiting'];
 
 export function Transfers() {
+  const targets = useRemoteTargets();
+  const [on, setOn] = useState<string | null>(null);
+  const device = targets.find((t) => t.device_id === on);
+  return (
+    <div className="page">
+      <div className="page-head">
+        <div>
+          <h1>Transfers</h1>
+          <p className="lede">Downloads come straight from the computers that have the file.</p>
+        </div>
+      </div>
+      {targets.length > 0 && (
+        <div
+          className="segmented"
+          role="tablist"
+          aria-label="Whose transfers"
+          style={{ justifySelf: 'start' }}
+        >
+          {[{ device_id: null, name: 'This computer' }, ...targets].map((t) => (
+            <button
+              key={t.device_id ?? 'here'}
+              role="tab"
+              aria-pressed={(device?.device_id ?? null) === t.device_id}
+              aria-selected={(device?.device_id ?? null) === t.device_id}
+              onClick={() => setOn(t.device_id)}
+            >
+              {t.name}
+            </button>
+          ))}
+        </div>
+      )}
+      {device ? <RemoteTransfers device={device} /> : <LocalTransfers />}
+    </div>
+  );
+}
+
+function LocalTransfers() {
   const list = useApi<{ downloads: Transfer[] }>(['transfers'], '/v1/downloads', {
     // Speeds change between progress hints, so refresh while something runs.
     refetchInterval: (q) =>
@@ -29,13 +68,7 @@ export function Transfers() {
     .filter((d) => !ACTIVE.includes(d.state))
     .sort((a, b) => b.updated_at - a.updated_at);
   return (
-    <div className="page">
-      <div className="page-head">
-        <div>
-          <h1>Transfers</h1>
-          <p className="lede">Downloads come straight from the computers that have the file.</p>
-        </div>
-      </div>
+    <>
       <ErrorNote error={list.error ?? cancel.error ?? clear.error} />
       {list.data && all.length === 0 && (
         <Empty title="No downloads yet">
@@ -69,7 +102,7 @@ export function Transfers() {
           </div>
         </section>
       )}
-    </div>
+    </>
   );
 }
 

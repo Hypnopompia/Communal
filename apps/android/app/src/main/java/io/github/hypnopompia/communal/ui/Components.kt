@@ -153,7 +153,7 @@ fun ActionSheet(model: AppModel, target: Target, onClose: () -> Unit) {
                 val d = r.device
                 val why = when {
                     !d.online -> "Offline"
-                    r.allowed == false -> "Turn on “Let my phone start downloads” in its Settings › Downloads"
+                    r.allowed == false -> "Turn on “Let my other devices start downloads” in its Settings › Downloads (communal remote allow on a server)"
                     r.allowed == null -> "Checking…"
                     else -> "Saved in its downloads folder"
                 }

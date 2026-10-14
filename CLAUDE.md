@@ -13,6 +13,7 @@ These came from the owner during development. Don't revert them to the spec's wo
 - **Multiple hubs per client, one identity** (ADR 0007). A search goes to every joined hub at once. The desktop Settings will need a hub list, not a single "Hub address".
 - **Access rules are per hub** (ADR 0007/0009). The same file can be public on one hub and private on another. A rule on one hub never grants access through another. The UI must make the per-hub scope obvious.
 - **Hub admins can ban and unban accounts** (ADR 0006).
+- **Any device can remote-control any other of the same account** (ADR 0023): phone, desktop or CLI asks, the receiver acts only with remote control switched on.
 - **There is an Android client** (ADR 0023), overriding HANDOFF's "Mobile: out of scope". It downloads only (no sharing, no media worker), runs the unchanged TypeScript core under Node 24, ships as a signed APK on GitHub releases, and can remote-control one of your computers through sealed hub messages.
 - **Hub admin lives in the clients** (ADR 0020), not a web UI: the first account on a hub is its admin, and `communal-hub admin` adds or removes admins (shell only). Settings › Hubs › Manage covers settings, users, devices, the connection graph (admins only, no groups or rules) and an audit log, and MCP gets admin tools. Keep admin actions as `HubDb` methods so a second front end can reuse them.
 
@@ -48,6 +49,7 @@ These came from the owner during development. Don't revert them to the spec's wo
   3. Commit and push `main`, then run it.
   - It needs `gh` logged in, the Developer ID certificate in the keychain, and the App Store Connect API key in `.env` (see `.env.example`).
   - It signs and notarizes both Mac apps locally. GitHub Actions (`release.yml`) adds Windows, Linux and the tarballs to the draft, then the script publishes.
+- Remote control (ADR 0023): `communal remote [status|allow|deny]`, and `--on <device id or name>` on `get`, `get-folder`, `subscribe`, `transfers` and `cancel` to have another of your devices do it.
 - Hub admin from a client: `communal admin users|approve|ban|unban|settings|graph|log` (on hubs you administer).
 - AI agents: `communal mcp` (stdio MCP server). The desktop app serves its local socket only while Settings › AI agents allows it.
 - Site: `site/` (static HTML, deployed by `.github/workflows/pages.yml` to https://hypnopompia.github.io/Communal/). Screenshots in `site/screenshots/` come from two app profiles with generated demo data, never real files.

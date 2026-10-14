@@ -9,6 +9,7 @@ import { useLibrary, useStatus } from '../hubs';
 import { useNav, type Route } from '../nav';
 import { useApi } from '../query';
 import { Disc } from '../ui/Disc';
+import { useRemoteDownload, useRemoteTargets } from '../ui/remote';
 import { VerifiedMark } from '../ui/VerifiedMark';
 import {
   describe,
@@ -166,6 +167,8 @@ function Browse({
   const [subscribe, setSubscribe] = useState(false);
   const [getFolder, setGetFolder] = useState(false);
   const download = useDownload();
+  const remoteDownload = useRemoteDownload();
+  const targets = useRemoteTargets();
   const listing = useApi<Listing>(
     ['index', 'presence', 'browse'],
     `/v1/browse${qs({ hub, device: deviceId, path })}`,
@@ -214,7 +217,7 @@ function Browse({
           </span>
         </div>
         <div className="actions">
-          {segs.length > 0 && !own && (
+          {segs.length > 0 && (!own || targets.length > 0) && (
             <>
               <button className="btn" onClick={() => setGetFolder(true)}>
                 <Icon name="transfers" size={16} /> Download folder
@@ -321,13 +324,17 @@ function Browse({
                     </button>
                   )}
                   {f.hash ? (
-                    !own && (
-                      <DownloadButton
-                        small
-                        onDownload={() => void download.run(f.hash!, f.name)}
-                        onSaveTo={() => void download.run(f.hash!, f.name, true)}
-                      />
-                    )
+                    // On this computer already: only your other devices can fetch it.
+                    <DownloadButton
+                      small
+                      {...(own
+                        ? {}
+                        : {
+                            onDownload: () => void download.run(f.hash!, f.name),
+                            onSaveTo: () => void download.run(f.hash!, f.name, true),
+                          })}
+                      onRemote={(d) => void remoteDownload.run(d, f.hash!, f.name)}
+                    />
                   ) : (
                     <span className="faint small">Still being prepared</span>
                   )}
@@ -367,6 +374,7 @@ function Browse({
           device={deviceId}
           path={path}
           {...(mine ? {} : { owner })}
+          remoteOnly={own}
           onClose={() => setGetFolder(false)}
         />
       )}
@@ -377,6 +385,7 @@ function Browse({
           path={path}
           owner={owner}
           {...(mine && device ? { ownDevice: device.device_name } : {})}
+          remoteOnly={own}
           onClose={() => setSubscribe(false)}
         />
       )}

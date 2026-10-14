@@ -866,7 +866,7 @@ function Downloads() {
   );
 }
 
-/** Remote control (ADR 0023): your phone may start downloads on this computer. */
+/** Remote control (ADR 0023): your other devices may start downloads on this computer. */
 function RemoteControl() {
   const st = useApi<{ allowed: boolean }>([], '/v1/settings/remote');
   const set = useAction(
@@ -890,12 +890,12 @@ function RemoteControl() {
           onChange={(e) => void set.run(e.target.checked)}
         />
         <span>
-          <b>Let my phone start downloads on this computer</b>
+          <b>Let my other devices start downloads on this computer</b>
           <br />
           <span className="muted small">
             {st.data.allowed
-              ? 'On. Downloads your phone starts show in Transfers with its name.'
-              : 'Off. Your phone can see this computer but can’t start anything here.'}
+              ? 'On. Downloads they start show in Transfers with the device’s name.'
+              : 'Off. Your other devices can see this computer but can’t start anything here.'}
           </span>
         </span>
       </label>

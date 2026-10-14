@@ -538,6 +538,35 @@ async function pickHub(c: LocalApiClient, hub?: string): Promise<string> {
   );
 }
 
+// ── remote control (ADR 0023): another device of this account does the downloading ──
+
+type RemoteDevice = { device_id: string; name: string; platform: string; online: boolean };
+
+/** Another device of this account, by id or by name (any case). */
+async function remoteDevice(c: LocalApiClient, which: string): Promise<RemoteDevice> {
+  const { devices } = await c.get<{ devices: RemoteDevice[] }>('/v1/remote/devices');
+  const hits = devices.filter(
+    (d) => d.device_id === which || d.name.toLowerCase() === which.toLowerCase(),
+  );
+  if (hits.length === 1) return hits[0]!;
+  if (hits.length > 1)
+    throw new Error(`several devices are called ${which}; use its id (\`communal remote\`)`);
+  throw new Error(`no other device of yours called ${which} (\`communal remote\` lists them)`);
+}
+
+async function remote<T>(c: LocalApiClient, d: RemoteDevice, request: object): Promise<T> {
+  if (!d.online) throw new Error(`${d.name} is offline`);
+  return (await c.post<{ result: T }>(`/v1/remote/${encodeURIComponent(d.device_id)}`, request))
+    .result;
+}
+
+/** Remote requests name hubs by URL: each device numbers its own. */
+async function hubUrl(c: LocalApiClient, hub?: string): Promise<string> {
+  const id = await pickHub(c, hub);
+  const { hubs } = await c.get<{ hubs: { id: string; url: string }[] }>('/v1/hubs');
+  return hubs.find((h) => h.id === id)!.url;
+}
+
 /** `me` | `hub` | `users:u_a,u_b` | `groups:g_x` | `users:…+groups:…` */
 function parseAudience(s: string): 'me' | 'hub' | { users?: string[]; groups?: string[] } {
   if (s === 'me' || s === 'hub') return s;
@@ -1026,8 +1055,22 @@ program
   .description('download a file by its hash (see `communal search`), from every online source')
   .option('--name <file>', 'save as (default: the name the owner uses)')
   .option('--dest <dir>', 'folder to save into')
-  .action((hash: string, opts: { name?: string; dest?: string }) =>
+  .option('--on <device>', 'have another device of yours download it, into its downloads folder')
+  .action((hash: string, opts: { name?: string; dest?: string; on?: string }) =>
     viaDaemon(async (c) => {
+      if (opts.on) {
+        if (opts.dest) throw new Error('--dest is for this device; --on saves into its own folder');
+        const d = await remoteDevice(c, opts.on);
+        const t = await remote<{ id: string; name: string }>(c, d, {
+          op: 'download',
+          hash,
+          ...(opts.name ? { name: opts.name } : {}),
+        });
+        console.log(
+          `${t.id}  ${d.name} queued ${t.name}  (\`communal transfers --on ${opts.on}\`)`,
+        );
+        return;
+      }
       const r = await c.post<{ download: Download; reshared?: { summary: string } }>(
         '/v1/downloads',
         {
@@ -1047,8 +1090,25 @@ program
   .description('download a folder of another device once, with its subfolders')
   .option('--hub <id>', 'the hub to list it through (needed when on several)')
   .option('--dest <dir>', 'folder to save into (default: the downloads folder)')
-  .action((device: string, path: string, opts: { hub?: string; dest?: string }) =>
+  .option(
+    '--on <device_name>',
+    'have another device of yours download it, into its downloads folder',
+  )
+  .action((device: string, path: string, opts: { hub?: string; dest?: string; on?: string }) =>
     viaDaemon(async (c) => {
+      if (opts.on) {
+        if (opts.dest) throw new Error('--dest is for this device; --on saves into its own folder');
+        const d = await remoteDevice(c, opts.on);
+        const f = await remote<{ folder: string; queued: number; copied: number; skipped: number }>(
+          c,
+          d,
+          { op: 'download_folder', hub: await hubUrl(c, opts.hub), device_id: device, path },
+        );
+        console.log(
+          `${d.name}: ${f.folder}, ${f.queued} queued, ${f.copied} copied, ${f.skipped} already there`,
+        );
+        return;
+      }
       const hubId = await pickHub(c, opts.hub);
       const r = await c.post<{
         reshared?: { summary: string };
@@ -1097,8 +1157,31 @@ program
   .command('transfers')
   .description('downloads: queued, in progress, waiting for a source, done, failed')
   .option('--clear', 'remove finished downloads from the list (the files stay)')
-  .action((opts: { clear?: boolean }) =>
+  .option('--on <device>', 'another device of yours: its downloads (the 30 newest)')
+  .action((opts: { clear?: boolean; on?: string }) =>
     viaDaemon(async (c) => {
+      if (opts.on) {
+        const d = await remoteDevice(c, opts.on);
+        const { transfers } = await remote<{
+          transfers: {
+            id: string;
+            name: string;
+            state: string;
+            size: number | null;
+            bytes_done: number;
+            error: string | null;
+            requested_by: string | null;
+          }[];
+        }>(c, d, { op: 'transfers' });
+        if (transfers.length === 0) console.log(`no downloads on ${d.name}`);
+        for (const t of transfers) {
+          const pct = t.size ? ` ${Math.floor((t.bytes_done / t.size) * 100)}%` : '';
+          const from = t.requested_by ? `  (from ${t.requested_by})` : '';
+          const err = t.error && t.state !== 'done' ? `  (${t.error})` : '';
+          console.log(`${t.id}  ${t.state.padEnd(9)}${pct.padStart(5)}  ${t.name}${from}${err}`);
+        }
+        return;
+      }
       if (opts.clear) {
         const { cleared } = await c.post<{ cleared: number }>('/v1/downloads/clear', {});
         console.log(`cleared ${cleared} finished download${cleared === 1 ? '' : 's'}`);
@@ -1123,6 +1206,54 @@ program
       }
     }),
   );
+
+const remoteCmd = program
+  .command('remote')
+  .description(
+    'your devices downloading for each other (ADR 0023): --on <device> on get, get-folder, subscribe, transfers, cancel',
+  );
+remoteCmd
+  .command('status', { isDefault: true })
+  .description('whether this device takes requests, and your other devices')
+  .action(() =>
+    viaDaemon(async (c) => {
+      const { allowed } = await c.get<{ allowed: boolean }>('/v1/settings/remote');
+      console.log(
+        `this device: ${allowed ? 'takes' : "doesn't take"} downloads from your other devices`,
+      );
+      const { devices } = await c.get<{ devices: RemoteDevice[] }>('/v1/remote/devices');
+      for (const d of devices) {
+        const state = d.online
+          ? (await remote<{ allowed: boolean }>(c, d, { op: 'hello' }).catch(() => null))?.allowed
+            ? 'takes requests'
+            : "doesn't take requests"
+          : 'offline';
+        console.log(`  ${d.name.padEnd(24)} ${d.platform.padEnd(8)} ${state}  ${d.device_id}`);
+      }
+    }),
+  );
+for (const [name, allowed] of [
+  ['allow', true],
+  ['deny', false],
+] as const) {
+  remoteCmd
+    .command(name)
+    .description(
+      allowed
+        ? 'let your other devices start downloads here (into the downloads folder)'
+        : 'stop taking downloads from your other devices',
+    )
+    .action(() =>
+      viaDaemon(async (c) => {
+        await c.put('/v1/settings/remote', { allowed });
+        console.log(
+          allowed
+            ? 'your other devices can now start downloads here'
+            : 'your other devices can no longer start downloads here',
+        );
+      }),
+    );
+}
 
 program
   .command('netcheck')
@@ -1182,8 +1313,15 @@ function natAdvice(p: NetProfile): string {
 program
   .command('cancel <download_id>')
   .description('cancel a download and delete its partial file')
-  .action((id: string) =>
+  .option('--on <device>', 'a download on another device of yours')
+  .action((id: string, opts: { on?: string }) =>
     viaDaemon(async (c) => {
+      if (opts.on) {
+        const d = await remoteDevice(c, opts.on);
+        await remote(c, d, { op: 'cancel', id });
+        console.log(`cancelled ${id} on ${d.name}`);
+        return;
+      }
       await c.delete(`/v1/downloads/${encodeURIComponent(id)}`);
       console.log(`cancelled ${id}`);
     }),
@@ -1263,13 +1401,29 @@ program
   .option('--mirror-deletes', 'move local copies to the trash when deleted at the source')
   .option('--no-mirror-deletes', 'keep local copies when files are deleted at the source')
   .option('--flat', 'only the files directly in the folder, not its subfolders')
+  .option('--on <device_name>', 'have another device of yours follow it, into its downloads folder')
   .action(
     (
       device: string,
       path: string,
-      opts: { hub?: string; dest?: string; mirrorDeletes?: boolean; flat?: boolean },
+      opts: { hub?: string; dest?: string; mirrorDeletes?: boolean; flat?: boolean; on?: string },
     ) =>
       viaDaemon(async (c) => {
+        if (opts.on) {
+          if (opts.dest || opts.flat)
+            throw new Error('--dest and --flat are for this device; --on follows the whole folder');
+          const d = await remoteDevice(c, opts.on);
+          const mirror = opts.mirrorDeletes ?? (await askMirrorDeletes());
+          const s = await remote<{ id: string }>(c, d, {
+            op: 'subscribe',
+            hub: await hubUrl(c, opts.hub),
+            device_id: device,
+            path,
+            mirror_deletes: mirror,
+          });
+          console.log(`${s.id}  ${d.name} is following ${path}`);
+          return;
+        }
         const hubId = await pickHub(c, opts.hub);
         const mirror = opts.mirrorDeletes ?? (await askMirrorDeletes());
         const r = await c.post<{ subscription: Subscription; reshared?: { summary: string } }>(

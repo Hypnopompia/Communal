@@ -19,6 +19,7 @@ import {
 } from '../ui/files';
 import { Icon } from '../ui/icons';
 import { Empty, ErrorNote } from '../ui/kit';
+import { useRemoteDownload } from '../ui/remote';
 import { VerifiedMark } from '../ui/VerifiedMark';
 
 const KINDS: { value: Kind | ''; label: string }[] = [
@@ -224,6 +225,7 @@ function HitRow({ hit }: { hit: Hit }) {
   const names = useNames();
   const go = useNav();
   const download = useDownload();
+  const remoteDownload = useRemoteDownload();
   const [preview, setPreview] = useState(false);
   // Thumbnails and previews come from the best source (sources are sorted most available first).
   const best = hit.sources[0];
@@ -291,6 +293,7 @@ function HitRow({ hit }: { hit: Hit }) {
           small
           onDownload={() => void download.run(hit.hash, hit.name)}
           onSaveTo={() => void download.run(hit.hash, hit.name, true)}
+          onRemote={(d) => void remoteDownload.run(d, hit.hash, hit.name)}
         />
       </div>
       {preview && best && (

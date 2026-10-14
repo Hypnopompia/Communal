@@ -417,3 +417,23 @@ export type Exposure =
       others: boolean;
       summary: string;
     };
+
+/** `GET /v1/remote/devices`: another device of this account (ADR 0023). */
+export interface RemoteDevice {
+  device_id: string;
+  name: string;
+  platform: string;
+  online: boolean;
+}
+
+/** A transfer on another device, as its `transfers` remote request answers. */
+export interface RemoteTransfer {
+  id: string;
+  name: string;
+  size: number | null;
+  bytes_done: number;
+  state: Transfer['state'];
+  error: string | null;
+  requested_by: string | null;
+  updated_at: number;
+}

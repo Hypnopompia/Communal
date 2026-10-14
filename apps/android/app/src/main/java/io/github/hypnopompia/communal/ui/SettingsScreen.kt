@@ -72,7 +72,7 @@ fun SettingsScreen(model: AppModel) {
         Title("Your computers")
         Text(
             "This phone can ask a computer of yours to download files and keep folders in sync, so they’re " +
-                "waiting there when you get back. Turn it on in the computer’s Settings › Downloads.",
+                "waiting there when you get back. Turn it on in the computer’s Settings › Downloads, or with `communal remote allow` on a server.",
             Modifier.padding(horizontal = 16.dp),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
