@@ -1,6 +1,6 @@
 # ADR 0024 — Transfer speed on imperfect links (Wi-Fi)
 
-- Status: accepted for the diagnosis and tooling. **The fix (a libudx change) waits for the owner** (`docs/questions.md`, "Slow transfers when the network reorders packets").
+- Status: accepted. The owner's slow Wi-Fi turned out to be a full link, not reordering (below). The libudx fix stays parked until a network that reorders shows up (`docs/questions.md`).
 - Date: 2026-10-14
 
 A 1.5 GB download between two of the owner's laptops on the same Wi-Fi ran at about 12 MB/s. On loopback the same download path does about 85 MiB/s. The question was whether our transport (udx-native + secret-stream, ADR 0001/0010) underuses a lossy, higher-latency link, and if so how to fix it.
@@ -75,6 +75,14 @@ Not proven. 802.11 usually hands packets up in order (block-ack reorder buffers)
 
 1. **A baseline**: AirDrop or a Finder (SMB) copy of the same file between the same two laptops.
 2. **The new link stats.** Core now logs udx's counters for each connection, on the uploader (`upload finished`, field `link`) and the downloader (`source finished` / `dropped source`). Many fast recoveries with few RTOs and a low `rtt_ms` mean the path reorders packets. The desktop app's core logs to stdout, so start it from Terminal on the uploading laptop: `/Applications/Communal.app/Contents/MacOS/Communal`. The counters are 16-bit in libudx and wrap at 65,536.
+
+### The owner's Wi-Fi: saturated, not reordering (measured 2026-10-14)
+
+The same 1.45 GB download between the two laptops on 0.1.8, about 14 MB/s. The uploader's `upload finished` line said `rtt_ms 56, cwnd 470, mtu 1500, retransmits 9898, fast_recoveries 218, rtos 0`. The uploader's Wi-Fi was 802.11ac at 866 Mbit/s (channel 149, 80 MHz, −46 dBm). Pinging the router gave 5 ms idle and 14 to 30 ms during the transfer.
+
+- **Not the reordering bug.** That shows about 190 fast recoveries a second. This transfer had about 2 a second, with 1% retransmissions (ordinary Wi-Fi loss) and no RTOs.
+- **The link is full.** The round trip grew from about 5 ms to 56 ms. That means a queue of roughly 700 KB building up in the Wi-Fi path (cwnd 470 × 1500 B, divided by 56 ms, is 12.6 MB/s). A sender held back by its own window wouldn't build a queue. Laptop → access point → laptop also sends every packet over the air twice.
+- **So the libudx patch wouldn't help this case.** A Finder (SMB) copy between the same two laptops, through the same access point, is the fair comparison if we want to be sure. AirDrop goes laptop to laptop directly (AWDL) and skips the access point, so it isn't comparable.
 
 ## Decision
 

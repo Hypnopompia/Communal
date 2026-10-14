@@ -20,7 +20,7 @@ Removing someone's connection request doesn't stop them from sending a new one a
 
 ## Slow transfers when the network reorders packets
 
-**Status:** waiting for the owner. Detail and numbers: ADR 0024.
+**Status:** parked. The owner's slow Wi-Fi turned out to be a full link, not reordering (ADR 0024). Revisit if a user's `link` stats show many `fast_recoveries` (hundreds a second).
 
 libudx counts any reordered packet as lost on a LAN, because its reorder window (`min_rtt / 4` in whole milliseconds) rounds to 0. Downloads then drop from over 100 MB/s to 4 or 5 MB/s in the netem lab. A one-line libudx change brings them back to about 100 MB/s. It isn't proven yet that this is why the owner's laptops got 12 MB/s on Wi-Fi. The questions:
 

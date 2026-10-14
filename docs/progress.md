@@ -14,7 +14,7 @@ These need a person or hardware that CI doesn't have.
 - **The synced folder over a few days** (ADR 0019): two or three computers, including one that's often asleep.
 - **The Windows build** has only been smoke-tested in CI and has never run on a Windows machine.
 - **1 GiB between two physical machines on a LAN** (open since M0).
-- **A slow Wi-Fi download, explained** (ADR 0024). Compare with AirDrop or a Finder copy between the same laptops, and read the uploader's `upload finished` link stats (start the desktop app from Terminal). Then decide how to ship the libudx reorder-window fix (`docs/questions.md`).
+- **A Finder (SMB) copy between the two laptops**, to confirm that ~14 MB/s is what their Wi-Fi does through the access point (ADR 0024: the link stats say the link was full, not reordering).
 - **The headless tarball on a real systemd host.** 0.1.8 ran on an Ubuntu 24.04 LXC and turned up the two bugs fixed on 2026-10-14 below. Recheck on the next release: `sudo -u communal communal status` right after `install.sh`, and `systemctl restart communal` finishing in a few seconds.
 - **A real UPnP/NAT-PMP mapping.** The NAT lab has no UPnP router, so it stops at "no gateway found". A miniupnpd router container could cover this (M5).
 
@@ -99,7 +99,7 @@ A 1.5 GB download between two laptops on Wi-Fi ran at about 12 MB/s. Full write-
 - **Found:** loss (0.5 to 1%), a few ms of latency and bursty delivery leave downloads above 100 MB/s. Constant reordering (netem jitter) drops them to 4 or 5 MB/s, where TCP still does 139. libudx's RACK reorder window is `min_rtt / 4` in whole milliseconds, which is 0 on a LAN, so every reordered packet counts as lost: about 190 spurious fast recoveries a second.
 - **Proven fix, not shipped:** a one-line libudx change (window = `srtt` once reordering is seen) brings those downloads back to 95 to 100 MB/s. Shipping means upstream or our own prebuilds, which waits for the owner (`docs/questions.md`). Parallel streams only partly help and aren't worth the complexity.
 - **Shipped:** `PeerChannel.linkStats()`, logged as `link` on `upload finished`, `source finished` and `dropped source`, so a real slow download shows whether its path reorders packets. Test: `packages/core/src/peer/transport.test.ts`.
-- **Not yet known:** whether the owner's Wi-Fi reorders packets. Next steps are in the backlog under "Try it on real machines".
+- **The owner's Wi-Fi doesn't reorder packets.** A real 1.45 GB transfer at 14 MB/s had RTT 56 ms (5 ms idle), 1% retransmissions and about 2 fast recoveries a second: the link was full. The libudx fix is parked.
 
 ## Folder downloads stalled for 5 minutes (2026-10-14)
 
