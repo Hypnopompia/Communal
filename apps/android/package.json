@@ -1,0 +1,22 @@
+{
+  "name": "@communal/android",
+  "version": "0.1.7",
+  "private": true,
+  "description": "The Android app: a download-only client that runs the core under Node 24 (ADR 0023).",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "bundle": "node scripts/build.mjs",
+    "runtime": "sh scripts/fetch-node.sh",
+    "package": "node scripts/package.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@communal/core": "workspace:*",
+    "@communal/crypto": "workspace:*",
+    "pino": "^10.4.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}

@@ -11,10 +11,11 @@ export default tseslint.config(
       'apps/desktop/release/**',
       'apps/cli/release/**',
       'apps/hub/release/**',
-      // The Android spike's Gradle project (Kotlin, build output, unpacked core bundle).
-      'apps/android-spike/app/**',
-      'apps/android-spike/build/**',
-      'apps/android-spike/.gradle/**',
+      // The Android app's Gradle project (Kotlin, build output, unpacked core bundle, runtime).
+      'apps/android/app/**',
+      'apps/android/build/**',
+      'apps/android/.gradle/**',
+      'apps/android/runtime/**',
     ],
   },
   js.configs.recommended,

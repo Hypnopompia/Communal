@@ -262,6 +262,9 @@ export async function linkDevice(
   const others: OtherHub[] = [];
   for (const h of bundle) {
     if (ctx.hubs.find(h.url)) continue;
+    // The same hub under another address (the approving device's LAN name, say): its pinned
+    // key gives it away, and joining it twice would wait on an address we may not reach.
+    if (ctx.hubs.list().some((x) => x.state.hubPubkey === h.hub_pubkey)) continue;
     try {
       const r = await joinHub(
         ctx.hubs,
@@ -273,7 +276,8 @@ export async function linkDevice(
           platform: o.platform,
           ...accountFields(account),
         },
-        { hubPubkey: h.hub_pubkey },
+        // The other hubs are a bonus: one we can't reach from here mustn't hold up the link.
+        { hubPubkey: h.hub_pubkey, timeoutMs: 60_000 },
       );
       others.push({ url: h.url, ok: true, status: r.status });
     } catch (err) {

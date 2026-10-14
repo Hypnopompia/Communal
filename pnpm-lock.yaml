@@ -191,7 +191,7 @@ importers:
         specifier: ^5.0.3
         version: 5.0.3(@types/node@24.19.2)(vite@7.3.7(@types/node@24.19.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.23.15))
 
-  apps/android-spike:
+  apps/android:
     dependencies:
       '@communal/core':
         specifier: workspace:*

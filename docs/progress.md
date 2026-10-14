@@ -45,9 +45,14 @@ The plan is in `docs/plans/downloads.md`.
 - **New sources during a download.** Re-query sources every ~30 s so a copy that appears mid-download gets used.
 - **More agent tools** from `docs/plans/agents.md`, beyond the first step.
 
-### Proposals for the owner
+### Android (ADR 0023)
 
-- **An Android client** (download-only, mp3 subscriptions first). The spike in ADR 0023 ran the unmodified core on Android 15 under Node 24: link, search, a direct download and a subscription all worked, from a Compose shell over the local API. The recommendation is to embed the core with our own Node 24 build (no Bare, no Kotlin port), estimated at 8–10.5 weeks. Mobile is out of scope in HANDOFF §2, so this needs the owner's go-ahead. Spike code: `apps/android-spike/` (experimental).
+- **The release signing key.** Add `ANDROID_KEYSTORE_B64` and its passwords to the repository's secrets (`apps/android/README.md`). Until then releases go out without an APK.
+- **On a real phone:** Wi-Fi and mobile data (carrier NAT is the big unknown), Doze, a network change mid-download, and a day of background sync windows.
+- **Our own Node 24 build** (Termux's patches, `--shared`, small-icu), loaded in-process over JNI. It replaces the pinned Termux packages, avoids Android 12+'s phantom-process killer, and shrinks the app (about 152 MB installed now). Termux replaces old files in its pool, so the pins in `scripts/fetch-node.sh` will break: mirror them on a GitHub release until our build exists.
+- **Link with a QR code** instead of typing the hub address and code.
+- **Previews on the phone**: tap a picture to see it large, play a song or video without downloading it (`/v1/stream`, `/v1/peek`).
+- **Reinstalling loses the phone's identity** (the Keystore key goes with the app), and files it downloaded before can't be replaced by the new install. Link again; offer to clean up old phone devices in the desktop's Devices list.
 
 ### Known limitations
 
@@ -74,7 +79,17 @@ These are fine for now. Fix them if they start to bite.
 ### After v1
 
 - **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
-- **From HANDOFF §15:** hubs caching thumbnails of hub-wide files, and mobile clients.
+- **From HANDOFF §15:** hubs caching thumbnails of hub-wide files.
+
+## Android client and remote control (2026-10-14)
+
+The owner asked for an Android client after the spike (ADR 0023, now accepted): download-only, a signed APK on GitHub releases, remote control of your computers in the first version, Termux's Node 24 as the stopgap runtime.
+
+- **Remote control** (core `remote.ts`, hub `device.message`): a phone asks one of your computers to download a file, download or follow a folder, list its transfers or cancel one. Requests are sealed to the target's key and signed inside the seal; the receiver checks the sender's chain against its own root, the clock and a nonce. The computer acts only while Settings › Downloads › "Let my phone start downloads" is on, and its transfers show "Started from <phone>". The draft's direct control session wasn't built: the hub would broker it and learn the same thing, so sealed messages through the hub are the only path. CLAUDE.md's no-relay invariant now names this one exception (never file data).
+- **The app** (`apps/android`): Compose screens for setup (link or join), search, library and browse, transfers (this phone, or a computer's), folders kept in sync, and settings. The core runs as a child process with the device key from the Android Keystore on stdin; a foreground service keeps it while the app is open or a download moves, and WorkManager opens 5-minute catch-up windows (hourly to daily, Wi-Fi only by default). Downloads land in `Download/Communal` and are scanned into the media library.
+- **Fixed on the way:** linking a device that reaches the hub under another address (the approver's LAN name) waited on that address forever; the same hub is now recognised by its pinned key. A download that outlasted `Downloads.stop()` wrote to the closed store.
+- **Demo (emulator, Android 15 arm64):** a dev hub, Alice's headless "desktop" and Bob sharing three tagged mp3s with the hub. The phone linked to Alice's account with a code, found the tracks by artist, downloaded one directly into `Download/Communal`, had Alice's desktop download another ("Started from sdk_gphone64_arm64" on both sides), and followed Bob's Road Trip folder: a new track arrived within seconds, and a deleted one went to the app's trash.
+- **Tests:** `test/integration/m13-remote-control.test.ts` (allowlist, the setting, wrong account, junk and forged messages, offline target, the second hub address) and hub `device.message` access cases in `devices.test.ts`.
 
 ## Synced folder: two flaky tests, one real race (2026-10-14)
 

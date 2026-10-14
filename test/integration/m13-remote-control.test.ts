@@ -216,4 +216,13 @@ describe('remote control', () => {
       code: 'unavailable',
     });
   });
+
+  it('links a phone that reaches the hub under another address, without joining it twice', async () => {
+    const h = await hub();
+    const desktop = await core('desktop');
+    const hubId = (await desktop.addHub(h.url, acct('alice'))).hub.id;
+    // The desktop knows the hub as 127.0.0.1; the phone reaches it as localhost.
+    const phone = await link(desktop, hubId, h.url.replace('127.0.0.1', 'localhost'), 'Pixel');
+    expect(phone.hubs.list()).toHaveLength(1);
+  });
 });

@@ -71,3 +71,43 @@ jobs:
         run: |
           for i in $(seq 1 30); do gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && break; sleep 10; done
           gh release upload "$GITHUB_REF_NAME" --clobber apps/cli/release/*.tar.gz $(ls apps/hub/release/*.tar.gz 2>/dev/null)
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        # pnpm comes from corepack below: no package-manager cache before it exists.
+        with: { node-version-file: .nvmrc, package-manager-cache: false }
+      - uses: actions/setup-java@v5
+        with: { distribution: temurin, java-version: '21' }
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Android NDK and patchelf
+        run: |
+          sudo apt-get install -y patchelf
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'ndk;28.2.13676358' 'platforms;android-36' >/dev/null
+      - name: Package the APK (ADR 0023)
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          COMMUNAL_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          COMMUNAL_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          COMMUNAL_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          # Every release must be signed with the same key, or phones can't update. Until the
+          # key is in the repository's secrets, releases go out without an APK.
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::warning::No ANDROID_KEYSTORE_B64 secret: this release has no Android APK (apps/android/README.md)"
+            exit 0
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          export COMMUNAL_ANDROID_KEYSTORE="$RUNNER_TEMP/release.jks"
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
+          pnpm --filter @communal/android package
+      - name: Upload to the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls apps/android/release/*.apk >/dev/null 2>&1 || exit 0
+          for i in $(seq 1 30); do gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && break; sleep 10; done
+          gh release upload "$GITHUB_REF_NAME" --clobber apps/android/release/*.apk

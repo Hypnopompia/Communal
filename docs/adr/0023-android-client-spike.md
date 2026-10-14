@@ -130,6 +130,17 @@ The phone asks one of your computers to download something while you're away fro
 - **Local API:** `GET /v1/remote/devices` (the account's other devices whose chains check out) and `POST /v1/remote/:device` with a request body.
 - **No file data ever goes through the hub.** Files still move directly between peers. CLAUDE.md's "No relay, ever" now says so: no file data is relayed; sealed control messages between your own devices are the one thing the hub forwards.
 
+## The first version (2026-10-14)
+
+`apps/android`, built from the spike. Owner decisions: a signed APK on GitHub releases (no Play Store), remote control in the first version, and Termux's Node 24 as the runtime until our own build exists.
+
+- **Runtime:** `scripts/fetch-node.sh` fetches Termux's `nodejs-lts` 24.18 and its libraries, pinned by SHA-256, for arm64-v8a (phones) and x86_64 (emulators). `scripts/prepare-jnilibs.sh` renames them into `jniLibs/`, builds better-sqlite3 with the NDK, and puts each ABI's core bundle in `assets/core/<abi>/`.
+- **Process:** still a child process (`CoreHost`), started again with a growing delay if it dies, and never two at once (a stopping core is waited for, since two would share one database). The device key is an Ed25519 seed wrapped by an Android Keystore AES key, given to the core on stdin with the API token, so neither sits in a file or the environment.
+- **When the core runs** (`Keeper`): while the app is open, then while a download is moving plus 2 minutes (`CoreService`, a `dataSync` foreground service), and in WorkManager catch-up windows of 5 minutes (hourly, every 6 hours or daily; Wi-Fi only and battery not low by default) that run as WorkManager foreground work, the only way Android 12+ lets background work keep a process. Queued downloads whose sources are offline don't keep the phone awake.
+- **Storage:** downloads go to `Download/Communal` on shared storage (Android 11+ lets an app write its own files there without a permission), and finished files are scanned into the media library. Mirrored deletions are moved to `Android/data/…/files/trash` (same file system, so a rename, and not indexed) and emptied after 30 days. The core prints `TRASHED <path>` so the app drops the file from the media library.
+- **UI:** Compose screens for setup (link with a code, or join a hub as a new account), search with kind filters and thumbnails, Library and browse, a per-file and per-folder sheet ("Download to this phone", "Keep in sync on this phone", and the same for each of your computers that allows it), transfers (this phone and its synced folders, or a computer's transfers), and settings.
+- **Updates:** the app checks the latest GitHub release once a day and offers its arm64 APK; installing goes through Android's own installer. The `android` job in `release.yml` builds and signs it with the key in the repository's secrets, and skips the APK (with a warning) until those exist.
+
 ## Recommendation
 
 1. **Build the Android client on the embedded TypeScript core with Node 24 LTS, not Bare, and don't port to Kotlin.** The core worked unchanged. A Kotlin port would re-implement the hub protocol, Noise/udx framing, the downloader, subscriptions and account linking, and then keep them in sync forever.

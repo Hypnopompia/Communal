@@ -38,6 +38,9 @@ const notes = JSON.parse(readFileSync(join(desktop, 'changelog.json'), 'utf8')).
 );
 if (!notes?.date || !notes.changes?.length)
   fail(`add ${version} (with its date and a list of changes) to apps/desktop/changelog.json`);
+// The Android app takes its version (and versionCode) from its own package.json.
+const android = JSON.parse(readFileSync(join(root, 'apps/android/package.json'), 'utf8')).version;
+if (android !== version) fail(`apps/android/package.json is ${android}: bump it to ${version}`);
 if (out('git', ['status', '--porcelain'])) fail('commit your changes first');
 if (out('git', ['rev-parse', '--abbrev-ref', 'HEAD']) !== 'main') fail('release from main');
 run('git', ['fetch', '-q', 'origin', 'main']);
