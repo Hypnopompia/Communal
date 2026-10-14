@@ -464,7 +464,11 @@ export class Downloads extends EventEmitter<DownloadEvents> {
       await fh?.close();
       await mapFh?.close();
       // Copy: closing fires `drop`, which removes peers from this array.
-      for (const p of [...peers]) p.channel.close();
+      for (const p of [...peers]) {
+        const link = p.channel.linkStats();
+        if (link) this.log.info({ transfer_id: t.id, source: p.key, link }, 'source finished');
+        p.channel.close();
+      }
     }
 
     const final = await uniquePath(t.dest_dir, t.name);
@@ -559,9 +563,10 @@ export class Downloads extends EventEmitter<DownloadEvents> {
         peers.splice(idx, 1);
         for (const i of p.inflight) requestedAt.delete(i);
         p.inflight.clear();
+        const link = p.channel.linkStats();
         p.channel.close();
         stats.delete(p.key);
-        this.log.info({ transfer_id: t.id, source: p.key, why }, 'dropped source');
+        this.log.info({ transfer_id: t.id, source: p.key, why, link }, 'dropped source');
         if (peers.length === 0) return finish(new Retryable(`all sources gone (${why})`));
         for (const q of peers) assign(q);
       };

@@ -189,6 +189,7 @@ export class Uploader {
     } finally {
       this.active--;
       await fh?.close();
+      const link = channel.linkStats();
       channel.close();
       // "Sent" means handed to the stream. Completed = every chunk the peer asked us for went out
       // and the peer then closed cleanly: a resumed or multi-source download asks each uploader
@@ -202,7 +203,7 @@ export class Uploader {
               ? 'partial'
               : 'cancelled';
       this.o.store.logUpload({ ...logBase, path, bytes, status });
-      this.log.info({ hub, peer: offer.from, bytes, status }, 'upload finished');
+      this.log.info({ hub, peer: offer.from, bytes, status, link }, 'upload finished');
     }
   }
 

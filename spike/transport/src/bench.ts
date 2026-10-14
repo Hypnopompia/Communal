@@ -6,6 +6,9 @@
  *   tsx src/bench.ts local [--bytes 1G]
  *       Spawns an uploader and a downloader process on 127.0.0.1 and moves --bytes between them.
  *
+ *   Either mode takes --streams N (parallel udx streams on the one socket, each with its own
+ *   Noise session) and --stats (udx congestion state every second).
+ *
  *   tsx src/bench.ts peer --me alice --peer bob --role up|down --port 41641 \
  *       --peer-addr host:port [--bytes 1G]
  *       One side of a transfer, for runs between containers or LAN hosts. Start both sides;
@@ -173,6 +176,8 @@ async function runPeer(opts: {
   peerHost: string;
   peerPort: number;
   bytes: number;
+  streams: number;
+  stats: boolean;
 }) {
   const me = identity(opts.me);
   const them = identity(opts.peer);
@@ -188,8 +193,46 @@ async function runPeer(opts: {
   }
 
   await punch(socket, opts.peerPort, opts.peerHost);
+  // Several streams share the one socket, each with its own Noise session and congestion state.
+  const n = opts.streams;
+  const t0 = performance.now();
+  const results = await Promise.all(
+    Array.from({ length: n }, (_, k) =>
+      runStream(udx, socket, opts, k, Math.ceil(opts.bytes / n), me, them),
+    ),
+  );
+  if (opts.role === 'down') {
+    const secs = (performance.now() - t0) / 1000;
+    const total = results.reduce((a, r) => a + r.bytes, 0);
+    const ok = results.every((r) => r.ok);
+    const result = {
+      ok,
+      streams: n,
+      bytes: total,
+      seconds: Number(secs.toFixed(2)),
+      MBps: Number((total / 1e6 / secs).toFixed(1)),
+      Mbps: Number(((total * 8) / 1e6 / secs).toFixed(0)),
+      rtt_ms: results[0]!.rtt,
+    };
+    console.log(JSON.stringify(result));
+    if (!ok) process.exitCode = 1;
+  }
+  await socket.close();
+}
+
+async function runStream(
+  udx: UDX,
+  socket: UDXSocket,
+  opts: { role: 'up' | 'down'; peerHost: string; peerPort: number; stats: boolean },
+  k: number,
+  bytes: number,
+  me: Identity,
+  them: Identity,
+): Promise<{ ok: boolean; bytes: number; rtt: number }> {
   const [localId, remoteId] =
-    opts.role === 'up' ? [UP_STREAM_ID, DOWN_STREAM_ID] : [DOWN_STREAM_ID, UP_STREAM_ID];
+    opts.role === 'up'
+      ? [UP_STREAM_ID + 2 * k, DOWN_STREAM_ID + 2 * k]
+      : [DOWN_STREAM_ID + 2 * k, UP_STREAM_ID + 2 * k];
   const raw = udx.createStream(localId);
   raw.connect(socket, remoteId, opts.peerPort, opts.peerHost);
 
@@ -201,18 +244,30 @@ async function runPeer(opts: {
     deviceId: deviceId(them.device.publicKey),
   });
 
+  const stats =
+    opts.stats && k === 0
+      ? setInterval(() => {
+          const r = raw as unknown as Record<string, number>;
+          log(
+            opts.role,
+            `cwnd ${r.cwnd} inflight ${r.inflight} mtu ${r.mtu} srtt ${r.rtt} bbr ${r.bbrState} ` +
+              `bw ${r.bbrBandwidth} retx ${r.retransmits} rto ${r.rtoCount} fr ${r.fastRecoveries}`,
+          );
+        }, 1000)
+      : undefined;
+  let out = { ok: true, bytes, rtt: 0 };
   if (opts.role === 'up') {
     const block = randomFillSync(Buffer.alloc(BLOCK));
     const hash = createHash('sha256');
     const hdr = Buffer.alloc(8);
-    hdr.writeBigUInt64BE(BigInt(opts.bytes));
+    hdr.writeBigUInt64BE(BigInt(bytes));
     await write(s, hdr);
     let sent = 0;
     const t0 = performance.now();
-    while (sent < opts.bytes) {
+    while (sent < bytes) {
       // Vary each block so the hash covers ordering, not just content.
       block.writeUInt32BE(sent / BLOCK, 0);
-      const n = Math.min(BLOCK, opts.bytes - sent);
+      const n = Math.min(BLOCK, bytes - sent);
       const piece = n === BLOCK ? block : block.subarray(0, n);
       hash.update(piece);
       await write(s, Buffer.from(piece));
@@ -221,7 +276,7 @@ async function runPeer(opts: {
     await write(s, hash.digest());
     await readExactly(s, 1); // ack
     const secs = (performance.now() - t0) / 1000;
-    log('up', `sent ${sent} bytes in ${secs.toFixed(2)}s`);
+    if (k === 0) log('up', `sent ${sent} bytes in ${secs.toFixed(2)}s`);
   } else {
     const total = Number((await readExactly(s, 8)).readBigUInt64BE(0));
     const hash = createHash('sha256');
@@ -234,7 +289,7 @@ async function runPeer(opts: {
       hash.update(piece);
       got += piece.length;
       const now = performance.now();
-      if (now - lastReport > 2000) {
+      if (k === 0 && now - lastReport > 2000) {
         log(
           'down',
           `${((got / total) * 100).toFixed(0)}%  ${(got / 1e6 / ((now - t0) / 1000)).toFixed(0)} MB/s`,
@@ -243,29 +298,19 @@ async function runPeer(opts: {
       }
     }
     const digest = await readExactly(s, 32);
-    const secs = (performance.now() - t0) / 1000;
     const ok = digest.equals(hash.digest());
     await write(s, Buffer.from([ok ? 1 : 0]));
-    const mbps = (total * 8) / 1e6 / secs;
-    const result = {
-      ok,
-      bytes: total,
-      seconds: Number(secs.toFixed(2)),
-      MBps: Number((total / 1e6 / secs).toFixed(1)),
-      Mbps: Number(mbps.toFixed(0)),
-      rtt_ms: raw.rtt,
-    };
-    console.log(JSON.stringify(result));
-    if (!ok) process.exitCode = 1;
+    out = { ok, bytes: total, rtt: raw.rtt };
   }
+  clearInterval(stats);
   await new Promise((r) => setTimeout(r, 200));
   s.destroy();
-  await socket.close();
+  return out;
 }
 
-async function runLocal(bytes: string) {
+async function runLocal(bytes: string, extra: string[]) {
   const self = fileURLToPath(import.meta.url);
-  const common = ['--conditions=@communal/source', self, 'peer', '--bytes', bytes];
+  const common = ['--conditions=@communal/source', self, 'peer', '--bytes', bytes, ...extra];
   const run = (args: string[]) =>
     new Promise<number>((resolve) => {
       const p = spawn(process.execPath, ['--import', 'tsx', ...common, ...args], {
@@ -311,12 +356,14 @@ const { positionals, values } = parseArgs({
     port: { type: 'string' },
     'peer-addr': { type: 'string' },
     bytes: { type: 'string', default: '1G' },
+    streams: { type: 'string', default: '1' },
+    stats: { type: 'boolean', default: false },
   },
 });
 
 const mode = positionals[0];
 if (mode === 'local') {
-  await runLocal(values.bytes);
+  await runLocal(values.bytes, ['--streams', values.streams, ...(values.stats ? ['--stats'] : [])]);
 } else if (mode === 'peer') {
   const [peerHost, peerPort] = (values['peer-addr'] ?? '').split(/:(?=\d+$)/);
   if (!values.me || !values.peer || !values.port || !peerHost || !peerPort) {
@@ -332,6 +379,8 @@ if (mode === 'local') {
     peerHost: (await lookup(peerHost)).address,
     peerPort: Number(peerPort),
     bytes: parseBytes(values.bytes),
+    streams: Math.max(1, Number(values.streams)),
+    stats: values.stats,
   });
 } else {
   console.error('usage: bench.ts local [--bytes 1G] | bench.ts peer ...');

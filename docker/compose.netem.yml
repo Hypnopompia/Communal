@@ -1,0 +1,42 @@
+# Link-quality lab: a hub and two clients on one network whose links are shaped with tc netem
+# (delay, jitter, loss, reordering). Measures what a real download and the bare transport
+# (communal-spike) get through a lossy, higher-latency link such as Wi-Fi (ADR 0024).
+#
+#   docker/netem/test.sh      (builds, runs each condition, prints MB/s, tears down)
+x-node: &node
+  image: communal-nat-node:dev
+  cap_add: [NET_ADMIN]
+  depends_on: { hub: { condition: service_healthy } }
+
+services:
+  hub:
+    image: communal-hub:dev
+    environment: { COMMUNAL_JOIN_MODE: open, COMMUNAL_DEV_TLS: 'self-signed' }
+    networks: { link: { ipv4_address: 172.31.0.10 } }
+
+  node-a:
+    <<: *node
+    environment:
+      GATEWAY: 172.31.0.1
+      COMMUNAL_HUB: wss://172.31.0.10:8443/v1
+      COMMUNAL_DEV_TLS: 'self-signed'
+      COMMUNAL_AUTO_INIT: 'true'
+      COMMUNAL_DISPLAY_NAME: alice
+      COMMUNAL_PEER_PORT: '41641'
+      COMMUNAL_UPNP: 'false'
+    networks: { link: { ipv4_address: 172.31.0.20 } }
+
+  node-b:
+    <<: *node
+    environment:
+      GATEWAY: 172.31.0.1
+      COMMUNAL_HUB: wss://172.31.0.10:8443/v1
+      COMMUNAL_DEV_TLS: 'self-signed'
+      COMMUNAL_AUTO_INIT: 'true'
+      COMMUNAL_DISPLAY_NAME: bob
+      COMMUNAL_PEER_PORT: '41641'
+      COMMUNAL_UPNP: 'false'
+    networks: { link: { ipv4_address: 172.31.0.30 } }
+
+networks:
+  link: { ipam: { config: [{ subnet: 172.31.0.0/24 }] } }

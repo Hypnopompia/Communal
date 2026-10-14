@@ -55,6 +55,19 @@ export interface PunchStats {
   udp_received: boolean;
 }
 
+/**
+ * udx's view of a connection, for logs (ADR 0024). Many fast recoveries with no real loss mean
+ * the path reorders packets, which libudx mistakes for loss. Counters wrap at 65536.
+ */
+export interface LinkStats {
+  rtt_ms: number;
+  cwnd: number;
+  mtu: number;
+  retransmits: number;
+  fast_recoveries: number;
+  rtos: number;
+}
+
 export class ConnectError extends Error {
   constructor(
     readonly reason: 'no_path' | 'handshake_failed' | 'peer_rejected' | 'closed',
@@ -390,7 +403,7 @@ export class PeerTransport {
     // void: keepalives every 5 s, and give up after 20 s without hearing anything.
     secure.setKeepAlive(5_000);
     secure.setTimeout(20_000);
-    const ch = new PeerChannel(secure, new Uint8Array(remote), path.host);
+    const ch = new PeerChannel(secure, new Uint8Array(remote), path.host, raw);
     this.channels.add(ch);
     ch.once('close', () => this.channels.delete(ch));
     return ch;
@@ -428,6 +441,7 @@ export class PeerChannel extends EventEmitter<PeerChannelEvents> {
     private readonly stream: SecretStream,
     readonly remotePublicKey: Uint8Array,
     readonly remoteHost: string,
+    private readonly raw?: UDXStream,
   ) {
     super();
     stream.on('data', (d: Buffer) => {
@@ -455,6 +469,20 @@ export class PeerChannel extends EventEmitter<PeerChannelEvents> {
 
   get isLan(): boolean {
     return isLanAddress(this.remoteHost);
+  }
+
+  /** Congestion state of the udx stream underneath (our sending side), for logs. */
+  linkStats(): LinkStats | undefined {
+    const r = this.raw;
+    if (!r) return undefined;
+    return {
+      rtt_ms: r.rtt,
+      cwnd: r.cwnd,
+      mtu: r.mtu,
+      retransmits: r.retransmits,
+      fast_recoveries: r.fastRecoveries,
+      rtos: r.rtoCount,
+    };
   }
 
   /** Sends one frame; resolves once the stream can take more (backpressure). */

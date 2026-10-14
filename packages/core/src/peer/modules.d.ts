@@ -19,6 +19,11 @@ declare module 'udx-native' {
     rtt: number;
     cwnd: number;
     mtu: number;
+    inflight: number;
+    /** 16-bit counters in libudx: they wrap at 65536. */
+    retransmits: number;
+    fastRecoveries: number;
+    rtoCount: number;
     connect(socket: UDXSocket, remoteId: number, port: number, host?: string): void;
   }
 
