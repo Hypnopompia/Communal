@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.1.7",
+    "date": "2026-10-14",
+    "changes": [
+      "Transfers and Activity have a Clear button. Clearing Transfers removes finished downloads from the list; the files stay where they are. Clearing Activity forgets who got files from this computer, after asking.",
+      "Hubs now protect themselves from being flooded: they limit how many new accounts one internet address can create in an hour, how many files one computer can share and how many computers one account can have. If you run a hub, change these under Settings › Hubs › Manage › Settings › Limits. This needs your hub to be updated too.",
+      "Names that use hidden characters to look like someone else's, or to disguise a file's real extension, are no longer accepted, and downloaded files are saved without those characters."
+    ]
+  },
+  {
     "version": "0.1.6",
     "date": "2026-10-13",
     "changes": [
