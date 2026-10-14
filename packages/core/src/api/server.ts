@@ -515,11 +515,19 @@ export class LocalApi {
 
     // ── remote control (ADR 0023) ──
     // This device's switch: may the account's other devices start downloads here?
-    route('GET', '/v1/settings/remote', async () => ({ allowed: this.core.remoteAllowed }));
+    // `downloads`: whether they may use the downloads folder, or only named destinations.
+    const remoteSettings = () => ({
+      allowed: this.core.remoteAllowed,
+      downloads: this.core.remoteDownloads,
+    });
+    route('GET', '/v1/settings/remote', async () => remoteSettings());
     route('PUT', '/v1/settings/remote', async (_req, _url, body) => {
-      const b = z.object({ allowed: z.boolean() }).parse(body);
-      await this.core.updateSettings({ remote_control: b.allowed });
-      return { allowed: this.core.remoteAllowed };
+      const b = z.object({ allowed: z.boolean(), downloads: z.boolean() }).partial().parse(body);
+      await this.core.updateSettings({
+        ...(b.allowed !== undefined ? { remote_control: b.allowed } : {}),
+        ...(b.downloads !== undefined ? { remote_downloads: b.downloads } : {}),
+      });
+      return remoteSettings();
     });
     // Asking another device: the phone side.
     route('GET', '/v1/remote/devices', async () => ({ devices: await this.core.remote.devices() }));

@@ -904,9 +904,13 @@ function Destinations() {
     <div className="panel panel-pad section" style={{ maxWidth: 560 }}>
       <h2>Destinations</h2>
       <p className="muted">
-        Named folders, like Movies or Music. They show up under the arrow next to Download, and
-        they’re the only places your other devices can ask this computer to save into: they see the
-        names, never the folders.
+        Named folders, like Movies or Music. They show up under the arrow next to Download, so you
+        can save straight into them.
+      </p>
+      <p className="muted">
+        Your other devices can ask this computer to save into the downloads folder or any of these.
+        They see the names, never the folders. To offer only these, turn off “Into the downloads
+        folder too” below.
       </p>
       {named.map((d) => (
         <div key={d.name} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -987,26 +991,26 @@ function Destinations() {
 
 /** Remote control (ADR 0023): your other devices may start downloads on this computer. */
 function RemoteControl() {
-  const st = useApi<{ allowed: boolean }>([], '/v1/settings/remote');
+  const st = useApi<{ allowed: boolean; downloads: boolean }>([], '/v1/settings/remote');
   const set = useAction(
-    (allowed: boolean) => api.put<{ allowed: boolean }>('/v1/settings/remote', { allowed }),
+    (change: { allowed?: boolean; downloads?: boolean }) => api.put('/v1/settings/remote', change),
     { onDone: () => void st.refetch() },
   );
   if (!st.data) return <ErrorNote error={st.error} />;
   return (
     <div className="panel panel-pad section" style={{ maxWidth: 560 }}>
-      <h2>Downloads from your phone</h2>
+      <h2>Downloads from your other devices</h2>
       <p className="muted">
-        The Communal app on your phone can ask this computer to download files, follow folders and
-        show its transfers, so things are waiting here when you get back. Only your own devices can
-        ask, and only while this computer is on.
+        Your phone or another of your computers can ask this one to download files, follow folders
+        and show its transfers, so things are waiting here when you get back. Only your own devices
+        can ask, and only while this computer is on.
       </p>
       <label className="check">
         <input
           type="checkbox"
           checked={st.data.allowed}
           disabled={set.busy}
-          onChange={(e) => void set.run(e.target.checked)}
+          onChange={(e) => void set.run({ allowed: e.target.checked })}
         />
         <span>
           <b>Let my other devices start downloads on this computer</b>
@@ -1018,6 +1022,25 @@ function RemoteControl() {
           </span>
         </span>
       </label>
+      {st.data.allowed && (
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={st.data.downloads}
+            disabled={set.busy}
+            onChange={(e) => void set.run({ downloads: e.target.checked })}
+          />
+          <span>
+            <b>Into the downloads folder too</b>
+            <br />
+            <span className="muted small">
+              {st.data.downloads
+                ? 'They can choose the downloads folder or any of your destinations.'
+                : 'Only your destinations, like Movies or TV. Add them above.'}
+            </span>
+          </span>
+        </label>
+      )}
       <ErrorNote error={set.error} />
     </div>
   );

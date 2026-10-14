@@ -66,6 +66,9 @@ import java.io.File
 
 private val thumbs = LruCache<String, ImageBitmap>(300)
 
+/** The built-in destination every computer has, unless it keeps it from other devices. */
+private const val DOWNLOADS = "Downloads"
+
 fun kindIcon(kind: String): ImageVector = when (kind) {
     "image" -> Icons.Default.Image
     "video" -> Icons.Default.Movie
@@ -132,7 +135,11 @@ fun ActionSheet(model: AppModel, target: Target, onClose: () -> Unit) {
     var choosing by remember { mutableStateOf<Pair<Remote, (String?) -> Unit>?>(null) }
     /** Runs `act` on that computer, asking which destination first when it has several. */
     fun onComputer(r: Remote, act: (String?) -> Unit) {
-        if (r.destinations.size > 1) choosing = r to act else act(null)
+        when {
+            r.destinations.size > 1 -> choosing = r to act
+            // Its one destination; no name at all means its downloads folder.
+            else -> act(r.destinations.singleOrNull()?.takeIf { it != DOWNLOADS })
+        }
     }
     ModalBottomSheet(onDismissRequest = onClose) {
         // With several computers the options outgrow the screen: scroll, and keep the last one
@@ -172,13 +179,15 @@ fun ActionSheet(model: AppModel, target: Target, onClose: () -> Unit) {
                 }
                 val usable = d.online && r.allowed == true
                 // One row per destination it names (ADR 0018), its downloads folder first.
-                val dests = if (usable && r.destinations.size > 1) r.destinations else listOf(null)
-                for ((i, label) in dests.withIndex()) {
-                    val dest = if (i == 0) null else label
+                // A computer can keep the downloads folder to itself (only Movies and TV, say).
+                val dests: List<String?> =
+                    if (usable && r.destinations.any { it != DOWNLOADS }) r.destinations else listOf(null)
+                for (label in dests) {
+                    val dest = label?.takeIf { it != DOWNLOADS }
                     Option(
                         Icons.Default.Computer,
                         if (label == null) "Download to ${d.name}" else "Download to ${d.name}: $label",
-                        if (usable && label != null) (if (i == 0) "Its downloads folder" else "Its $label folder") else why,
+                        if (usable && label != null) (if (label == DOWNLOADS) "Its downloads folder" else "Its $label folder") else why,
                         enabled = usable,
                     ) {
                         onClose()
@@ -194,7 +203,12 @@ fun ActionSheet(model: AppModel, target: Target, onClose: () -> Unit) {
                     }
                 }
                 if (target is Target.Folder) {
-                    val syncWhy = if (usable && r.destinations.size > 1) "Choose: ${r.destinations.joinToString(", ")}" else why
+                    val syncWhy = when {
+                        !usable -> why
+                        r.destinations.size > 1 -> "Choose: ${r.destinations.joinToString(", ")}"
+                        r.destinations.singleOrNull()?.let { it != DOWNLOADS } == true -> "Into its ${r.destinations.single()} folder"
+                        else -> why
+                    }
                     Option(Icons.Default.Sync, "Keep in sync on ${d.name}", syncWhy, enabled = usable) {
                         following = d.device_id
                     }
@@ -232,13 +246,13 @@ fun ActionSheet(model: AppModel, target: Target, onClose: () -> Unit) {
             title = { Text("Where on ${r.device.name}?") },
             text = {
                 Column {
-                    r.destinations.forEachIndexed { i, dest ->
+                    r.destinations.forEach { dest ->
                         ListItem(
                             headlineContent = { Text(dest) },
-                            supportingContent = if (i == 0) ({ Text("Its downloads folder") }) else null,
+                            supportingContent = if (dest == DOWNLOADS) ({ Text("Its downloads folder") }) else null,
                             modifier = Modifier.clickableRow {
                                 choosing = null
-                                act(if (i == 0) null else dest)
+                                act(dest.takeIf { it != DOWNLOADS })
                             },
                         )
                     }

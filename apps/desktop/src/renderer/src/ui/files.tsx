@@ -13,7 +13,13 @@ import {
   type Destination,
 } from '../api';
 import { useHubs } from '../hubs';
-import { remote, RemoteDestinationField, useRemoteTargets, WhereField } from './remote';
+import {
+  destinationField,
+  remote,
+  RemoteDestinationField,
+  useRemoteTargets,
+  WhereField,
+} from './remote';
 import { baseName, date, duration, plural, size } from '../format';
 import { useApi } from '../query';
 import { Dialog, ErrorNote, useAction, useConfirm } from './kit';
@@ -285,7 +291,7 @@ export function DownloadButton({
           )}
           {remoteTargets.flatMap((d) =>
             // Its downloads folder, or one of its named destinations (names only: ADR 0018).
-            d.destinations.length <= 1
+            d.destinations.every((x) => x === 'Downloads')
               ? [
                   <button
                     key={d.device_id}
@@ -299,13 +305,13 @@ export function DownloadButton({
                     Download on {d.name}
                   </button>,
                 ]
-              : d.destinations.map((dest, i) => (
+              : d.destinations.map((dest) => (
                   <button
                     key={`${d.device_id}:${dest}`}
                     role="menuitem"
                     onClick={() => {
                       setOpen(false);
-                      onRemote!(d, i === 0 ? undefined : dest);
+                      onRemote!(d, dest === 'Downloads' ? undefined : dest);
                     }}
                   >
                     On {d.name}: {dest}
@@ -450,7 +456,7 @@ export function DownloadFolderDialog({
               hub: hubs.find((h) => h.id === hub)?.url,
               device_id: device,
               path,
-              ...(remoteDest ? { destination: remoteDest } : {}),
+              ...destinationField(there, remoteDest),
             }),
           }
         : api.post<{ folder: FolderDownload; where?: string }>('/v1/downloads/folder', {
@@ -569,7 +575,7 @@ export function SubscribeDialog({
             device_id: device,
             path,
             mirror_deletes: mirror,
-            ...(remoteDest ? { destination: remoteDest } : {}),
+            ...destinationField(there, remoteDest),
           })
         : api.post('/v1/subscriptions', {
             hub,

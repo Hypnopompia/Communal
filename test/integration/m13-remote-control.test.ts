@@ -292,4 +292,28 @@ describe('remote control', () => {
       code: 'not_found',
     });
   });
+
+  it('can keep other devices out of the downloads folder, offering only named destinations', async () => {
+    const { desktop, phone, hash } = await world();
+    const movies = tmp('communal-m13-movies-');
+    await desktop.saveDestination('Movies', movies);
+    await desktop.updateSettings({ remote_control: true, remote_downloads: false });
+    expect(await phone.remote.request(desktop.deviceId, { op: 'hello' })).toEqual({
+      allowed: true,
+      destinations: ['Movies'],
+    });
+    // No destination no longer means the downloads folder: an older app asking that way is
+    // refused rather than guessed at.
+    await expect(
+      phone.remote.request(desktop.deviceId, { op: 'download', hash }),
+    ).rejects.toMatchObject({ code: 'bad_request' });
+    await expect(
+      phone.remote.request(desktop.deviceId, { op: 'download', hash, destination: 'downloads' }),
+    ).rejects.toMatchObject({ code: 'not_found' });
+    expect(desktop.downloads.list()).toEqual([]);
+    await phone.remote.request(desktop.deviceId, { op: 'download', hash, destination: 'Movies' });
+    expect(desktop.downloads.list()[0]!.dest_dir).toBe(movies);
+    // Locally, the downloads folder is still there.
+    expect(desktop.destinations()[0]!.name).toBe('Downloads');
+  });
 });

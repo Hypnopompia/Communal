@@ -1293,9 +1293,12 @@ remoteCmd
   .description('whether this device takes requests, and your other devices')
   .action(() =>
     viaDaemon(async (c) => {
-      const { allowed } = await c.get<{ allowed: boolean }>('/v1/settings/remote');
+      const { allowed, downloads } = await c.get<{ allowed: boolean; downloads: boolean }>(
+        '/v1/settings/remote',
+      );
       console.log(
-        `this device: ${allowed ? 'takes' : "doesn't take"} downloads from your other devices`,
+        `this device: ${allowed ? 'takes' : "doesn't take"} downloads from your other devices` +
+          (allowed && !downloads ? ' (only into named destinations)' : ''),
       );
       const { devices } = await c.get<{ devices: RemoteDevice[] }>('/v1/remote/devices');
       for (const d of devices) {
@@ -1313,6 +1316,22 @@ remoteCmd
         if (hello?.allowed && hello.destinations)
           console.log(`    destinations: ${hello.destinations.join(', ')}`);
       }
+    }),
+  );
+remoteCmd
+  .command('downloads <on_or_off>')
+  .description(
+    'whether your other devices may save into the downloads folder here, or only into named destinations (`communal dest`)',
+  )
+  .action((value: string) =>
+    viaDaemon(async (c) => {
+      if (value !== 'on' && value !== 'off') throw new Error('say on or off');
+      await c.put('/v1/settings/remote', { downloads: value === 'on' });
+      console.log(
+        value === 'on'
+          ? 'your other devices can save into the downloads folder here, or into a destination'
+          : 'your other devices can only save into the destinations here (`communal dest`)',
+      );
     }),
   );
 for (const [name, allowed] of [

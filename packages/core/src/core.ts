@@ -116,6 +116,11 @@ export interface SavedSettings {
   downloads_dir?: string | null;
   /** Other devices of this account may start downloads here (ADR 0023). Off unless set. */
   remote_control?: boolean;
+  /**
+   * Whether other devices may save into the downloads folder, or only into named destinations
+   * (a media server with Movies and TV, say). On unless set.
+   */
+  remote_downloads?: boolean;
   /** Named places to save (ADR 0018): what other devices can ask for, never a raw path. */
   destinations?: { name: string; path: string }[];
 }
@@ -175,6 +180,8 @@ export class CommunalCore {
   uploadLimits: UploadLimits;
   /** Whether this device takes remote requests (Settings › Remote control). */
   remoteAllowed: boolean;
+  /** Whether other devices may use the downloads folder, not only named destinations. */
+  remoteDownloads: boolean;
   readonly log: Logger;
   private readonly hubsFile: string;
   private readonly settingsFile: string;
@@ -253,6 +260,7 @@ export class CommunalCore {
     this.chosenDownloadsDir = saved.downloads_dir ?? undefined;
     this.uploadLimits = { ...DEFAULT_UPLOAD_LIMITS, ...o.uploads, ...saved.uploads };
     this.remoteAllowed = saved.remote_control ?? false;
+    this.remoteDownloads = saved.remote_downloads ?? true;
     this.uploader = new Uploader({
       store: this.store,
       hubs: this.hubs,
@@ -950,9 +958,16 @@ export class CommunalCore {
 
   // ── remote control (ADR 0023) ─────────────────────────────────────────────
 
+  /** The destinations other devices may ask for: all of them, or all but the downloads folder. */
+  private remoteDestinations(): string[] {
+    const all = this.destinations().map((d) => d.name);
+    return this.remoteDownloads ? all : all.filter((n) => n !== DOWNLOADS_DESTINATION);
+  }
+
   /**
-   * Runs a request from another device of this account. Only these few things, and always into
-   * this device's own downloads folder: never devices, sharing, access rules or settings.
+   * Runs a request from another device of this account. Only these few things, and only into
+   * this device's downloads folder or its named destinations: never devices, sharing, access
+   * rules or settings.
    */
   private async runRemote(req: RemoteRequest, from: string): Promise<unknown> {
     const hubId = (url: string) => {
@@ -960,24 +975,34 @@ export class CommunalCore {
       if (!h) throw new CoreError('not_found', `this computer isn't on ${url}`);
       return h.id;
     };
+    // A request without a destination means the downloads folder, if this device offers it.
+    const where = (destination?: string): string => {
+      const name = destination ?? DOWNLOADS_DESTINATION;
+      if (!this.remoteDestinations().some((n) => n.toLowerCase() === name.toLowerCase())) {
+        if (!destination)
+          throw new CoreError(
+            'bad_request',
+            `choose where: ${this.remoteDestinations().join(', ')}`,
+          );
+        throw new CoreError('not_found', `no destination called ${destination}`);
+      }
+      return name;
+    };
     switch (req.op) {
       case 'hello':
         // Names only: the folders they stand for never leave this device.
-        return {
-          allowed: this.remoteAllowed,
-          destinations: this.destinations().map((d) => d.name),
-        };
+        return { allowed: this.remoteAllowed, destinations: this.remoteDestinations() };
       case 'download': {
         const t = await this.download(req.hash, {
           ...(req.name ? { name: req.name } : {}),
-          ...(req.destination ? { destination: req.destination } : {}),
+          destination: where(req.destination),
           requestedBy: from,
         });
         return { id: t.id, name: t.name };
       }
       case 'download_folder': {
         const f = await this.downloadFolder(hubId(req.hub), req.device_id, req.path, {
-          ...(req.destination ? { destination: req.destination } : {}),
+          destination: where(req.destination),
           requestedBy: from,
         });
         const { dest, ...counts } = f;
@@ -990,7 +1015,7 @@ export class CommunalCore {
           path: req.path,
           mirrorDeletes: req.mirror_deletes,
           recursive: true,
-          ...(req.destination ? { dest: this.destinationFolder(req.destination, req.path) } : {}),
+          dest: this.destinationFolder(where(req.destination), req.path),
         });
         return { id: s.id };
       }
@@ -1145,6 +1170,10 @@ export class CommunalCore {
       this.chosenDownloadsDir = dir ?? undefined;
     }
     if (change.destinations !== undefined) saved.destinations = change.destinations;
+    if (change.remote_downloads !== undefined) {
+      saved.remote_downloads = change.remote_downloads;
+      this.remoteDownloads = change.remote_downloads;
+    }
     if (change.remote_control !== undefined) {
       saved.remote_control = change.remote_control;
       this.remoteAllowed = change.remote_control;

@@ -172,23 +172,44 @@ export function RemoteDestinationField({
   value: string | null;
   onChange: (destination: string | null) => void;
 }) {
-  if (target.destinations.length <= 1)
+  if (target.destinations.every((d) => d === 'Downloads'))
     return <p className="muted small">Into {target.name}’s downloads folder.</p>;
+  const current = chosenDestination(target, value);
   return (
     <label className="field">
       <span>Destination on {target.name}</span>
       <select
         className="input"
         style={{ width: 'auto' }}
-        value={value ?? ''}
-        onChange={(e) => onChange(e.target.value || null)}
+        value={current}
+        onChange={(e) => onChange(e.target.value)}
       >
-        {target.destinations.map((d, i) => (
-          <option key={d} value={i === 0 ? '' : d}>
+        {target.destinations.map((d) => (
+          <option key={d} value={d}>
             {d}
           </option>
         ))}
       </select>
     </label>
   );
+}
+
+/**
+ * The destination a request will name: the person's choice, else the downloads folder, else
+ * (a device that keeps its downloads folder to itself) its first destination.
+ */
+function chosenDestination(target: RemoteTarget, value: string | null): string {
+  if (value && target.destinations.includes(value)) return value;
+  return target.destinations.includes('Downloads')
+    ? 'Downloads'
+    : (target.destinations[0] ?? 'Downloads');
+}
+
+/** The `destination` field of a remote request: left out for the downloads folder. */
+export function destinationField(
+  target: RemoteTarget,
+  value: string | null,
+): { destination?: string } {
+  const d = chosenDestination(target, value);
+  return d === 'Downloads' ? {} : { destination: d };
 }

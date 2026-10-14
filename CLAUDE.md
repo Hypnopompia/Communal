@@ -51,7 +51,7 @@ These came from the owner during development. Don't revert them to the spec's wo
   - It needs `gh` logged in, the Developer ID certificate in the keychain, and the App Store Connect API key in `.env` (see `.env.example`).
   - It signs and notarizes both Mac apps locally. GitHub Actions (`release.yml`) adds Windows, Linux and the tarballs to the draft, then the script publishes.
 - Destinations (ADR 0018): `communal dest [list|add <name> <folder>|set|remove]`, then `--to <name>` on `get`, `get-folder` and `subscribe` (also with `--on`: other devices can only name a destination, never a path).
-- Remote control (ADR 0023): `communal remote [status|allow|deny]`, and `--on <device id or name>` on `get`, `get-folder`, `subscribe`, `transfers` and `cancel` to have another of your devices do it.
+- Remote control (ADR 0023): `communal remote [status|allow|deny|downloads on|off]` (`downloads off`: other devices may only name a destination), and `--on <device id or name>` on `get`, `get-folder`, `subscribe`, `transfers` and `cancel` to have another of your devices do it.
 - Hub admin from a client: `communal admin users|approve|ban|unban|settings|graph|log` (on hubs you administer).
 - AI agents: `communal mcp` (stdio MCP server). The desktop app serves its local socket only while Settings › AI agents allows it.
 - Site: `site/` (static HTML, deployed by `.github/workflows/pages.yml` to https://hypnopompia.github.io/Communal/). Screenshots in `site/screenshots/` come from two app profiles with generated demo data, never real files.
