@@ -110,7 +110,7 @@ export interface HubStatus {
 export interface AdminDevice {
   device_id: string;
   name: string;
-  platform: 'darwin' | 'win32' | 'linux';
+  platform: 'darwin' | 'win32' | 'linux' | 'android';
   created_at: number;
   last_seen: number | null;
   revoked_at: number | null;
@@ -298,6 +298,8 @@ export interface Transfer {
   bytes_done: number;
   error: string | null;
   final_path: string | null;
+  /** The phone (another device of this account) that asked for it (ADR 0023). */
+  requested_by: string | null;
   diagnosis: Diagnosis | null;
   created_at: number;
   updated_at: number;

@@ -635,6 +635,8 @@ export class HubServer {
           return this.send(s, 'device.listing', this.deviceListing(s.user!), msg.id);
         case 'device.revoke':
           return this.onRevoke(s, msg.id, msg.body);
+        case 'device.message':
+          return this.onDeviceMessage(s, msg.id, msg.body);
         case 'admin.users':
         case 'admin.approve':
         case 'admin.ban':
@@ -1518,8 +1520,26 @@ export class HubServer {
         last_seen: d.last_seen,
         revoked_at: d.revoked_at,
         root: d.pubkey === user.root_pubkey,
+        pubkey: d.pubkey,
+        chain: d.chain,
       })),
     };
+  }
+
+  /**
+   * Forwards a sealed message to another device of the sender's account that is online now
+   * (ADR 0023). The hub can't read it and keeps nothing. Any other target, including another
+   * account's device, gets the same answer, so device ids can't be probed with it.
+   */
+  private onDeviceMessage(s: Session, re: string, body: ClientBody<'device.message'>) {
+    const target = this.db.getDevice(body.to);
+    const peer =
+      target && target.user_id === s.user && target.revoked_at === null && body.to !== s.device
+        ? this.online.get(body.to)
+        : undefined;
+    if (!peer) return this.fail(s, 'not_found', 'that device is not online', re);
+    this.send(peer, 'device.message', { from: s.device!, sealed: body.sealed });
+    this.send(s, 'ok', {}, re);
   }
 
   private onRevoke(s: Session, re: string, proof: RevocationProof) {

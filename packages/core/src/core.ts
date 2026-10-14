@@ -16,7 +16,7 @@ import {
   type RecoveryFile,
   type RevocationProof,
 } from '@communal/crypto';
-import type { ClientBody, HubBody } from '@communal/protocol';
+import type { ClientBody, HubBody, RemoteRequest, RemoteTransfer } from '@communal/protocol';
 import { HubManager, type HubEntry, type SharedClientOptions } from './hub-manager.js';
 import { Indexer, type IndexerOptions } from './index/indexer.js';
 import { IndexStore, type Audience, type ShareRow } from './index/store.js';
@@ -53,6 +53,7 @@ import { IndexSync } from './index/sync.js';
 import { searchAll, type MergedSearch, type SearchFrom } from './search.js';
 import type { Enrollment } from './hub-client.js';
 import { CoreError } from './errors.js';
+import { RemoteControl } from './remote.js';
 import {
   AccountFile,
   accountFields,
@@ -113,6 +114,8 @@ export interface SavedSettings {
   thumb_cache_bytes?: number;
   /** Where downloads land unless the person picks a folder (ADR 0018); null goes back. */
   downloads_dir?: string | null;
+  /** Other devices of this account may start downloads here (ADR 0023). Off unless set. */
+  remote_control?: boolean;
 }
 
 /** A link request waiting for this device's approval (ADR 0014). */
@@ -155,7 +158,11 @@ export class CommunalCore {
   readonly subscriptions: Subscriptions;
   readonly syncFolder: SyncFolder;
   readonly revocations: Revocations;
+  /** Remote control between this account's devices (ADR 0023). */
+  readonly remote: RemoteControl;
   uploadLimits: UploadLimits;
+  /** Whether this device takes remote requests (Settings › Remote control). */
+  remoteAllowed: boolean;
   readonly log: Logger;
   private readonly hubsFile: string;
   private readonly settingsFile: string;
@@ -233,6 +240,7 @@ export class CommunalCore {
     const saved = this.loadSettings();
     this.chosenDownloadsDir = saved.downloads_dir ?? undefined;
     this.uploadLimits = { ...DEFAULT_UPLOAD_LIMITS, ...o.uploads, ...saved.uploads };
+    this.remoteAllowed = saved.remote_control ?? false;
     this.uploader = new Uploader({
       store: this.store,
       hubs: this.hubs,
@@ -272,6 +280,15 @@ export class CommunalCore {
       broker: this.broker,
       cache: this.thumbCache,
       ...(answerTimeoutMs ? { answerTimeoutMs } : {}),
+      log: this.log,
+    });
+    this.remote = new RemoteControl({
+      hubs: this.hubs,
+      device: o.device,
+      account: () => this.accountId,
+      revocations: this.revocations,
+      allowed: () => this.remoteAllowed,
+      run: (req, from) => this.runRemote(req, from.name),
       log: this.log,
     });
     this.streams = new Streams({
@@ -809,7 +826,10 @@ export class CommunalCore {
   // ── transfers ─────────────────────────────────────────────────────────────
 
   /** Starts downloading a file by hash. Without a name, the first source's file name is used. */
-  async download(hash: string, opts: { name?: string; destDir?: string } = {}) {
+  async download(
+    hash: string,
+    opts: { name?: string; destDir?: string; requestedBy?: string } = {},
+  ) {
     let name = opts.name;
     if (!name) {
       for (const r of await this.hubs.requestAll('sources', { hash })) {
@@ -822,14 +842,24 @@ export class CommunalCore {
     }
     if (!name) throw new CoreError('not_found', 'no visible source has that file');
     const destDir = opts.destDir ? await usableFolder(opts.destDir) : undefined;
-    return this.downloads.add({ hash, name, ...(destDir ? { destDir } : {}) });
+    return this.downloads.add({
+      hash,
+      name,
+      ...(destDir ? { destDir } : {}),
+      ...(opts.requestedBy ? { requestedBy: opts.requestedBy } : {}),
+    });
   }
 
   /**
    * Downloads a folder of another device (and its subfolders) once, into
    * `<destDir or the downloads folder>/<folder name>`, keeping its structure (ADR 0018).
    */
-  async downloadFolder(hub: string, device: string, path: string, opts: { destDir?: string } = {}) {
+  async downloadFolder(
+    hub: string,
+    device: string,
+    path: string,
+    opts: { destDir?: string; requestedBy?: string } = {},
+  ) {
     if (device === this.deviceId)
       throw new CoreError('bad_request', 'those files are already on this computer');
     return downloadFolder(this, {
@@ -837,7 +867,69 @@ export class CommunalCore {
       device,
       path,
       destDir: opts.destDir ? await usableFolder(opts.destDir) : this.downloadsDir,
+      ...(opts.requestedBy ? { requestedBy: opts.requestedBy } : {}),
     });
+  }
+
+  // ── remote control (ADR 0023) ─────────────────────────────────────────────
+
+  /**
+   * Runs a request from another device of this account. Only these few things, and always into
+   * this device's own downloads folder: never devices, sharing, access rules or settings.
+   */
+  private async runRemote(req: RemoteRequest, from: string): Promise<unknown> {
+    const hubId = (url: string) => {
+      const h = this.hubs.find(url);
+      if (!h) throw new CoreError('not_found', `this computer isn't on ${url}`);
+      return h.id;
+    };
+    switch (req.op) {
+      case 'hello':
+        return { allowed: this.remoteAllowed };
+      case 'download': {
+        const t = await this.download(req.hash, {
+          ...(req.name ? { name: req.name } : {}),
+          requestedBy: from,
+        });
+        return { id: t.id, name: t.name };
+      }
+      case 'download_folder': {
+        const f = await this.downloadFolder(hubId(req.hub), req.device_id, req.path, {
+          requestedBy: from,
+        });
+        const { dest, ...counts } = f;
+        return { ...counts, folder: basename(dest) };
+      }
+      case 'subscribe': {
+        const s = await this.subscriptions.add({
+          hub: hubId(req.hub),
+          device: req.device_id,
+          path: req.path,
+          mirrorDeletes: req.mirror_deletes,
+          recursive: true,
+        });
+        return { id: s.id };
+      }
+      case 'transfers':
+        return {
+          transfers: this.downloads
+            .list()
+            .slice(0, 30)
+            .map((t): RemoteTransfer => ({
+              id: t.id,
+              name: t.name,
+              size: t.size,
+              bytes_done: t.bytes_done,
+              state: t.state,
+              error: t.error,
+              requested_by: t.requested_by,
+              updated_at: t.updated_at,
+            })),
+        };
+      case 'cancel':
+        if (!this.downloads.cancel(req.id)) throw new CoreError('not_found', 'no such download');
+        return { cancelled: req.id };
+    }
   }
 
   // ── previews (M6) ─────────────────────────────────────────────────────────
@@ -968,6 +1060,10 @@ export class CommunalCore {
       saved.downloads_dir = dir;
       this.chosenDownloadsDir = dir ?? undefined;
     }
+    if (change.remote_control !== undefined) {
+      saved.remote_control = change.remote_control;
+      this.remoteAllowed = change.remote_control;
+    }
     if (change.thumb_cache_bytes !== undefined) {
       saved.thumb_cache_bytes = change.thumb_cache_bytes;
       await this.thumbCache.setCap(change.thumb_cache_bytes);
@@ -1029,6 +1125,7 @@ async function usableFolder(dir: string): Promise<string> {
   return abs;
 }
 
-function platform(): 'darwin' | 'win32' | 'linux' {
-  return process.platform === 'darwin' || process.platform === 'win32' ? process.platform : 'linux';
+export function platform(): 'darwin' | 'win32' | 'linux' | 'android' {
+  const p = process.platform;
+  return p === 'darwin' || p === 'win32' || p === 'android' ? p : 'linux';
 }

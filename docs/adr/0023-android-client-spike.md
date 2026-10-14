@@ -1,6 +1,6 @@
 # ADR 0023 — Android client: embed the TypeScript core (spike)
 
-- Status: **proposed** (draft for the owner). HANDOFF §2 lists mobile as out of scope, so this is a proposal, not a decision.
+- Status: **accepted** (2026-10-14). The owner asked for the Android client, which overrides HANDOFF §2's "Mobile: out of scope". Distribution is a signed APK on GitHub releases, and remote control is in the first version.
 - Date: 2026-10-14
 - Spike code: `apps/android-spike/` (experimental, not shipped, not built by CI beyond typecheck and lint)
 
@@ -115,39 +115,20 @@ So the real app should embed Node **in-process** (`libnode.so` built with `--sha
 - Previews (thumbnails, peek, streaming). They use the same peer protocol as the download that worked, but weren't exercised.
 - Remote control (see "Remote control (later)").
 
-## Remote control (later)
+## Remote control
 
-The phone asks one of your desktops to download something. Not built and not part of the spike. These are the decisions so far, including the owner's: "we can do a sealed fallback through the hub".
+The phone asks one of your computers to download something while you're away from it. Owner decisions: remote control is in the first version, and "we can do a sealed fallback through the hub".
 
-**Primary path: a direct peer session.**
+**One path: sealed messages through the hub.** The draft had a direct peer session (`hello.purpose: 'control'`) as the main path, with sealed hub messages as the fallback. Building it showed the direct path adds nothing: the hub brokers a direct session with `connect.request`, so it learns exactly what it learns from a sealed message (your two devices talked, and when). The contents are end-to-end encrypted either way. Sealed messages also work through any NAT, including a phone on carrier NAT. So they're the only path, and the direct session isn't built.
 
-- The phone opens a session with the new peer purpose `hello.purpose: 'control'`, over the normal udx + Noise transport (ADR 0001, 0010).
-- The desktop accepts it only when the peer's cert chain belongs to **the same account** and no device in it is revoked (`Revocations.revokedFor`).
-- The hub brokers it with a `connect.request` variant that it allows only between devices of the same account.
-
-**Commands are an allowlist:** download a file, download a folder, subscribe, list transfers, cancel.
-
-- Never devices, recovery, linking, sharing, access rules or hub admin. That's narrower than the MCP tool set (ADR 0017).
-- The phone does its own search and browse, so control doesn't need them.
-
-**The desktop opts in.** A setting, "Let my phone start downloads", is off by default. Every remote request shows in Activity with the phone as the requester.
-
-**Fallback (owner decision): sealed messages through the hub.** When no direct path exists (`connect.failed`), the phone sends the same command through the hub instead.
-
-- **Sealing:**
-  - The target device's Ed25519 key is converted to X25519 (`edwardsToMontgomery` in `@noble/curves`, already a dependency).
-  - The phone seals to it with an ephemeral X25519 key. The shared secret goes through HKDF-SHA256 into XChaCha20-Poly1305, the AEAD the recovery file already uses.
-  - A sealed box hides the sender, so the plaintext carries the phone's device id and cert chain, plus an Ed25519 signature over the command, its nonce and the target's device id. The desktop checks the chain against the account root and `Revocations.revokedFor`, exactly as for a peer session.
-- **Hub:** it forwards the opaque blob only between devices of the same account. A banned sender, or a revoked sender or target, is refused.
-- **Replies and status:** they come back the same way, sealed to the phone.
-- **Limits:** a small size cap, plus per-account rate and queue limits under ADR 0022. Messages for an offline device wait only briefly.
-- **Replay protection:** a random nonce and a timestamp. The desktop refuses anything older than a short expiry, and keeps a seen-set of nonces for that window.
-- **No file data ever goes through the hub.** Only commands and status do. The hub learns only that your devices exchanged messages, and when.
-- It needs new hub messages (record them in ADR 0004 when built) and hub tests: same account only, banned or revoked senders rejected.
-
-**A pending invariant change.** When this is built, "No relay, ever" in CLAUDE.md and HANDOFF becomes "no file data is ever relayed; only sealed control messages between your own devices". It isn't changed now.
-
-**Estimate:** about 3–5 weeks including the fallback, on top of the table below.
+- **Wire format** (`packages/protocol/src/remote.ts`): the plaintext is a 64-byte Ed25519 signature (domain `communal/remote/v1`) followed by a JSON `RemoteBody`: `from`, `from_pubkey`, the sender's `chain`, `to`, a 16-byte `nonce`, `ts`, and a `request` or a `reply` (with `re`, the request's nonce). It's sealed with the existing `sealTo` (ADR 0014: ephemeral X25519, BLAKE3 key derivation, XChaCha20-Poly1305), to the target's key from `device.listing`. The sender first checks that key's chain against its own account root.
+- **The receiver checks everything:** the sender is the device the hub named, `deviceId(from_pubkey)` matches, the signature verifies, the chain verifies to its own account root with nothing revoked (`Revocations.revokedFor`), `to` is itself, the clock is within 120 s, and the nonce is new (a seen-set for twice that window). Anything else is dropped and logged, unanswered.
+- **The hub** (`device.message`, ADR 0004) forwards only between online, unrevoked devices of the sender's account, and answers `not_found` for everything else. It keeps nothing, and the message costs 2 from the session budget (ADR 0022).
+- **Commands are an allowlist** (`CommunalCore.runRemote`): `hello` (is remote control on?), `download`, `download_folder`, `subscribe`, `transfers` (the 30 newest, with no local paths) and `cancel`. Never devices, recovery, linking, sharing, access rules, settings or hub admin. That's narrower than the MCP tool set (ADR 0017). The phone does its own search and browse.
+- **The computer opts in.** Settings › Downloads › "Let my phone start downloads on this computer" (`remote_control` in settings.json, `GET/PUT /v1/settings/remote`) is off by default. While it's off, only `hello` is answered (with `allowed: false`), so the phone can explain why.
+- **Who asked is shown.** Transfers carry `requested_by`, the asking device's name, and the desktop shows "Started from Pixel". This replaces the draft's "Activity" line: Activity is the upload log, and these are downloads.
+- **Local API:** `GET /v1/remote/devices` (the account's other devices whose chains check out) and `POST /v1/remote/:device` with a request body.
+- **No file data ever goes through the hub.** Files still move directly between peers. CLAUDE.md's "No relay, ever" now says so: no file data is relayed; sealed control messages between your own devices are the one thing the hub forwards.
 
 ## Recommendation
 

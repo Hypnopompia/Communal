@@ -46,6 +46,8 @@ export interface TransferRow {
   bytes_done: number;
   error: string | null;
   final_path: string | null;
+  /** The other device of this account that asked for it (remote control, ADR 0023). */
+  requested_by: string | null;
   /** Why the last attempt couldn't connect, as diagnosed by the hub (M5). */
   diagnosis: TransferDiagnosis | null;
   created_at: number;
@@ -269,6 +271,10 @@ const MIGRATIONS = [
   -- the source's modification time of each file, which synced copies keep.
   ALTER TABLE subscriptions ADD COLUMN sync INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE sub_files ADD COLUMN mtime INTEGER;
+  `,
+  `
+  -- Remote control (ADR 0023): the name of the device that asked for a download, if not us.
+  ALTER TABLE transfers ADD COLUMN requested_by TEXT;
   `,
 ];
 
@@ -640,14 +646,15 @@ export class IndexStore {
     name: string;
     dest_dir: string;
     size: number | null;
+    requested_by?: string | null;
   }) {
     const ts = now();
     this.raw
       .prepare(
-        `INSERT INTO transfers (id, hash, name, dest_dir, size, state, created_at, updated_at)
-         VALUES (@id, @hash, @name, @dest_dir, @size, 'queued', @ts, @ts)`,
+        `INSERT INTO transfers (id, hash, name, dest_dir, size, state, requested_by, created_at, updated_at)
+         VALUES (@id, @hash, @name, @dest_dir, @size, 'queued', @requested_by, @ts, @ts)`,
       )
-      .run({ ...t, ts });
+      .run({ requested_by: null, ...t, ts });
   }
 
   updateTransfer(

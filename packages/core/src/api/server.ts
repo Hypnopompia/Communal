@@ -5,14 +5,15 @@ import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { z } from 'zod';
-import { Kind, Seen } from '@communal/protocol';
+import { Kind, RemoteRequest, Seen } from '@communal/protocol';
 import {
   importRecoveryFile,
   RecoveryError,
   wordsToRootSecret,
   type RecoveryFile,
 } from '@communal/crypto';
-import { CoreError, type CommunalCore } from '../core.js';
+import { CoreError, platform, type CommunalCore } from '../core.js';
+import { RemoteError } from '../remote.js';
 import { HubError } from '../hub-client.js';
 import { PeopleError } from '../people.js';
 import { explain } from '../transfer/diagnosis.js';
@@ -221,12 +222,10 @@ export class LocalApi {
     route('GET', '/v1/hubs', async () => ({ hubs: this.core.status().hubs }));
     route('POST', '/v1/hubs', async (_req, _url, body) => {
       const b = AddHub.parse(body);
-      const platform =
-        process.platform === 'darwin' || process.platform === 'win32' ? process.platform : 'linux';
       const { hub, status } = await this.core.addHub(b.url, {
         display_name: b.display_name,
         device_name: b.device_name,
-        platform,
+        platform: platform(),
       });
       return {
         hub: {
@@ -486,6 +485,21 @@ export class LocalApi {
     route('DELETE', '/v1/subscriptions/:id', async (req, url) => {
       await this.core.subscriptions.remove(param(req, url, 1));
       return { ok: true };
+    });
+
+    // ── remote control (ADR 0023) ──
+    // This device's switch: may the account's other devices start downloads here?
+    route('GET', '/v1/settings/remote', async () => ({ allowed: this.core.remoteAllowed }));
+    route('PUT', '/v1/settings/remote', async (_req, _url, body) => {
+      const b = z.object({ allowed: z.boolean() }).parse(body);
+      await this.core.updateSettings({ remote_control: b.allowed });
+      return { allowed: this.core.remoteAllowed };
+    });
+    // Asking another device: the phone side.
+    route('GET', '/v1/remote/devices', async () => ({ devices: await this.core.remote.devices() }));
+    route('POST', '/v1/remote/:device', async (req, url, body) => {
+      const r = RemoteRequest.parse(body);
+      return { result: await this.core.remote.request(param(req, url, 1), r) };
     });
 
     // ── the synced folder (ADR 0019) ──
@@ -833,6 +847,10 @@ export class LocalApi {
           { not_found: 404, bad_request: 400, forbidden: 403, conflict: 409 }[err.code as string] ??
           502;
         return send(status, { error: err.code, message: err.message });
+      }
+      if (err instanceof RemoteError) {
+        const status = { not_allowed: 403, bad_request: 400, not_found: 404 }[err.code as string];
+        return send(status ?? 502, { error: err.code, message: err.message });
       }
       if (err instanceof PeopleError) {
         const status = { not_found: 404, unavailable: 503, hub_mismatch: 502, rejected: 502 }[

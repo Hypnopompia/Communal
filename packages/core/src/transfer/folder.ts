@@ -36,7 +36,7 @@ export interface FolderDownload {
  */
 export async function downloadFolder(
   o: { hubs: HubManager; store: IndexStore; downloads: Downloads },
-  req: { hub: string; device: string; path: string; destDir: string },
+  req: { hub: string; device: string; path: string; destDir: string; requestedBy?: string },
 ): Promise<FolderDownload> {
   const client = o.hubs.get(req.hub);
   if (!client) throw new CoreError('not_found', `no such hub: ${req.hub}`);
@@ -95,7 +95,12 @@ export async function downloadFolder(
       out.copied++;
       continue;
     }
-    o.downloads.add({ hash: e.hash, name, destDir: dir });
+    o.downloads.add({
+      hash: e.hash,
+      name,
+      destDir: dir,
+      ...(req.requestedBy ? { requestedBy: req.requestedBy } : {}),
+    });
     out.queued++;
     out.bytes += e.size;
   }

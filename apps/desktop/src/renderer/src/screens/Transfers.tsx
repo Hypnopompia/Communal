@@ -104,6 +104,7 @@ function TransferRow({ t, onCancel }: { t: Transfer; onCancel?: () => void }) {
         <div className="title">{t.name}</div>
         <div className="sub" style={{ whiteSpace: 'normal' }}>
           {sub}
+          {t.requested_by && ` · Started from ${t.requested_by}`}
         </div>
         {t.state === 'active' && total > 0 && <Progress value={t.bytes_done / total} />}
         {t.state === 'active' && t.sources.length > 0 && (

@@ -213,7 +213,7 @@ export interface AccountContext {
   log?: Logger;
 }
 
-type Platform = 'darwin' | 'win32' | 'linux';
+type Platform = 'darwin' | 'win32' | 'linux' | 'android';
 
 export interface OtherHub {
   url: string;

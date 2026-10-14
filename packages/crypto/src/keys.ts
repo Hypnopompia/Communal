@@ -28,7 +28,8 @@ export type SigDomain =
   | 'communal/device-cert/v1'
   | 'communal/revocation/v1'
   | 'communal/restore/v1'
-  | 'communal/transfer-token/v1';
+  | 'communal/transfer-token/v1'
+  | 'communal/remote/v1';
 
 function domainSeparated(domain: SigDomain, message: Uint8Array): Uint8Array {
   return concatBytes(lp(utf8(domain)), message);

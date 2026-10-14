@@ -444,3 +444,67 @@ describe('device.revoke', () => {
     expect(errorCode(reply)).toBe('forbidden');
   });
 });
+
+describe('device.message', () => {
+  it('forwards a sealed message to another online device of the same account', async () => {
+    const alice = await root('alice');
+    const phone = await link(alice);
+    const r = await phone.c.request('device.message', {
+      to: alice.deviceId,
+      sealed: 'S'.repeat(80),
+    });
+    expect(r.t).toBe('ok');
+    const got = await alice.c.next('device.message');
+    expect(got.body).toEqual({ from: phone.deviceId, sealed: 'S'.repeat(80) });
+  });
+
+  it('lists each device with its key and chain, so a message can be sealed to it', async () => {
+    const alice = await root('alice');
+    const phone = await link(alice);
+    const list = await phone.c.request('device.list', {});
+    expect(list.body).toMatchObject({
+      devices: [
+        { device_id: alice.deviceId, pubkey: toB64(alice.key.publicKey), chain: [] },
+        { device_id: phone.deviceId, pubkey: toB64(phone.key.publicKey), chain: phone.chain },
+      ],
+    });
+  });
+
+  it("refuses other accounts' devices, offline and revoked devices, and itself alike", async () => {
+    const alice = await root('alice');
+    const bob = await root('bob');
+    const phone = await link(alice);
+    const laptop = await link(alice);
+    const send = (from: Dev, to: string) =>
+      from.c.request('device.message', { to, sealed: 'S'.repeat(80) }).then(errorCode);
+    expect(await send(phone, bob.deviceId)).toBe('not_found');
+    expect(await send(bob, alice.deviceId)).toBe('not_found');
+    expect(await send(phone, phone.deviceId)).toBe('not_found');
+    expect(await send(phone, deviceId(generateKeyPair().publicKey))).toBe('not_found');
+
+    laptop.c.close();
+    await laptop.c.closed;
+    // The hub notices the closed socket a moment after the client does.
+    let reply = await send(phone, laptop.deviceId);
+    for (let i = 0; i < 40 && reply === 'ok'; i++) {
+      await sleep(25);
+      reply = await send(phone, laptop.deviceId);
+    }
+    expect(reply).toBe('not_found');
+
+    expect((await alice.c.request('device.revoke', proof(alice, laptop.deviceId))).t).toBe('ok');
+    expect(await send(phone, laptop.deviceId)).toBe('not_found');
+    // Nothing reached anyone who shouldn't have it.
+    await sleep(50);
+    expect(bob.c.backlog().filter((m) => m.t === 'device.message')).toHaveLength(0);
+    expect(alice.c.backlog().filter((m) => m.t === 'device.message')).toHaveLength(0);
+  });
+
+  it('refuses messages before sign-in', async () => {
+    const alice = await root('alice');
+    const c = await RawClient.connect(t.url);
+    await c.next('challenge');
+    const r = await c.request('device.message', { to: alice.deviceId, sealed: 'S'.repeat(80) });
+    expect(errorCode(r)).toBe('unauthenticated');
+  });
+});

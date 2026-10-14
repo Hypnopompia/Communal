@@ -13,6 +13,7 @@ These came from the owner during development. Don't revert them to the spec's wo
 - **Multiple hubs per client, one identity** (ADR 0007). A search goes to every joined hub at once. The desktop Settings will need a hub list, not a single "Hub address".
 - **Access rules are per hub** (ADR 0007/0009). The same file can be public on one hub and private on another. A rule on one hub never grants access through another. The UI must make the per-hub scope obvious.
 - **Hub admins can ban and unban accounts** (ADR 0006).
+- **There is an Android client** (ADR 0023), overriding HANDOFF's "Mobile: out of scope". It downloads only (no sharing, no media worker), runs the unchanged TypeScript core under Node 24, ships as a signed APK on GitHub releases, and can remote-control one of your computers through sealed hub messages.
 - **Hub admin lives in the clients** (ADR 0020), not a web UI: the first account on a hub is its admin, and `communal-hub admin` adds or removes admins (shell only). Settings › Hubs › Manage covers settings, users, devices, the connection graph (admins only, no groups or rules) and an audit log, and MCP gets admin tools. Keep admin actions as `HubDb` methods so a second front end can reuse them.
 
 ## Commands
@@ -113,6 +114,7 @@ How the pieces connect:
   - The page CSP allows only bundled scripts. Fonts are bundled (`@fontsource-variable/...`).
   - No asar: the core spawns ffmpeg and the trash helper by path.
 - **Agents** (ADR 0017): `packages/mcp` is an MCP server over the local API. It must never get tools for the recovery key, device linking or revoking, verifying people, or making hub admins. Hub admin tools (`*_hub_*`) are fine: the hub checks admin on every call. `discoverApi()` finds a running core (daemon, then the desktop app's control socket). `POST /v1/ui/show` moves the desktop window and is `not_found` when headless.
+- **Remote control** (ADR 0023): core `remote.ts` seals a signed `RemoteBody` to another device of the account (its key and chain come from `device.listing`, checked against our root) and sends it as a hub `device.message`. The receiver checks sender, signature, chain, recipient, clock and nonce, and runs only the allowlist in `CommunalCore.runRemote`, only while `remote_control` is on. Transfers it starts carry `requested_by`.
 - **Hub admins** (ADR 0020): `users.admin_at`, checked by `HubDb.isAdmin()` on every `admin.*` message (a ban overrides it). The first account on a hub is its admin. Admin `HubDb` methods take an `actor` and write `admin_log` in the same transaction, so every front end is audited.
 - **Abuse limits** (ADR 0022) live in `apps/hub/src/limits.ts` (fixed) and `HubDb.limits` (admin settings, 0 = no limit). Every frame spends from a per-session token bucket. Over budget, messages **wait** in order rather than fail. Per-address limits count IPv4 addresses and IPv6 /64s. New per-account or per-device state needs a cap there too.
 - **Hub visibility** is decided in exactly one place, `Catalog.visible()` in `apps/hub/src/catalog.ts`. Never filter access in individual queries. Each entry carries its governing rule (`entries.rule_path`), which `HubDb` re-tags whenever rules change (ADR 0009).
@@ -159,7 +161,7 @@ How the pieces connect:
 
 ## Invariants that span multiple components
 
-- **No relay, ever.** If a library adds a relay fallback (DERP or similar), disable it. When no direct path exists, the hub sends back `connect.failed` with a `cause` and an `easier_fix` (§8).
+- **No relay of file data, ever.** If a library adds a relay fallback (DERP or similar), disable it. When no direct path exists, the hub sends back `connect.failed` with a `cause` and an `easier_fix` (§8). The one thing a hub forwards is a sealed `device.message` between devices of the same account (remote control, ADR 0023): commands and status it can't read, never file data.
 - **Access control is enforced twice.** The hub filters search, browse, sources, watch and `connect.request`. The uploader checks again on `hello`, `thumb.get` and `get`.
   - The effective rule is the file's own rule, else the nearest ancestor's rule, else `"me"`.
   - The user's own devices always see everything.

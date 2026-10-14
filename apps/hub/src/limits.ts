@@ -51,6 +51,7 @@ export const MESSAGE_COST: Partial<Record<string, number>> = {
   browse: 4,
   library: 4,
   'connect.request': 4,
+  'device.message': 2,
   'index.snapshot': 4,
   'index.delta': 4,
 };

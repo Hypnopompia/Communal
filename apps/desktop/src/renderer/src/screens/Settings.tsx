@@ -820,45 +820,86 @@ function Downloads() {
     if (d) void set.run(d);
   };
   return (
-    <div className="panel panel-pad section" style={{ maxWidth: 560 }}>
-      <h2>Where downloads go</h2>
-      <p className="muted">
-        Download saves files here. To put one somewhere else, choose Save to… from the arrow next to
-        Download.
-      </p>
-      <div className="field">
-        <span>Downloads folder</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span
-            className="muted"
-            style={{
-              flex: 1,
-              minWidth: 0,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-            title={dir}
-          >
-            {dir}
-          </span>
-          <button className="btn small" onClick={() => void window.communal.openPath(dir)}>
-            Open
-          </button>
-          <button className="btn small" disabled={set.busy} onClick={() => void pick()}>
-            Change…
-          </button>
+    <>
+      <div className="panel panel-pad section" style={{ maxWidth: 560 }}>
+        <h2>Where downloads go</h2>
+        <p className="muted">
+          Download saves files here. To put one somewhere else, choose Save to… from the arrow next
+          to Download.
+        </p>
+        <div className="field">
+          <span>Downloads folder</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span
+              className="muted"
+              style={{
+                flex: 1,
+                minWidth: 0,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+              title={dir}
+            >
+              {dir}
+            </span>
+            <button className="btn small" onClick={() => void window.communal.openPath(dir)}>
+              Open
+            </button>
+            <button className="btn small" disabled={set.busy} onClick={() => void pick()}>
+              Change…
+            </button>
+          </div>
         </div>
+        <ReshareNote exposure={reshare.data} />
+        <ErrorNote error={set.error} />
+        {dir !== default_dir && (
+          <div>
+            <button className="btn" disabled={set.busy} onClick={() => void set.run(null)}>
+              Use the usual folder
+            </button>
+          </div>
+        )}
       </div>
-      <ReshareNote exposure={reshare.data} />
+      <RemoteControl />
+    </>
+  );
+}
+
+/** Remote control (ADR 0023): your phone may start downloads on this computer. */
+function RemoteControl() {
+  const st = useApi<{ allowed: boolean }>([], '/v1/settings/remote');
+  const set = useAction(
+    (allowed: boolean) => api.put<{ allowed: boolean }>('/v1/settings/remote', { allowed }),
+    { onDone: () => void st.refetch() },
+  );
+  if (!st.data) return <ErrorNote error={st.error} />;
+  return (
+    <div className="panel panel-pad section" style={{ maxWidth: 560 }}>
+      <h2>Downloads from your phone</h2>
+      <p className="muted">
+        The Communal app on your phone can ask this computer to download files, follow folders and
+        show its transfers, so things are waiting here when you get back. Only your own devices can
+        ask, and only while this computer is on.
+      </p>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={st.data.allowed}
+          disabled={set.busy}
+          onChange={(e) => void set.run(e.target.checked)}
+        />
+        <span>
+          <b>Let my phone start downloads on this computer</b>
+          <br />
+          <span className="muted small">
+            {st.data.allowed
+              ? 'On. Downloads your phone starts show in Transfers with its name.'
+              : 'Off. Your phone can see this computer but can’t start anything here.'}
+          </span>
+        </span>
+      </label>
       <ErrorNote error={set.error} />
-      {dir !== default_dir && (
-        <div>
-          <button className="btn" disabled={set.busy} onClick={() => void set.run(null)}>
-            Use the usual folder
-          </button>
-        </div>
-      )}
     </div>
   );
 }

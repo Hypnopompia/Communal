@@ -20,6 +20,7 @@
 | `library` / `library.listing` (M9)                    | Devices the viewer can browse, with owner, `online` and `seen`: the desktop Library (ADR 0016).                               |
 | `browse.follow` / `browse.changed`, `library.changed` | Live browsing: the device a session is looking at, and a data-free hint that its listing changed for that viewer (below).     |
 | `admin.*` (ADR 0020)                                  | Hub administration from the client: users, approve, ban, unban, settings, graph, audit log, and the `admin.changed` hint.     |
+| `device.message` (c→h and h→c, ADR 0023)              | Remote control: a sealed, signed message for another device of the same account, which the hub forwards and can't read.       |
 
 ### Peer
 
@@ -70,6 +71,10 @@
   - h→c `admin.changed {}` goes to signed-in admins when an account or device is added or revoked, or after an admin action.
   - Non-admins get `bad_request` "unknown type …", the same reply an older hub gives.
   - `welcome.admin` says whether the account administers the hub.
+- **Remote control (ADR 0023):**
+  - c→h `device.message {to, sealed}` → `ok`, and the target gets h→c `device.message {from, sealed}`. The hub forwards only to another device of the sender's account that is online and not revoked. Anything else, including another account's device, is `not_found`, so device ids can't be probed. It keeps nothing.
+  - `device.listing` entries carry optional `pubkey` and `chain`, so a device can check another device's chain itself before sealing to it.
+  - `Platform` adds `android`. Desktop clients older than this release can't read a `device.listing` that includes a phone.
 - **`SharePath`** is `ShareName/rel/path`. It rejects absolute paths, `..`, `.`, empty segments, backslashes and NUL. A trailing `/` marks a folder (ACL rules, browse, watch).
 
 ## Peer frame encoding

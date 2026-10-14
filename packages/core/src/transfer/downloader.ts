@@ -163,7 +163,7 @@ export class Downloads extends EventEmitter<DownloadEvents> {
       await new Promise((r) => setTimeout(r, 20));
   }
 
-  add(req: { hash: string; name: string; destDir?: string }): TransferRow {
+  add(req: { hash: string; name: string; destDir?: string; requestedBy?: string }): TransferRow {
     const id = newTransferId();
     const dest = req.destDir ?? this.o.downloadsDir();
     mkdirSync(dest, { recursive: true });
@@ -173,6 +173,7 @@ export class Downloads extends EventEmitter<DownloadEvents> {
       name: safeName(req.name),
       dest_dir: dest,
       size: null,
+      requested_by: req.requestedBy ?? null,
     });
     this.schedule(id, 0);
     return this.o.store.transfer(id)!;
@@ -253,10 +254,18 @@ export class Downloads extends EventEmitter<DownloadEvents> {
       this.log.info({ transfer_id: id }, 'download complete');
       this.emit('done', { id, path });
     } catch (err) {
-      if (abort.signal.aborted && this.o.store.transfer(id)?.state === 'cancelled') return;
       if (this.stopped) {
-        this.o.store.updateTransfer(id, { state: 'queued' });
-      } else if (err instanceof Busy) {
+        // A run that outlasted stop() may find the store already closed; it resumes on start.
+        try {
+          if (this.o.store.transfer(id)?.state !== 'cancelled')
+            this.o.store.updateTransfer(id, { state: 'queued' });
+        } catch {
+          /* store closed */
+        }
+        return;
+      }
+      if (abort.signal.aborted && this.o.store.transfer(id)?.state === 'cancelled') return;
+      if (err instanceof Busy) {
         // Not a problem to diagnose: it just waits its turn.
         this.o.store.updateTransfer(id, { state: 'queued', error: err.message });
         this.busy.set(id, err.devices);

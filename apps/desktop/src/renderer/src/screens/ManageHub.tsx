@@ -307,7 +307,13 @@ function PersonDetails({ u }: { u: AdminUser }) {
             <div className="grow" style={{ minWidth: 0 }}>
               <div className="title">{d.name}</div>
               <div className="sub">
-                {d.platform === 'darwin' ? 'Mac' : d.platform === 'win32' ? 'Windows' : 'Linux'}
+                {d.platform === 'darwin'
+                  ? 'Mac'
+                  : d.platform === 'win32'
+                    ? 'Windows'
+                    : d.platform === 'android'
+                      ? 'Android'
+                      : 'Linux'}
                 {' · '}
                 {d.files > 0 ? `${plural(d.files, 'file')}, ${size(d.bytes)}` : 'shares nothing'}
                 {d.nat

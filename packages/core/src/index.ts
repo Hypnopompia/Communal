@@ -34,3 +34,4 @@ export * from './sync-folder.js';
 export type { SubscriptionRow, SubFileRow } from './index/store.js';
 export * from './selfcheck.js';
 export * from './api/discover.js';
+export * from './remote.js';

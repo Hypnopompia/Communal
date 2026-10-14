@@ -185,6 +185,12 @@ export const clientBodies = {
   /** Any device of the account may submit any valid proof, so proofs can be gossiped. */
   'device.revoke': RevocationProof,
   'device.list': Empty,
+  /**
+   * A message for another device of the same account, sealed to its key so the hub can't read
+   * it: remote control from a phone (ADR 0023). Never file data. The hub forwards it only
+   * within one account, to a device that is online now, and keeps nothing.
+   */
+  'device.message': z.object({ to: DeviceId, sealed: Sealed }),
   'network.profile': NetworkProfile,
 
   'user.search': z.object({
@@ -347,10 +353,18 @@ export const hubBodies = {
         revoked_at: UnixSeconds.nullable(),
         /** The account's first device: it holds the root key and can't be revoked. */
         root: z.boolean(),
+        /**
+         * Its key and cert chain, so another device can seal a `device.message` to it after
+         * checking the chain itself (ADR 0023). Older hubs leave them out.
+         */
+        pubkey: PublicKey.optional(),
+        chain: CertChain.optional(),
       }),
     ),
   }),
   'device.revoked': RevocationProof,
+  /** A `device.message` from another device of this account, as sealed by the sender. */
+  'device.message': z.object({ from: DeviceId, sealed: Sealed }),
 
   'user.results': z.object({ users: z.array(UserSummary) }),
   'connection.request': z.object({ user: UserSummary }),

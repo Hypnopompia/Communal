@@ -80,6 +80,7 @@ export const clientFixtures: { [T in ClientType]: ClientBody<T> } = {
   },
   'device.revoke': proof,
   'device.list': {},
+  'device.message': { to: did2, sealed: 'C'.repeat(120) },
   'network.profile': {
     nat: 'endpoint_independent',
     upnp: true,
@@ -146,6 +147,7 @@ export const hubFixtures: { [T in HubType]: HubBody<T> } = {
   'link.request': { request_id: 'lr_1', device_name: 'nas', platform: 'linux', device_pubkey: pk },
   'link.done': { user_id: uid, device_id: did2, chain: [cert], sealed: 'C'.repeat(120) },
   'link.denied': {},
+  'device.message': { from: did2, sealed: 'C'.repeat(120) },
   'device.listing': {
     devices: [
       {

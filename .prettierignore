@@ -7,3 +7,4 @@ release/
 apps/android-spike/app/
 apps/android-spike/build/
 apps/android-spike/.gradle/
+.claude/

@@ -15,7 +15,7 @@ export const Hash = z.string().regex(/^[0-9a-f]{64}$/);
 export const GroupId = z.string().regex(/^g_[0-9A-HJKMNP-TV-Z]{26}$/);
 export const SessionId = z.string().regex(/^x_[0-9A-HJKMNP-TV-Z]{26}$/);
 export const UnixSeconds = z.number().int().nonnegative();
-export const Platform = z.enum(['darwin', 'win32', 'linux']);
+export const Platform = z.enum(['darwin', 'win32', 'linux', 'android']);
 
 /**
  * Hub-visible path: `ShareName/relative/path`. Never absolute, never `..`, `/` separators,
