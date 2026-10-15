@@ -14,7 +14,7 @@ import {
   type UploadLimits,
 } from '../api';
 import { ago, hubName, plural, size } from '../format';
-import { hubUrl } from '../format';
+import { hubAddress, hubUrl } from '../format';
 import { useHubs, useStatus } from '../hubs';
 import { useNav, type SettingsTab } from '../nav';
 import { useApi } from '../query';
@@ -248,13 +248,27 @@ function Devices() {
   const requests = useApi<{ requests: LinkRequest[] }>(['devices'], '/v1/link/requests', {
     refetchInterval: 5_000,
   });
-  const [code, setCode] = useState<{ code: string; expires_in: number; at: number } | null>(null);
+  const [code, setCode] = useState<{
+    hub: string;
+    code: string;
+    expires_in: number;
+    at: number;
+  } | null>(null);
   const [revoking, setRevoking] = useState<Device | null>(null);
   // Removed computers stay on record (that's what keeps them distrusted) but out of the way.
   const [showRemoved, setShowRemoved] = useState(false);
   const removedCount = devices.data?.devices.filter((d) => d.revoked).length ?? 0;
+  const { hubs, name: hubLabel } = useHubs();
+  const ready = hubs.filter((h) => h.ready);
+  // A code works on one hub only; the new device signs in there first, then joins the rest.
+  const [codeHub, setCodeHub] = useState('');
+  const pick = ready.find((h) => h.id === codeHub) ?? ready[0];
   const create = useAction(
-    () => api.post<{ code: string; expires_in: number }>('/v1/link/codes', {}),
+    () =>
+      api.post<{ hub: string; code: string; expires_in: number }>(
+        '/v1/link/codes',
+        pick ? { hub: pick.id } : {},
+      ),
     {
       onDone: (r) => setCode({ ...r, at: Date.now() }),
     },
@@ -272,7 +286,6 @@ function Devices() {
     done: 'Computer removed',
     onDone: () => setRevoking(null),
   });
-  const { name: hubLabel } = useHubs();
   return (
     <>
       {(requests.data?.requests.length ?? 0) > 0 && (
@@ -308,12 +321,31 @@ function Devices() {
         </div>
         <p className="muted">
           On the new computer, install Communal and choose “Add this computer to my account”, then
-          type this code. You’ll approve it here.
+          type the hub address and this code. You’ll approve it here.
         </p>
         {code ? (
-          <LinkCode code={code} onExpired={() => setCode(null)} />
+          <LinkCode
+            code={code}
+            hub={hubs.find((h) => h.id === code.hub)}
+            onExpired={() => setCode(null)}
+          />
         ) : (
-          <div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {ready.length > 1 && (
+              <select
+                className="input"
+                style={{ width: 'auto' }}
+                value={pick?.id ?? ''}
+                onChange={(e) => setCodeHub(e.target.value)}
+                aria-label="Hub"
+              >
+                {ready.map((h) => (
+                  <option key={h.id} value={h.id}>
+                    {hubLabel(h.id)}
+                  </option>
+                ))}
+              </select>
+            )}
             <button
               className="btn primary"
               disabled={create.busy}
@@ -411,9 +443,11 @@ function Devices() {
 
 function LinkCode({
   code,
+  hub,
   onExpired,
 }: {
   code: { code: string; expires_in: number; at: number };
+  hub: { url: string; name: string | null } | undefined;
   onExpired: () => void;
 }) {
   const [now, setNow] = useState(Date.now());
@@ -427,6 +461,15 @@ function LinkCode({
   }, [left, onExpired]);
   return (
     <div style={{ display: 'grid', gap: 6, justifyItems: 'start' }}>
+      {hub && (
+        <div>
+          <div className="faint small">Hub address{hub.name ? ` (${hub.name})` : ''}</div>
+          <div className="mono" style={{ fontSize: 16 }}>
+            {hubAddress(hub.url)}
+          </div>
+        </div>
+      )}
+      <div className="faint small">Code</div>
       <div className="code-big">{code.code}</div>
       <span className="faint small">
         Works once, for {Math.floor(left / 60)}:{String(left % 60).padStart(2, '0')} more.

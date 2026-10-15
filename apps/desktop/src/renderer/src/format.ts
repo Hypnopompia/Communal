@@ -79,6 +79,15 @@ export function plural(n: number, one: string, many = `${one}s`) {
 }
 
 /** Turns what a person types ("hub.example.com") into the hub's WebSocket URL. */
+/** What to type on a new device to reach a hub: its host (and port), which hubUrl expands. */
+export function hubAddress(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
 export function hubUrl(input: string): string {
   let s = input.trim();
   if (!/^wss?:\/\//i.test(s)) s = `wss://${s.replace(/^https?:\/\//i, '')}`;
