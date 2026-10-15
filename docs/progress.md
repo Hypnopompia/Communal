@@ -96,6 +96,15 @@ These are fine for now. Fix them if they start to bite.
 - **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
 - **From HANDOFF §15:** hubs caching thumbnails of hub-wide files.
 
+## Android: Start over for a removed phone, and "Communal Dev" (2026-10-15)
+
+The owner mistook the debug build, which had the same name and icon as the release app, for a reset release app. They removed the release app's device from their account, so its identity can never sign in again.
+
+- **Start over** (the desktop's, ADR 0014): the notice for a removed phone now has a **Start over…** button. A phone counts as removed when the core holds the revocation, or when every hub refuses its key and it isn't the first device (`Identity.root_device`, now parsed). It calls `ActivityManager.clearApplicationUserData()`, which clears the app's data and its Keystore key like Android's "Clear storage", then closes the app. Opened again, the app shows the welcome screen. Downloads in `Download/Communal` stay. The desktop sets the old data aside instead, but a removed phone has nothing worth keeping.
+- **Debug builds are labelled "Communal Dev"** (`manifestPlaceholders["appLabel"]`).
+- **Settings › About:** the version has its own line, so it's no longer cut short on a Pixel 5.
+- **Checked** on the emulator: removed its device with `communal devices revoke`, and the notice appeared. Start over closed the app, its data was gone, and it reopened on the welcome screen.
+
 ## Android: the desktop's look, and closer to its features (2026-10-15)
 
 Owner request: the Android app looked bland, its device icons didn't match the desktop, and it should look like a finished app.

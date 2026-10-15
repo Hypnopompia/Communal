@@ -1,6 +1,7 @@
 package io.github.hypnopompia.communal.ui
 
 import android.Manifest
+import android.app.ActivityManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -46,6 +48,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -235,13 +238,23 @@ private fun HubState(hubs: List<Hub>, onClick: () -> Unit) {
 private fun Attention(model: AppModel, hubs: List<Hub>, onDetails: () -> Unit) {
     val status by model.status.collectAsStateWithLifecycle()
     val account = status?.account
-    if (account?.revoked == true) {
-        Notice(Tone.Bad) {
+    // Removed from the account: we hold the proof, or every hub refuses our key, as the desktop
+    // decides it. (The first device can't be removed; a hub refusing it is something else.)
+    val removed = account?.user_id != null && (
+        account.revoked ||
+            (!account.root_device && hubs.isNotEmpty() && hubs.all { it.problem?.reason == "rejected" })
+        )
+    if (removed) {
+        var asking by remember { mutableStateOf(false) }
+        Notice(Tone.Bad, action = { TextButton({ asking = true }) { Text("Start over…") } }) {
             NoticeText(
-                "This phone was removed from your account on another of your devices, so your hubs no longer let it " +
-                    "sign in. To use it again, clear Communal’s storage in Android’s settings and link it with a new code.",
+                if (account!!.revoked) "This phone was removed from your account on another of your devices, so your " +
+                    "hubs no longer let it sign in. To use it again, start over and link it with a new code."
+                else "None of your hubs will let this phone sign in. That happens when it was removed from your " +
+                    "account on another of your devices. To use it again, start over and link it with a new code.",
             )
         }
+        if (asking) StartOverDialog { asking = false }
         return
     }
     for (h in hubs.filter { it.problem?.reason == "pending_approval" }) {
@@ -257,6 +270,33 @@ private fun Attention(model: AppModel, hubs: List<Hub>, onDetails: () -> Unit) {
             NoticeText("Can’t connect to ${hubName(h)}: ${h.problem!!.message}")
         }
     }
+}
+
+/**
+ * A removed phone's identity can never sign in again, so starting over clears the app's data
+ * (its key in the Keystore goes with it), as "Clear storage" in Android's settings does. Android
+ * closes the app; opened again, it's new and links with a code. Downloads stay where they are.
+ */
+@Composable
+private fun StartOverDialog(onClose: () -> Unit) {
+    val context = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("Start over on this phone?") },
+        text = {
+            Text(
+                "Communal clears its data and closes. Open it again, choose I have Communal, and type a code from " +
+                    "Settings › Devices on one of your computers. Files you downloaded stay in Download/Communal. " +
+                    "Folders you kept in sync need setting up again.",
+            )
+        },
+        confirmButton = {
+            TextButton({ context.getSystemService(ActivityManager::class.java).clearApplicationUserData() }) {
+                Text("Start over")
+            }
+        },
+        dismissButton = { TextButton(onClose) { Text("Cancel") } },
+    )
 }
 
 fun parentOf(path: String): String {

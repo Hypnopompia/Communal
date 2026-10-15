@@ -42,6 +42,8 @@ data class Identity(
     val fingerprint: String? = null,
     /** Another of your devices removed this one from the account. */
     val revoked: Boolean = false,
+    /** The account's first device (joined as new): it can't be removed. */
+    val root_device: Boolean = false,
 )
 
 @Serializable
