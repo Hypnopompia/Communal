@@ -350,6 +350,32 @@ export interface Subscription {
   rev: number;
   status: 'ok' | 'no_access';
   created_at: number;
+  files: SubscriptionFiles;
+}
+
+export interface SubscriptionFiles {
+  pending: number;
+  done: number;
+  failed: number;
+  removed: number;
+}
+
+/**
+ * Another device's subscription, as its `subscriptions` remote request answers (ADR 0023): the
+ * hub by URL, and where it saves by destination name and folder name, never a path.
+ */
+export interface RemoteSubscription {
+  id: string;
+  hub: string;
+  device_id: string;
+  path: string;
+  destination: string | null;
+  folder: string;
+  mirror_deletes: boolean;
+  paused: boolean;
+  status: 'ok' | 'no_access';
+  files: SubscriptionFiles;
+  created_at: number;
 }
 
 export interface UploadLogRow {

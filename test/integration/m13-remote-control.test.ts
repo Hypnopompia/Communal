@@ -14,7 +14,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CommunalCore, LocalApi, LocalApiClient, RemoteError, apiSocketPath } from '@communal/core';
 import { createServer } from '@communal/mcp';
-import type { RemoteTransfer } from '@communal/protocol';
+import type { RemoteSubscription, RemoteTransfer } from '@communal/protocol';
 import { sleep, startTestHub, type TestHub } from '@communal/hub/testing';
 
 const quiet = pino({ level: process.env.M13_LOG ?? 'silent' });
@@ -188,6 +188,98 @@ describe('remote control', () => {
     ).rejects.toBeInstanceOf(RemoteError);
   });
 
+  it('lists, pauses, changes and removes the computer’s subscriptions when asked', async () => {
+    const { h, desktop, phone, bob } = await world();
+    const movies = tmp('communal-m13-movies-');
+    await desktop.saveDestination('Movies', movies);
+    // One the person set up on the computer itself, into a folder that is no destination.
+    const own = await desktop.subscriptions.add({
+      hub: desktop.hubs.list()[0]!.id,
+      device: bob.deviceId,
+      path: 'Music/',
+      mirrorDeletes: false,
+      dest: join(tmp('communal-m13-elsewhere-'), 'Songs'),
+    });
+    const ask = (request: Parameters<typeof phone.remote.request>[1]) =>
+      phone.remote.request(desktop.deviceId, request);
+
+    // Off: nothing is shown or changed.
+    for (const r of [
+      { op: 'subscriptions' },
+      { op: 'update_subscription', id: own.id, paused: true },
+      { op: 'unsubscribe', id: own.id },
+    ] as const)
+      await expect(ask(r)).rejects.toMatchObject({ code: 'not_allowed' });
+    expect(desktop.subscriptions.list()[0]).toMatchObject({ id: own.id, paused: false });
+
+    await desktop.updateSettings({ remote_control: true });
+    const list = async () =>
+      ((await ask({ op: 'subscriptions' })) as { subscriptions: RemoteSubscription[] })
+        .subscriptions;
+    expect(await list()).toEqual([
+      expect.objectContaining({
+        id: own.id,
+        hub: h.url,
+        device_id: bob.deviceId,
+        path: 'Music/',
+        destination: null,
+        folder: 'Songs',
+        mirror_deletes: false,
+        paused: false,
+      }),
+    ]);
+    // No local paths leave the computer.
+    expect(JSON.stringify(await list())).not.toContain(own.dest_dir);
+
+    await ask({ op: 'update_subscription', id: own.id, paused: true, mirror_deletes: true });
+    expect(desktop.subscriptions.list()[0]).toMatchObject({ paused: true, mirror_deletes: true });
+    expect((await list())[0]).toMatchObject({ paused: true, mirror_deletes: true });
+    await ask({ op: 'update_subscription', id: own.id, paused: false });
+    expect(desktop.subscriptions.list()[0]).toMatchObject({ paused: false, mirror_deletes: true });
+
+    await expect(ask({ op: 'unsubscribe', id: 'sub_nope' })).rejects.toMatchObject({
+      code: 'not_found',
+    });
+    await ask({ op: 'unsubscribe', id: own.id });
+    expect(desktop.subscriptions.list()).toEqual([]);
+
+    // One the phone asked for shows its destination by name.
+    const s = (await ask({
+      op: 'subscribe',
+      hub: h.url,
+      device_id: bob.deviceId,
+      path: 'Music/',
+      mirror_deletes: false,
+      destination: 'Movies',
+    })) as { id: string };
+    expect(await list()).toEqual([
+      expect.objectContaining({ id: s.id, destination: 'Movies', folder: 'Music' }),
+    ]);
+  });
+
+  it('keeps the synced folder’s subscriptions out of reach', async () => {
+    const { desktop, phone, bob } = await world();
+    await desktop.updateSettings({ remote_control: true });
+    const synced = await desktop.subscriptions.add({
+      hub: desktop.hubs.list()[0]!.id,
+      device: bob.deviceId,
+      path: 'Music/',
+      mirrorDeletes: true,
+      sync: true,
+    });
+    expect(await phone.remote.request(desktop.deviceId, { op: 'subscriptions' })).toEqual({
+      subscriptions: [],
+    });
+    for (const r of [
+      { op: 'update_subscription', id: synced.id, paused: true },
+      { op: 'unsubscribe', id: synced.id },
+    ] as const)
+      await expect(phone.remote.request(desktop.deviceId, r)).rejects.toMatchObject({
+        code: 'not_found',
+      });
+    expect(desktop.subscriptions.list()).toHaveLength(1);
+  });
+
   it('ignores messages from another account and forged or replayed ones', async () => {
     const { desktop, phone, bob, hash } = await world();
     await desktop.updateSettings({ remote_control: true });
@@ -321,7 +413,7 @@ describe('remote control', () => {
   });
 
   it('lets an AI agent manage destinations and remote control, and use other devices (MCP)', async () => {
-    const { desktop, phone, hash } = await world();
+    const { desktop, phone, bob, hash } = await world();
     const onDesktop = await agentOn(desktop);
     const onPhone = await agentOn(phone);
     const movies = tmp('communal-m13-movies-');
@@ -369,6 +461,27 @@ describe('remote control', () => {
       transfers: { requested_by: string }[];
     };
     expect(t.transfers[0]!.requested_by).toBe('Pixel');
+
+    // Subscriptions on the desktop, from the phone's agent.
+    const sub = (await onPhone('subscribe_folder', {
+      hub: phone.hubs.list()[0]!.id,
+      device: bob.deviceId,
+      path: 'Music/',
+      mirror_deletes: false,
+      destination: 'Movies',
+      on_device: 'alice-box',
+    })) as { content: { text: string }[] };
+    const { id } = JSON.parse(sub.content[0]!.text) as { id: string };
+    const listed = json(await onPhone('list_subscriptions', { on_device: 'alice-box' })) as {
+      subscriptions: RemoteSubscription[];
+    };
+    expect(listed.subscriptions).toEqual([
+      expect.objectContaining({ id, destination: 'Movies', folder: 'Music' }),
+    ]);
+    await onPhone('update_subscription', { id, paused: true, on_device: 'alice-box' });
+    expect(desktop.subscriptions.list()[0]!.paused).toBe(true);
+    await onPhone('unsubscribe', { id, on_device: desktop.deviceId });
+    expect(desktop.subscriptions.list()).toEqual([]);
 
     await onDesktop('remove_destination', { name: 'Movies' });
     expect(desktop.destinations().map((d) => d.name)).toEqual(['Downloads']);

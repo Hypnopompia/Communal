@@ -386,7 +386,7 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
   );
   tool(
     'list_remote_devices',
-    'My other devices, whether each is online and takes requests, and the names of the destinations each offers (its folders never leave it). Use one as on_device in download_file, download_folder, subscribe_folder, list_transfers and cancel_transfer.',
+    'My other devices, whether each is online and takes requests, and the names of the destinations each offers (its folders never leave it). Use one as on_device in download_file, download_folder, subscribe_folder, list_subscriptions, update_subscription, unsubscribe, list_transfers and cancel_transfer.',
     {},
     READ,
     async (c) => {
@@ -571,12 +571,18 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
   );
 
   // ── subscriptions ──
+  const onDevice = z
+    .string()
+    .max(64)
+    .optional()
+    .describe('Another device of mine (id or name from list_remote_devices) instead of this one');
   tool(
     'list_subscriptions',
-    'Folders this computer follows: new files download automatically.',
-    {},
+    "Folders this computer follows: new files download automatically. With on_device, another of my devices' subscriptions instead (each with the destination it saves into, never a path).",
+    { on_device: onDevice },
     READ,
-    (c) => c.get('/v1/subscriptions'),
+    (c, a) =>
+      a.on_device ? remote(c, a.on_device, { op: 'subscriptions' }) : c.get('/v1/subscriptions'),
   );
   tool(
     'subscribe_folder',
@@ -616,17 +622,28 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
   );
   tool(
     'update_subscription',
-    'Pauses or resumes a subscription, or changes mirror_deletes.',
-    { id: z.string(), paused: z.boolean().optional(), mirror_deletes: z.boolean().optional() },
+    'Pauses or resumes a subscription, or changes mirror_deletes, here or, with on_device, on another of my devices.',
+    {
+      id: z.string(),
+      paused: z.boolean().optional(),
+      mirror_deletes: z.boolean().optional(),
+      on_device: onDevice,
+    },
     CHANGE,
-    (c, { id, ...b }) => c.put(`/v1/subscriptions/${enc(id)}`, b),
+    (c, { id, on_device, ...b }) =>
+      on_device
+        ? remote(c, on_device, { op: 'update_subscription', id, ...b })
+        : c.put(`/v1/subscriptions/${enc(id)}`, b),
   );
   tool(
     'unsubscribe',
-    'Stops following a folder. Files already downloaded stay.',
-    { id: z.string() },
+    'Stops following a folder, here or, with on_device, on another of my devices. Files already downloaded stay.',
+    { id: z.string(), on_device: onDevice },
     REMOVE,
-    (c, a) => c.delete(`/v1/subscriptions/${enc(a.id)}`),
+    (c, a) =>
+      a.on_device
+        ? remote(c, a.on_device, { op: 'unsubscribe', id: a.id })
+        : c.delete(`/v1/subscriptions/${enc(a.id)}`),
   );
 
   // ── hubs, network, settings ──

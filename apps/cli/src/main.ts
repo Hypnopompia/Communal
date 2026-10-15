@@ -1286,7 +1286,7 @@ destCmd
 const remoteCmd = program
   .command('remote')
   .description(
-    'your devices downloading for each other (ADR 0023): --on <device> on get, get-folder, subscribe, transfers, cancel',
+    'your devices downloading for each other (ADR 0023): --on <device> on get, get-folder, subscribe, subscriptions, transfers, cancel',
   );
 remoteCmd
   .command('status', { isDefault: true })
@@ -1614,28 +1614,50 @@ syncCmd
 
 const subs = program.command('subscriptions').description('folders you follow');
 
+/** Another device's subscription (ADR 0023): its destination's name, never a path. */
+type RemoteSubscription = Omit<Subscription, 'dest_dir'> & {
+  destination: string | null;
+  folder: string;
+};
+
+function printSub(s: Subscription | RemoteSubscription) {
+  const state = s.paused
+    ? 'paused'
+    : s.status === 'no_access'
+      ? 'not shared with you (or gone)'
+      : 'following';
+  const where =
+    'dest_dir' in s ? s.dest_dir : s.destination ? `${s.destination}/${s.folder}` : s.folder;
+  const f = s.files;
+  console.log(`${s.id}  ${state}  ${s.hub}  ${s.device_id}  ${s.path} → ${where}`);
+  console.log(
+    `    ${f.done} here, ${f.pending} downloading` +
+      (f.failed ? `, ${f.failed} no longer available` : '') +
+      (f.removed ? `, ${f.removed} kept after deletion at the source` : '') +
+      `; deletions: ${s.mirror_deletes ? 'mirrored to the trash' : 'kept'}`,
+  );
+}
+
+const onOption = ['--on <device_name>', 'another device of yours instead of this one'] as const;
+
 subs
   .command('list', { isDefault: true })
   .description('list subscriptions and their files')
-  .action(() =>
+  .option(...onOption)
+  .action((opts: { on?: string }) =>
     viaDaemon(async (c) => {
+      if (opts.on) {
+        const d = await remoteDevice(c, opts.on);
+        const { subscriptions } = await remote<{ subscriptions: RemoteSubscription[] }>(c, d, {
+          op: 'subscriptions',
+        });
+        if (subscriptions.length === 0) console.log(`${d.name} follows no folders`);
+        for (const s of subscriptions) printSub(s);
+        return;
+      }
       const { subscriptions } = await c.get<{ subscriptions: Subscription[] }>('/v1/subscriptions');
       if (subscriptions.length === 0) console.log('no subscriptions');
-      for (const s of subscriptions) {
-        const state = s.paused
-          ? 'paused'
-          : s.status === 'no_access'
-            ? 'not shared with you (or gone)'
-            : 'following';
-        const f = s.files;
-        console.log(`${s.id}  ${state}  ${s.hub}  ${s.device_id}  ${s.path} → ${s.dest_dir}`);
-        console.log(
-          `    ${f.done} here, ${f.pending} downloading` +
-            (f.failed ? `, ${f.failed} no longer available` : '') +
-            (f.removed ? `, ${f.removed} kept after deletion at the source` : '') +
-            `; deletions: ${s.mirror_deletes ? 'mirrored to the trash' : 'kept'}`,
-        );
-      }
+      for (const s of subscriptions) printSub(s);
     }),
   );
 
@@ -1645,27 +1667,45 @@ subs
   .option('--mirror-deletes <on|off>', 'mirror deletions at the source (to the trash)')
   .option('--pause', 'stop following for now')
   .option('--resume', 'follow again, catching up on what changed')
-  .action((id: string, opts: { mirrorDeletes?: string; pause?: boolean; resume?: boolean }) =>
-    viaDaemon(async (c) => {
-      const patch: { mirror_deletes?: boolean; paused?: boolean } = {};
-      if (opts.mirrorDeletes !== undefined) {
-        if (!['on', 'off'].includes(opts.mirrorDeletes))
-          throw new Error('--mirror-deletes takes on or off');
-        patch.mirror_deletes = opts.mirrorDeletes === 'on';
-      }
-      if (opts.pause && opts.resume) throw new Error('choose --pause or --resume');
-      if (opts.pause || opts.resume) patch.paused = !!opts.pause;
-      if (Object.keys(patch).length === 0) throw new Error('nothing to change');
-      await c.put(`/v1/subscriptions/${encodeURIComponent(id)}`, patch);
-      console.log(`updated ${id}`);
-    }),
+  .option(...onOption)
+  .action(
+    (
+      id: string,
+      opts: { mirrorDeletes?: string; pause?: boolean; resume?: boolean; on?: string },
+    ) =>
+      viaDaemon(async (c) => {
+        const patch: { mirror_deletes?: boolean; paused?: boolean } = {};
+        if (opts.mirrorDeletes !== undefined) {
+          if (!['on', 'off'].includes(opts.mirrorDeletes))
+            throw new Error('--mirror-deletes takes on or off');
+          patch.mirror_deletes = opts.mirrorDeletes === 'on';
+        }
+        if (opts.pause && opts.resume) throw new Error('choose --pause or --resume');
+        if (opts.pause || opts.resume) patch.paused = !!opts.pause;
+        if (Object.keys(patch).length === 0) throw new Error('nothing to change');
+        if (opts.on) {
+          const d = await remoteDevice(c, opts.on);
+          await remote(c, d, { op: 'update_subscription', id, ...patch });
+          console.log(`updated ${id} on ${d.name}`);
+          return;
+        }
+        await c.put(`/v1/subscriptions/${encodeURIComponent(id)}`, patch);
+        console.log(`updated ${id}`);
+      }),
   );
 
 subs
   .command('remove <id>')
   .description('stop following (files already here stay)')
-  .action((id: string) =>
+  .option(...onOption)
+  .action((id: string, opts: { on?: string }) =>
     viaDaemon(async (c) => {
+      if (opts.on) {
+        const d = await remoteDevice(c, opts.on);
+        await remote(c, d, { op: 'unsubscribe', id });
+        console.log(`${d.name} stopped following (${id}); files already there stay`);
+        return;
+      }
       await c.delete(`/v1/subscriptions/${encodeURIComponent(id)}`);
       console.log(`stopped following (${id}); files already here stay`);
     }),

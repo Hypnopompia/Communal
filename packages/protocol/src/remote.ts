@@ -50,6 +50,17 @@ export const RemoteRequest = z.discriminatedUnion('op', [
     mirror_deletes: z.boolean(),
     destination: DestinationName,
   }),
+  /** The device's own subscriptions (not the synced folder's), with no local paths. */
+  z.object({ op: z.literal('subscriptions') }),
+  /** Pauses or resumes one, or changes `mirror_deletes`. */
+  z.object({
+    op: z.literal('update_subscription'),
+    id: z.string().min(1).max(64),
+    paused: z.boolean().optional(),
+    mirror_deletes: z.boolean().optional(),
+  }),
+  /** Stops following; files already there stay. */
+  z.object({ op: z.literal('unsubscribe'), id: z.string().min(1).max(64) }),
   z.object({ op: z.literal('transfers') }),
   z.object({ op: z.literal('cancel'), id: z.string().min(1).max(64) }),
 ]);
@@ -99,3 +110,30 @@ export const RemoteTransfer = z.object({
   updated_at: UnixSeconds,
 });
 export type RemoteTransfer = z.infer<typeof RemoteTransfer>;
+
+/**
+ * What `subscriptions` answers with: one folder another device follows. Where it saves is named
+ * by destination (ADR 0018), or only by its folder's name when it's elsewhere: no local paths.
+ */
+export const RemoteSubscription = z.object({
+  id: z.string(),
+  /** The hub's URL: each device numbers its own hubs. */
+  hub: z.string(),
+  device_id: DeviceId,
+  path: SharePath,
+  /** The destination the files go into, or null for a folder outside every destination. */
+  destination: z.string().nullable(),
+  /** The name of the folder the files go into. */
+  folder: z.string(),
+  mirror_deletes: z.boolean(),
+  paused: z.boolean(),
+  status: z.enum(['ok', 'no_access']),
+  files: z.object({
+    pending: z.number(),
+    done: z.number(),
+    failed: z.number(),
+    removed: z.number(),
+  }),
+  created_at: UnixSeconds,
+});
+export type RemoteSubscription = z.infer<typeof RemoteSubscription>;

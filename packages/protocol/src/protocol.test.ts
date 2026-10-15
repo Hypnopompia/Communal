@@ -11,6 +11,7 @@ import {
   parseHubMessage,
   PeerFrameDecoder,
   PeerFrameError,
+  RemoteRequest,
   SharePath,
   type ClientType,
   type HubType,
@@ -157,5 +158,27 @@ describe('peer frames', () => {
     expect(() =>
       new PeerFrameDecoder().push(encodePeerFrame({ t: 'chunk', hash, index: -1 })),
     ).toThrow(/invalid chunk/);
+  });
+});
+
+describe('remote requests (ADR 0023)', () => {
+  it('manages another device’s subscriptions by id, never by path', () => {
+    for (const r of [
+      { op: 'subscriptions' },
+      { op: 'update_subscription', id: 'sub_1', paused: true },
+      { op: 'update_subscription', id: 'sub_1', mirror_deletes: false },
+      { op: 'unsubscribe', id: 'sub_1' },
+    ])
+      expect(RemoteRequest.safeParse(r).success).toBe(true);
+    for (const r of [
+      { op: 'update_subscription', paused: true },
+      { op: 'update_subscription', id: '', paused: true },
+      { op: 'unsubscribe', id: 'x'.repeat(65) },
+      { op: 'update_subscription', id: 'sub_1', paused: 'yes' },
+    ])
+      expect(RemoteRequest.safeParse(r).success).toBe(false);
+    // Unknown fields such as a folder are dropped, never used.
+    const parsed = RemoteRequest.parse({ op: 'update_subscription', id: 's', dest: '/etc' });
+    expect(parsed).toEqual({ op: 'update_subscription', id: 's' });
   });
 });

@@ -36,6 +36,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.github.hypnopompia.communal.FileCounts
+import io.github.hypnopompia.communal.RemoteSubscription
 import io.github.hypnopompia.communal.RemoteTransfer
 import io.github.hypnopompia.communal.plural
 import io.github.hypnopompia.communal.Subscription
@@ -103,27 +105,47 @@ private fun PhoneTransfers(model: AppModel) {
 }
 
 @Composable
-private fun SubscriptionRow(model: AppModel, s: Subscription) {
-    val f = s.files
+private fun SubscriptionRow(model: AppModel, s: Subscription) = SubscriptionItem(
+    path = s.path,
+    files = s.files,
+    paused = s.paused,
+    noAccess = s.status == "no_access",
+    where = null,
+    onPause = { model.act(null) { model.api.setPaused(s.id, !s.paused) } },
+    onStop = { model.act("Stopped keeping it in sync. The files stay.") { model.api.unsubscribe(s.id) } },
+)
+
+/** A folder kept in sync, on this phone or a computer (`where`: its destination there). */
+@Composable
+private fun SubscriptionItem(
+    path: String,
+    files: FileCounts,
+    paused: Boolean,
+    noAccess: Boolean,
+    where: String?,
+    onPause: () -> Unit,
+    onStop: () -> Unit,
+) {
+    val f = files
     ListItem(
-        headlineContent = { Text(s.path.trimEnd('/').substringAfterLast('/')) },
+        headlineContent = { Text(path.trimEnd('/').substringAfterLast('/')) },
         supportingContent = {
             Text(
                 when {
-                    s.status == "no_access" -> "Not shared with you any more, or gone"
-                    s.paused -> "Paused"
+                    noAccess -> "Not shared any more, or gone"
+                    paused -> "Paused"
                     f.pending > 0 -> "${f.done} here, ${f.pending} to go" + if (f.failed > 0) ", ${f.failed} failed" else ""
                     else -> "${plural(f.done, "file")} here" + if (f.failed > 0) ", ${f.failed} failed" else ""
-                },
+                } + (where?.let { " · in $it" } ?: ""),
             )
         },
         leadingContent = { Icon(Icons.Default.Sync, null) },
         trailingContent = {
             Row {
-                IconButton({ model.act(null) { model.api.setPaused(s.id, !s.paused) } }) {
-                    Icon(if (s.paused) Icons.Default.PlayArrow else Icons.Default.Pause, if (s.paused) "Resume" else "Pause")
+                IconButton(onPause) {
+                    Icon(if (paused) Icons.Default.PlayArrow else Icons.Default.Pause, if (paused) "Resume" else "Pause")
                 }
-                IconButton({ model.act("Stopped keeping it in sync. The files stay.") { model.api.unsubscribe(s.id) } }) {
+                IconButton(onStop) {
                     Icon(Icons.Default.Close, "Stop keeping in sync")
                 }
             }
@@ -131,16 +153,23 @@ private fun SubscriptionRow(model: AppModel, s: Subscription) {
     )
 }
 
-/** A computer's downloads, asked for every few seconds while this is on screen (ADR 0023). */
+/**
+ * A computer's folders kept in sync and its downloads, asked for every few seconds while this
+ * is on screen (ADR 0023).
+ */
 @Composable
 private fun RemoteTransfers(model: AppModel, device: String) {
     var list by remember(device) { mutableStateOf<List<RemoteTransfer>?>(null) }
+    var subs by remember(device) { mutableStateOf<List<RemoteSubscription>>(emptyList()) }
     var error by remember(device) { mutableStateOf<String?>(null) }
-    LaunchedEffect(device) {
+    var refresh by remember(device) { mutableStateOf(0) }
+    LaunchedEffect(device, refresh) {
         while (true) {
             runCatching { model.api.remoteTransfers(device) }
                 .onSuccess { list = it; error = null }
                 .onFailure { error = it.message }
+            // An older computer doesn't answer this one: it just shows none.
+            runCatching { model.api.remoteSubscriptions(device) }.onSuccess { subs = it }
             delay(if (list.orEmpty().any { it.state == "active" }) 3_000 else 10_000)
         }
     }
@@ -148,8 +177,29 @@ private fun RemoteTransfers(model: AppModel, device: String) {
     when {
         error != null && l == null -> Hint(error!!)
         l == null -> LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 16.dp))
-        l.isEmpty() -> Hint("No downloads on that computer.")
+        l.isEmpty() && subs.isEmpty() -> Hint("No downloads on that computer.")
         else -> LazyColumn(Modifier.fillMaxSize()) {
+            if (subs.isNotEmpty()) {
+                item { Section("Kept in sync") }
+                items(subs, key = { "s" + it.id }) { s ->
+                    SubscriptionItem(
+                        path = s.path,
+                        files = s.files,
+                        paused = s.paused,
+                        noAccess = s.status == "no_access",
+                        where = s.destination?.let { "$it › ${s.folder}" } ?: s.folder,
+                        onPause = {
+                            model.act(null) { model.api.remoteSetPaused(device, s.id, !s.paused); refresh++ }
+                        },
+                        onStop = {
+                            model.act("Stopped keeping it in sync there. The files stay.") {
+                                model.api.remoteUnsubscribe(device, s.id); refresh++
+                            }
+                        },
+                    )
+                }
+            }
+            if (l.isNotEmpty()) item { Section("Downloads") }
             items(l, key = { it.id }) { t ->
                 TransferRow(
                     name = t.name,

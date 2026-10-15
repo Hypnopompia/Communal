@@ -177,6 +177,23 @@ data class RemoteTransfer(
 
 @Serializable data class RemoteTransfers(val transfers: List<RemoteTransfer>)
 
+/** A computer's subscription (ADR 0023): where it saves by destination name, never a path. */
+@Serializable
+data class RemoteSubscription(
+    val id: String,
+    val hub: String,
+    val device_id: String,
+    val path: String,
+    val destination: String? = null,
+    val folder: String,
+    val mirror_deletes: Boolean,
+    val paused: Boolean,
+    val status: String,
+    val files: FileCounts = FileCounts(),
+)
+
+@Serializable data class RemoteSubscriptions(val subscriptions: List<RemoteSubscription>)
+
 @Serializable data class Hello(val allowed: Boolean, val destinations: List<String> = listOf("Downloads"))
 
 @Serializable data class LinkResult(val user_id: String, val fingerprint: String)
@@ -358,6 +375,27 @@ class Api(private val host: CoreHost) {
 
     suspend fun remoteTransfers(device: String): List<RemoteTransfer> =
         json.decodeFromJsonElement(RemoteTransfers.serializer(), remote(device, buildJsonObject { put("op", "transfers") })).transfers
+
+    suspend fun remoteSubscriptions(device: String): List<RemoteSubscription> =
+        json.decodeFromJsonElement(
+            RemoteSubscriptions.serializer(),
+            remote(device, buildJsonObject { put("op", "subscriptions") }),
+        ).subscriptions
+
+    suspend fun remoteSetPaused(device: String, id: String, paused: Boolean) {
+        remote(device, buildJsonObject {
+            put("op", "update_subscription")
+            put("id", id)
+            put("paused", paused)
+        })
+    }
+
+    suspend fun remoteUnsubscribe(device: String, id: String) {
+        remote(device, buildJsonObject {
+            put("op", "unsubscribe")
+            put("id", id)
+        })
+    }
 
     suspend fun remoteCancel(device: String, id: String) {
         remote(device, buildJsonObject {

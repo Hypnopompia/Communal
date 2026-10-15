@@ -1,22 +1,24 @@
-/** Subscriptions (HANDOFF §11): followed folders, where they go, mirror-deletes, pause, remove. */
-import { useState } from 'react';
-import { api, type Subscription } from '../api';
+/**
+ * Subscriptions (HANDOFF §11): followed folders, where they go, mirror-deletes, pause, remove.
+ * Grouped by device: this computer, then your other computers, whose subscriptions are listed
+ * and changed through remote control (ADR 0023) while it's switched on there.
+ */
+import { useQuery } from '@tanstack/react-query';
+import { useState, type ReactNode } from 'react';
+import { api, type RemoteSubscription, type Subscription } from '../api';
 import { baseName, hubName, computerName } from '../format';
 import { useHubs, useNames } from '../hubs';
 import { useNav } from '../nav';
 import { useApi } from '../query';
 import { FolderIcon } from '../ui/icons';
 import { Dialog, Empty, ErrorNote, useAction } from '../ui/kit';
+import { remote, useRemoteComputers, type RemoteComputer } from '../ui/remote';
 import { VerifiedMark } from '../ui/VerifiedMark';
 
+type Patch = { mirror_deletes?: boolean; paused?: boolean };
+
 export function Subscriptions() {
-  const list = useApi<{ subscriptions: Subscription[] }>(
-    ['subscriptions', 'transfers'],
-    '/v1/subscriptions',
-  );
-  const go = useNav();
-  // The synced folder's subscriptions are shown with it, in My shares.
-  const subs = list.data?.subscriptions.filter((s) => !s.sync);
+  const { computers } = useRemoteComputers();
   return (
     <div className="page">
       <div className="page-head">
@@ -28,6 +30,35 @@ export function Subscriptions() {
           </p>
         </div>
       </div>
+      {computers.length > 0 && <h2>This computer</h2>}
+      <LocalSubscriptions />
+      {computers.map((c) => (
+        <section key={c.device_id} style={{ display: 'grid', gap: 12 }}>
+          <h2>
+            {c.name}
+            {c.state === 'offline' && (
+              <span className="tag" style={{ marginLeft: 8 }}>
+                Offline
+              </span>
+            )}
+          </h2>
+          <RemoteSection computer={c} />
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function LocalSubscriptions() {
+  const list = useApi<{ subscriptions: Subscription[] }>(
+    ['subscriptions', 'transfers'],
+    '/v1/subscriptions',
+  );
+  const go = useNav();
+  // The synced folder's subscriptions are shown with it, in My shares.
+  const subs = list.data?.subscriptions.filter((s) => !s.sync);
+  return (
+    <>
       <ErrorNote error={list.error} />
       {subs?.length === 0 && (
         <Empty
@@ -44,30 +75,137 @@ export function Subscriptions() {
       {subs && subs.length > 0 && (
         <div className="panel rows">
           {subs.map((s) => (
-            <SubRow key={s.id} s={s} />
+            <LocalSubRow key={s.id} s={s} />
           ))}
         </div>
       )}
-    </div>
+    </>
   );
 }
 
-function SubRow({ s }: { s: Subscription }) {
-  const names = useNames();
+function LocalSubRow({ s }: { s: Subscription }) {
   const { hubs } = useHubs();
-  const [removing, setRemoving] = useState(false);
-  const update = useAction(
-    (b: { mirror_deletes?: boolean; paused?: boolean }) => api.put(`/v1/subscriptions/${s.id}`, b),
-    {
-      topics: ['subscriptions'],
-    },
-  );
+  const update = useAction((b: Patch) => api.put(`/v1/subscriptions/${s.id}`, b), {
+    topics: ['subscriptions'],
+  });
   const remove = useAction(() => api.del(`/v1/subscriptions/${s.id}`), {
     topics: ['subscriptions'],
     done: `Stopped following ${baseName(s.path)}`,
   });
+  return (
+    <SubRow
+      s={s}
+      hub={hubs.find((h) => h.id === s.hub)}
+      savedIn={
+        <a
+          href="#"
+          title={s.dest_dir}
+          onClick={(e) => {
+            e.preventDefault();
+            void window.communal.openPath(s.dest_dir);
+          }}
+        >
+          {baseName(s.dest_dir)}
+        </a>
+      }
+      where="your computer"
+      update={update}
+      remove={remove}
+    />
+  );
+}
+
+/** Another computer's subscriptions, or why they can't be shown. */
+function RemoteSection({ computer: c }: { computer: RemoteComputer }) {
+  const q = useQuery({
+    queryKey: ['remote-subscriptions', c.device_id],
+    queryFn: () =>
+      remote<{ subscriptions: RemoteSubscription[] }>(c.device_id, { op: 'subscriptions' }).then(
+        (r) => r.subscriptions,
+      ),
+    enabled: c.state === 'ready',
+    refetchInterval: 15_000,
+    retry: false,
+  });
+  if (c.state === 'offline')
+    return (
+      <p className="muted">
+        {c.name} is offline. Its subscriptions show here when it’s back, and it catches up on what
+        changed meanwhile.
+      </p>
+    );
+  if (c.state === 'off')
+    return (
+      <p className="muted">
+        Remote control is off on {c.name}, so its subscriptions can’t be shown or changed from here.
+        Turn on “Let my other devices start downloads on this computer” in its Settings › Downloads,
+        or run <code>communal remote allow</code> on it.
+      </p>
+    );
+  if (c.state === 'unreachable')
+    return <p className="muted">{c.name} is online but didn’t answer. Try again in a moment.</p>;
+  if (q.error) return <div className="notice warn">{q.error.message}</div>;
+  if (!q.data) return <div className="muted">Asking {c.name}…</div>;
+  if (q.data.length === 0) return <p className="muted">{c.name} isn’t following any folders.</p>;
+  return (
+    <div className="panel rows">
+      {q.data.map((s) => (
+        <RemoteSubRow key={s.id} s={s} computer={c} refetch={() => void q.refetch()} />
+      ))}
+    </div>
+  );
+}
+
+function RemoteSubRow({
+  s,
+  computer,
+  refetch,
+}: {
+  s: RemoteSubscription;
+  computer: RemoteComputer;
+  refetch: () => void;
+}) {
+  const { hubs } = useHubs();
+  const update = useAction(
+    (b: Patch) => remote(computer.device_id, { op: 'update_subscription', id: s.id, ...b }),
+    { onDone: refetch },
+  );
+  const remove = useAction(() => remote(computer.device_id, { op: 'unsubscribe', id: s.id }), {
+    onDone: refetch,
+    done: `${computer.name} stopped following ${baseName(s.path)}`,
+  });
+  return (
+    <SubRow
+      s={s}
+      hub={hubs.find((h) => h.url === s.hub) ?? { url: s.hub }}
+      savedIn={<span>{s.destination ? `${s.destination} › ${s.folder}` : s.folder}</span>}
+      where={computer.name}
+      update={update}
+      remove={remove}
+    />
+  );
+}
+
+/** One followed folder, on this computer or another (`where`, for the remove dialog). */
+function SubRow({
+  s,
+  hub,
+  savedIn,
+  where,
+  update,
+  remove,
+}: {
+  s: Subscription | RemoteSubscription;
+  hub: Parameters<typeof hubName>[0] | undefined;
+  savedIn: ReactNode;
+  where: string;
+  update: { run: (b: Patch) => Promise<unknown>; busy: boolean; error: Error | null };
+  remove: { run: () => Promise<unknown>; busy: boolean; error: Error | null };
+}) {
+  const names = useNames();
+  const { hubs } = useHubs();
+  const [removing, setRemoving] = useState(false);
   const d = names.device(s.device_id);
-  const hub = hubs.find((h) => h.id === s.hub);
   return (
     <div className="row" style={{ alignItems: 'flex-start' }}>
       <FolderIcon size={32} />
@@ -76,37 +214,32 @@ function SubRow({ s }: { s: Subscription }) {
         <div className="sub">
           From {d ? computerName(d.user, d.name) : 'another computer'}
           <VerifiedMark on={d && names.verified(d.user_id)} />
-          {hubs.length > 1 && hub ? ` on ${hubName(hub)}` : ''}. Saved in{' '}
-          <a
-            href="#"
-            title={s.dest_dir}
-            onClick={(e) => {
-              e.preventDefault();
-              void window.communal.openPath(s.dest_dir);
-            }}
-          >
-            {baseName(s.dest_dir)}
-          </a>
+          {hubs.length > 1 && hub ? ` on ${hubName(hub)}` : ''}. Saved in {savedIn}
         </div>
         {s.status === 'no_access' && (
           <div className="notice warn">
-            This folder isn’t shared with you any more, or it was removed. Your copies stay where
-            they are.
+            This folder isn’t shared any more, or it was removed. The copies already downloaded stay
+            where they are.
           </div>
         )}
         <label className="check small">
           <input
             type="checkbox"
             checked={s.mirror_deletes}
+            disabled={update.busy}
             onChange={(e) => void update.run({ mirror_deletes: e.target.checked })}
           />
-          <span>When the owner deletes a file, move my copy to the trash</span>
+          <span>When the owner deletes a file, move the copy to the trash</span>
         </label>
         <ErrorNote error={update.error ?? remove.error} />
       </div>
       <div className="end">
         {s.paused && <span className="tag">Paused</span>}
-        <button className="btn small quiet" onClick={() => void update.run({ paused: !s.paused })}>
+        <button
+          className="btn small quiet"
+          disabled={update.busy}
+          onClick={() => void update.run({ paused: !s.paused })}
+        >
           {s.paused ? 'Resume' : 'Pause'}
         </button>
         <button className="btn small quiet" onClick={() => setRemoving(true)}>
@@ -116,7 +249,7 @@ function SubRow({ s }: { s: Subscription }) {
       {removing && (
         <Dialog title={`Stop following “${baseName(s.path)}”?`} onClose={() => setRemoving(false)}>
           <p className="muted">
-            New files stop arriving. The files you already have stay on your computer.
+            New files stop arriving. The files already downloaded stay on {where}.
           </p>
           <div className="dialog-actions">
             <button className="btn" onClick={() => setRemoving(false)}>
@@ -124,6 +257,7 @@ function SubRow({ s }: { s: Subscription }) {
             </button>
             <button
               className="btn primary"
+              disabled={remove.busy}
               onClick={() => void remove.run().then(() => setRemoving(false))}
             >
               Unsubscribe

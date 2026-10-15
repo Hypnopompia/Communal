@@ -16,7 +16,13 @@ import {
   type RecoveryFile,
   type RevocationProof,
 } from '@communal/crypto';
-import type { ClientBody, HubBody, RemoteRequest, RemoteTransfer } from '@communal/protocol';
+import type {
+  ClientBody,
+  HubBody,
+  RemoteRequest,
+  RemoteSubscription,
+  RemoteTransfer,
+} from '@communal/protocol';
 import { HubManager, type HubEntry, type SharedClientOptions } from './hub-manager.js';
 import { Indexer, type IndexerOptions } from './index/indexer.js';
 import { IndexStore, type Audience, type ShareRow } from './index/store.js';
@@ -1019,6 +1025,25 @@ export class CommunalCore {
         });
         return { id: s.id };
       }
+      case 'subscriptions':
+        return {
+          subscriptions: this.subscriptions
+            .list()
+            .filter((s) => !s.sync)
+            .map((s): RemoteSubscription => this.remoteSubscription(s)),
+        };
+      case 'update_subscription': {
+        this.remoteSub(req.id);
+        await this.subscriptions.update(req.id, {
+          ...(req.paused !== undefined ? { paused: req.paused } : {}),
+          ...(req.mirror_deletes !== undefined ? { mirror_deletes: req.mirror_deletes } : {}),
+        });
+        return { subscription: this.remoteSubscription(this.remoteSub(req.id)) };
+      }
+      case 'unsubscribe':
+        this.remoteSub(req.id);
+        await this.subscriptions.remove(req.id);
+        return { unsubscribed: req.id };
       case 'transfers':
         return {
           transfers: this.downloads
@@ -1039,6 +1064,38 @@ export class CommunalCore {
         if (!this.downloads.cancel(req.id)) throw new CoreError('not_found', 'no such download');
         return { cancelled: req.id };
     }
+  }
+
+  /** A subscription another device may change: any but the synced folder's (ADR 0019). */
+  private remoteSub(id: string) {
+    const s = this.subscriptions.list().find((x) => x.id === id && !x.sync);
+    if (!s) throw new CoreError('not_found', 'no such subscription');
+    return s;
+  }
+
+  /** A subscription as another device sees it: its destination's name, never a path. */
+  private remoteSubscription(s: ReturnType<Subscriptions['list']>[number]): RemoteSubscription {
+    const inside = (dir: string) => {
+      const r = relative(dir, s.dest_dir);
+      return r !== '' && !r.startsWith('..') && !isAbsolute(r);
+    };
+    // The innermost destination holding the folder (a named one can sit inside Downloads).
+    const dest = this.destinations()
+      .filter((d) => inside(d.path))
+      .sort((a, b) => b.path.length - a.path.length)[0];
+    return {
+      id: s.id,
+      hub: this.hubs.find(s.hub)?.url ?? s.hub,
+      device_id: s.device_id,
+      path: s.path,
+      destination: dest?.name ?? null,
+      folder: basename(s.dest_dir),
+      mirror_deletes: s.mirror_deletes,
+      paused: s.paused,
+      status: s.status,
+      files: s.files,
+      created_at: s.created_at,
+    };
   }
 
   // ── previews (M6) ─────────────────────────────────────────────────────────

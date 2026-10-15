@@ -1,7 +1,8 @@
 /**
  * Remote control (ADR 0023): any device of this account can ask another to download a file,
- * download or follow a folder, and show or cancel its transfers. The other device acts only
- * while its Settings › Downloads switch is on, and saves into its own downloads folder.
+ * download or follow a folder, show and change its subscriptions, and show or cancel its
+ * transfers. The other device acts only while its Settings › Downloads switch is on, and saves
+ * into its own downloads folder.
  */
 import { useQuery } from '@tanstack/react-query';
 import { api, type RemoteDevice, type RemoteTransfer } from '../api';
@@ -14,35 +15,52 @@ export async function remote<T>(device: string, request: object): Promise<T> {
     .result;
 }
 
-/**
- * Your other devices that take requests now: online, and with remote control switched on.
- * Phones are left out: they only run while open, so they can't be relied on to download.
- */
 export type RemoteTarget = RemoteDevice & { destinations: string[] };
 
-export function useRemoteTargets(): RemoteTarget[] {
+/**
+ * Your other computers and whether each takes requests now: `offline`, `off` (remote control
+ * is switched off there), `unreachable` (online but didn't answer) or `ready`. Phones are left
+ * out: they only run while open, so they can't be relied on to download.
+ */
+export type RemoteComputer = RemoteDevice & {
+  state: 'offline' | 'off' | 'unreachable' | 'ready';
+  destinations: string[];
+};
+
+export function useRemoteComputers(): { computers: RemoteComputer[]; loading: boolean } {
   const q = useQuery({
     // Tagged like useApi's keys, so device and presence hints refresh it.
     queryKey: ['api', ['devices', 'presence'], 'remote-targets'],
     queryFn: async () => {
       const { devices } = await api.get<{ devices: RemoteDevice[] }>('/v1/remote/devices');
-      const candidates = devices.filter((d) => d.online && d.platform !== 'android');
+      const computers = devices.filter((d) => d.platform !== 'android');
       const answers = await Promise.all(
-        candidates.map((d) =>
-          remote<{ allowed: boolean; destinations?: string[] }>(d.device_id, {
-            op: 'hello',
-          }).catch(() => null),
+        computers.map((d) =>
+          d.online
+            ? remote<{ allowed: boolean; destinations?: string[] }>(d.device_id, {
+                op: 'hello',
+              }).catch(() => null)
+            : null,
         ),
       );
-      return candidates.flatMap((d, i) => {
+      return computers.map((d, i): RemoteComputer => {
         const a = answers[i];
-        return a?.allowed ? [{ ...d, destinations: a.destinations ?? ['Downloads'] }] : [];
+        return {
+          ...d,
+          state: !d.online ? 'offline' : !a ? 'unreachable' : a.allowed ? 'ready' : 'off',
+          destinations: a?.destinations ?? ['Downloads'],
+        };
       });
     },
     staleTime: 30_000,
     retry: false,
   });
-  return q.data ?? [];
+  return { computers: q.data ?? [], loading: q.isPending };
+}
+
+/** Your other computers that take requests now: online, with remote control switched on. */
+export function useRemoteTargets(): RemoteTarget[] {
+  return useRemoteComputers().computers.filter((c) => c.state === 'ready');
 }
 
 /** Has another device download a file into its downloads folder. */

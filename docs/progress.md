@@ -69,6 +69,7 @@ These are fine for now. Fix them if they start to bite.
   - Hubs forget deletions after 180 days.
   - A live rename keeps its hash only when both events land in the same 2 s watcher batch.
   - A visibility change re-announces the whole folder, which could cost too much for very large folders.
+  - A subscription's folder can't be moved, here or from another device: unsubscribe and subscribe again into the new place.
 - **Media** (ADR 0012):
   - HEIC and RAW get thumbnails only from their embedded preview.
   - A stream uses a single source.
@@ -81,6 +82,18 @@ These are fine for now. Fix them if they start to bite.
 
 - **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
 - **From HANDOFF §15:** hubs caching thumbnails of hub-wide files.
+
+## Subscriptions of all your devices, from any device (2026-10-14)
+
+Owner request: manage the Jellyfin server's subscriptions (a headless client) from the laptop.
+
+- **Remote ops** (ADR 0023): `subscriptions`, `update_subscription` (`paused`, `mirror_deletes`) and `unsubscribe`, on the `runRemote` allowlist, so only while remote control is on at the receiver. Requests name a subscription by id, never a path. Replies (`RemoteSubscription`) name the hub by URL and where files go by destination name (the innermost destination holding the folder, else null) plus the folder's name; no local paths. The synced folder's subscriptions are left out and can't be changed (`not_found`). The local API needed nothing new: `POST /v1/remote/:device`.
+- **CLI:** `--on <device>` on `subscriptions [list]`, `subscriptions set` and `subscriptions remove`.
+- **MCP:** `list_subscriptions`, `update_subscription` and `unsubscribe` take `on_device`.
+- **Desktop:** Subscriptions is grouped by device: this computer, then each of your other computers, with pause/resume, mirror-deletes and unsubscribe. A computer that's offline, has remote control off, or doesn't answer says so (and how to turn it on). `useRemoteComputers()` in `ui/remote.tsx` now backs `useRemoteTargets()`.
+- **Android:** a computer's view in Transfers shows its folders kept in sync, with pause/resume and stop, above its downloads.
+- **Older devices** drop a request with an op they don't know (it fails their schema), so the asker gets "didn't answer" after the timeout.
+- **Tests:** `m13-remote-control` (off refuses all three, listing without paths, pause/mirror/remove, synced folder out of reach, MCP with `on_device`), protocol parsing in `protocol.test.ts`.
 
 ## Headless package: the CLI couldn't find the service, and stopping took 90 s (2026-10-14)
 
