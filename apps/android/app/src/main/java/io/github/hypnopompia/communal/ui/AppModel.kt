@@ -2,6 +2,9 @@ package io.github.hypnopompia.communal.ui
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.viewModelScope
 import io.github.hypnopompia.communal.ApiError
 import io.github.hypnopompia.communal.CommunalApp
@@ -65,7 +68,21 @@ class AppModel(application: Application) : AndroidViewModel(application) {
                 if (transfers.value.any { it.state == "active" }) refreshTransfers()
             }
         }
-        viewModelScope.launch { update.value = app.updates.check() }
+    }
+
+    /** Looks for a new version each time the app comes to the front (the check caches a day). */
+    private val foreground = object : DefaultLifecycleObserver {
+        override fun onStart(owner: LifecycleOwner) {
+            viewModelScope.launch { update.value = app.updates.check() }
+        }
+    }
+
+    init {
+        ProcessLifecycleOwner.get().lifecycle.addObserver(foreground)
+    }
+
+    override fun onCleared() {
+        ProcessLifecycleOwner.get().lifecycle.removeObserver(foreground)
     }
 
     private fun refresh(topics: Set<String>) {

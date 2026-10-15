@@ -80,7 +80,7 @@ Closing the window keeps the app sharing in the background. It quits from the tr
     - Windows signing would use `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD`. There's no Windows certificate yet, so Windows builds are unsigned (SmartScreen warns).
     - `CSC_IDENTITY_AUTO_DISCOVERY=false` builds unsigned.
   - **Auto-update from GitHub Releases:**
-    - `publish: github (Hypnopompia/Communal)` in electron-builder.yml writes `app-update.yml` into the app. electron-updater checks the latest release at start and every 6 hours, downloads in the background, and installs on quit or on "Restart to update".
+    - `publish: github (Hypnopompia/Communal)` in electron-builder.yml writes `app-update.yml` into the app. electron-updater checks the latest release at start, a minute after waking from sleep, and whenever 6 hours of wall-clock time have passed (a plain interval stops while the computer sleeps), downloads in the background, and installs on quit or on "Restart to update".
     - Builds never publish themselves (`--publish never`). Uploads happen in the release flow below.
 - **Releases** (`pnpm release`, `scripts/release.mjs`), modeled on ListenSync's:
   1. Checks that the version's notes are in `apps/desktop/changelog.json`, `main` is committed and pushed, a Developer ID is in the keychain, and the API key is set.
