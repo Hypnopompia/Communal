@@ -48,6 +48,9 @@ describe('computer names', () => {
     expect(computerName('Maya', 'iMac')).toBe('Maya’s iMac');
     expect(computerName('Maya', 'Maya’s iMac')).toBe('Maya’s iMac');
     expect(computerName('Maya', 'maya-laptop')).toBe('maya-laptop');
+    expect(computerName('Maya Lindqvist', 'Maya’s iMac')).toBe('Maya’s iMac');
+    expect(computerName('Maya Lindqvist', 'iMac')).toBe('Maya Lindqvist’s iMac');
+    expect(computerName('Al', 'Alpha')).toBe('Al’s Alpha');
   });
 });
 

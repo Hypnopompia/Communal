@@ -89,9 +89,12 @@ export function hubUrl(input: string): string {
 
 /**
  * "Maya’s iMac" from an owner and a device name, without doubling the owner when the device
- * name already starts with it ("Maya’s iMac", "maya-laptop").
+ * name already starts with their name or first name ("Maya’s iMac" for Maya Lindqvist,
+ * "maya-laptop"). A first name that only begins a longer word doesn't count ("Al" in "Alpha").
  */
 export function computerName(owner: string, device: string): string {
-  const o = owner.trim().toLowerCase();
-  return o && device.trim().toLowerCase().startsWith(o) ? device : `${owner}’s ${device}`;
+  const d = device.trim().toLowerCase();
+  const names = [owner.trim(), owner.trim().split(/\s+/)[0] ?? ''].map((n) => n.toLowerCase());
+  const named = names.some((n) => n && d.startsWith(n) && !/\p{L}/u.test(d.charAt(n.length)));
+  return named ? device : `${owner}’s ${device}`;
 }

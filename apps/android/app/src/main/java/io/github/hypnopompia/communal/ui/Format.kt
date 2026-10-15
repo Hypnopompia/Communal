@@ -55,11 +55,13 @@ fun ago(unixSeconds: Long): String {
 
 /**
  * "Maya’s iMac" from an owner and a device name, without doubling the owner when the device
- * name already starts with it, as the desktop's `computerName()`.
+ * name already starts with their name or first name, as the desktop's `computerName()`.
  */
 fun computerName(owner: String, device: String): String {
-    val o = owner.trim().lowercase()
-    return if (o.isNotEmpty() && device.trim().lowercase().startsWith(o)) device else "$owner’s $device"
+    val d = device.trim().lowercase()
+    val names = listOf(owner.trim(), owner.trim().split(Regex("\\s+")).first()).map { it.lowercase() }
+    val named = names.any { n -> n.isNotEmpty() && d.startsWith(n) && d.getOrNull(n.length)?.isLetter() != true }
+    return if (named) device else "$owner’s $device"
 }
 
 /** "4032×3024, 3:42, Artist, 4.2 MB", as the desktop's `describe()`. */

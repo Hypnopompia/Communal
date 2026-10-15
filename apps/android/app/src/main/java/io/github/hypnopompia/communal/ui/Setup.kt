@@ -79,7 +79,7 @@ fun Setup(model: AppModel, snackbar: SnackbarHostState) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                         if (linking) {
                             Steps(
-                                "On your computer, open Communal › Settings › Devices › Add a computer. It shows a code.",
+                                "On your computer, open Communal › Settings › Devices and choose Get a code.",
                                 "Type the hub’s address and that code here.",
                                 "Approve this phone on your computer.",
                             )

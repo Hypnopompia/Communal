@@ -1,6 +1,6 @@
 {
   "name": "@communal/android",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "private": true,
   "description": "The Android app: a download-only client that runs the core under Node 24 (ADR 0023).",
   "license": "MIT",

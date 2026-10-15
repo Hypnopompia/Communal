@@ -96,6 +96,16 @@ These are fine for now. Fix them if they start to bite.
 - **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
 - **From HANDOFF §15:** hubs caching thumbnails of hub-wide files.
 
+## Site: new Android screenshots, 0.1.11 (2026-10-15)
+
+- **Screenshots:** the four phone shots (`site/screenshots/android-*.webp`) were retaken in the new design, on the emulator with the system's demo status bar (9:41).
+  - **Demo setup:** a dev hub, Alice (the phone's account) with a MacBook and a Media server that has Movies and TV destinations, and Maya sharing photos, music, videos and a show with the hub.
+  - **Pictures:** the photos and video frames are drawn scenes (sea, mountains, a ferry, a lighthouse), made with ffmpeg's `geq`, because plain gradients and test patterns looked fake.
+- **The guide's Android section** now covers People, Search's filters, the grid, previews, folder actions, transfer tips and Start over.
+- **`computerName()`**, on both clients, also skips the owner's first name ("Maya’s iMac" for Maya Lindqvist, no longer "Maya Lindqvist’s Maya’s iMac"). A first name that only begins a longer word doesn't count.
+- **The phone's setup step** names the desktop's button (Settings › Devices › Get a code).
+- **The action sheet** shows a greyed-out computer's explanation in full.
+
 ## Android: Start over for a removed phone, and "Communal Dev" (2026-10-15)
 
 The owner mistook the debug build, which had the same name and icon as the release app, for a reset release app. They removed the release app's device from their account, so its identity can never sign in again.

@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.1.11",
+    "date": "2026-10-15",
+    "changes": [
+      "A new look for Communal on Android, matching the computer app: the same font, colours and icons for Macs, Windows and Linux computers and for each kind of file, people’s coloured initials, and dark mode.",
+      "On Android: a People tab to answer requests, find people and verify them with safety codes; Search filters by kind, size, who it’s from and availability; folders as a grid of thumbnails; a picture’s preview before you download it; download speeds and tips when a download can’t start; and joining another hub from Settings.",
+      "If your phone was removed from your account, the app now offers Start over, so you can link it again with a new code.",
+      "A computer whose name already starts with its owner’s first name is no longer called “Maya Lindqvist’s Maya’s iMac”.",
+      "Communal looks for updates after waking from sleep and, on Android, each time you open it, instead of only when it starts."
+    ]
+  },
+  {
     "version": "0.1.10",
     "date": "2026-10-15",
     "changes": [

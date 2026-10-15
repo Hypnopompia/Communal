@@ -302,6 +302,8 @@ private fun Option(icon: ImageVector, title: String, sub: String, enabled: Boole
         title,
         Modifier.padding(horizontal = 8.dp),
         sub = sub,
+        // A greyed-out computer explains how to turn it on: let that read in full.
+        subLines = 4,
         enabled = enabled,
         onClick = onClick,
         leading = {
