@@ -41,6 +41,7 @@ These came from the owner during development. Don't revert them to the spec's wo
   - `pnpm --filter @communal/desktop smoke` starts it with no window and checks the core.
   - `pnpm --filter @communal/desktop package` builds installers and smoke-tests them. Use `-- --dir` for the unpacked app only. `CSC_IDENTITY_AUTO_DISCOVERY=false` keeps a local signing identity out of the build.
 - Android (ADR 0023, `apps/android/README.md`): `sh apps/android/scripts/fetch-node.sh arm64-v8a`, `sh apps/android/scripts/prepare-jnilibs.sh arm64-v8a`, then `./gradlew :app:assembleDebug` in `apps/android` (JDK 21 from `/opt/homebrew/opt/openjdk@21`, `ANDROID_HOME=~/Library/Android/sdk`, patchelf). `pnpm --filter @communal/android package` builds the release APK. The emulator reaches the host as `10.0.2.2`; debug builds accept a dev hub's self-signed certificate.
+- Hub Docker image: every release tag pushes `ghcr.io/hypnopompia/communal-hub:<version>` and `:latest` (amd64 + arm64, `hub-image` jobs in `release.yml`). Build it locally with `docker build -f docker/hub.Dockerfile -t communal-hub:test .`. Docs: `site/hub.html#docker` (Linux hosts only: Docker Desktop hides client addresses; `--network host` recommended).
 - Linux installer: `site/install.sh` (published at https://hypnopompia.github.io/Communal/install.sh) installs or upgrades `desktop` (.deb or AppImage), `headless` or `hub` from the latest GitHub release, and backs up hub data before an upgrade.
 - Headless release: `pnpm --filter @communal/cli package` (a tarball with `install.sh` and `communal.service`). `communal check` runs the install self-check. Hub: `pnpm --filter @communal/hub package`.
 - Desktop packaging per CPU: `pnpm --filter @communal/desktop package -- --arch x64|arm64 [--dir]`. Output goes to `apps/desktop/release/<arch>/`.
@@ -49,7 +50,7 @@ These came from the owner during development. Don't revert them to the spec's wo
   2. Bump the version in every `package.json`.
   3. Commit and push `main`, then run it.
   - It needs `gh` logged in, the Developer ID certificate in the keychain, and the App Store Connect API key in `.env` (see `.env.example`).
-  - It signs and notarizes both Mac apps locally. GitHub Actions (`release.yml`) adds Windows, Linux and the tarballs to the draft, then the script publishes.
+  - It signs and notarizes both Mac apps locally. GitHub Actions (`release.yml`) adds Windows, Linux and the tarballs to the draft and pushes the hub image to GHCR, then the script publishes.
 - Destinations (ADR 0018): `communal dest [list|add <name> <folder>|set|remove]`, then `--to <name>` on `get`, `get-folder` and `subscribe` (also with `--on`: other devices can only name a destination, never a path).
 - Remote control (ADR 0023): `communal remote [status|allow|deny|downloads on|off]` (`downloads off`: other devices may only name a destination), and `--on <device id or name>` on `get`, `get-folder`, `subscribe`, `subscriptions`, `transfers` and `cancel` to have another of your devices do it (or show and change its subscriptions).
 - Hub admin from a client: `communal admin users|approve|ban|unban|settings|graph|log` (on hubs you administer).

@@ -35,6 +35,7 @@ From the October audit (`docs/security-audit-2026-10.md`, the "Open" table). The
 - **Windows code signing** (no certificate yet, ADR 0016).
 - **An in-app "What's new"** from `apps/desktop/changelog.json` (ADR 0016).
 - **Show the access preview in the app.** `POST /v1/acl/preview` already says which files would be seen by whom. The audience picker in My shares could show the same thing before saving.
+- **The first hub image on GHCR** (2026-10-15 below). The `hub-image` jobs in `release.yml` haven't run yet. After the next release, check both CPUs are under `ghcr.io/hypnopompia/communal-hub:<version>`, and make the package public once (GitHub › Packages › communal-hub › Package settings): a new package starts private, so `docker pull` fails for everyone else until then.
 - **A message to send to the person with the easier fix.** Transfers shows who can fix a failed connection, but there's no ready-made note to send them (M5, HANDOFF §8).
 
 ### Waiting for user feedback
@@ -95,6 +96,16 @@ These are fine for now. Fix them if they start to bite.
 
 - **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
 - **From HANDOFF §15:** hubs caching thumbnails of hub-wide files.
+
+## Docker hub image on GHCR (2026-10-15)
+
+A friend of the owner asked whether running a hub in Docker meant a Node.js container and the normal install. The site had three sentences and no published image.
+
+- **Release workflow:** `hub-image-build` builds `docker/hub.Dockerfile` (release build) natively on `ubuntu-latest` and `ubuntu-24.04-arm` and pushes each by digest. `hub-image` joins them as `ghcr.io/hypnopompia/communal-hub:<version>` and `:latest`. Native runners rather than QEMU, because the build stage installs better-sqlite3's prebuild for the machine it runs on. Linted with actionlint; it first runs on the next release.
+- **Image:** `setcap cap_net_bind_service` on node, so the hub (user `node`) can bind 443 with `--network host`, where unprivileged ports start at 1024 (`--cap-add` doesn't help a non-root user). The healthcheck now uses `COMMUNAL_HUB_PORT` instead of a fixed 8443, which reported a hub on 443 as unhealthy.
+- **Site (`hub.html#docker`):** certbot with a deploy hook that copies the certificate as uid 1000 and restarts the container (the hub reads it only at start, `resolveTls`), then `docker run` and Compose with host networking (recommended), the published-ports variant (443→8443, 3478–3479/udp under the same numbers), admin commands through `docker exec`, and upgrading with a volume backup.
+- **Docker Desktop isn't supported for a hub.** Checked on this Mac (Docker Desktop 29.8): a TCP connection from another LAN machine (192.168.86.42) reached a container as `192.168.65.1`, and a UDP datagram's source address and port were both rewritten. The hub would see one address for everyone, and the NAT probe would classify every client wrongly. On Linux, published IPv4 ports keep the source address (kernel DNAT), but Docker's userland proxy carries IPv6 connections to an IPv4-only container from its own address, and the hub listens on IPv4 only. Hence host networking is the recommended mode.
+- **Tested locally** (arm64 image): `/healthz` with a self-signed certificate, healthy, in both the published-ports and host-network forms of the page's commands; `docker exec … communal-hub users|get|set`; the backup command.
 
 ## Site: new Android screenshots, 0.1.11 (2026-10-15)
 

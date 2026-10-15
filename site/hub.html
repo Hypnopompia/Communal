@@ -211,9 +211,134 @@ sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr
 
         <h2 id="docker">Docker</h2>
         <p>
-          The repository’s <code>docker/hub.Dockerfile</code> builds the same hub. Mount a volume at
-          <code>/data</code>, publish 8443/tcp and 3478–3479/udp, and pass the certificate with
-          <code>COMMUNAL_TLS_CERT</code> and <code>COMMUNAL_TLS_KEY</code>.
+          Every release publishes the hub as a ready-made image,
+          <code>ghcr.io/hypnopompia/communal-hub</code>, for 64-bit Intel/AMD and ARM. It has
+          Node.js and everything else inside: you don’t install anything but Docker. Use the
+          <code>latest</code> tag, or a version such as <code>0.1.12</code> to pin one.
+        </p>
+        <div class="note">
+          <p>
+            <b>Linux only.</b> The hub works out each computer’s network from the address its
+            connections come from, on TCP 443 and UDP 3478–3479. Docker Desktop (on Windows, macOS
+            and Linux alike) runs containers in a virtual machine and passes every connection on
+            from its own address, so the hub would see one internal address (such as 192.168.65.1)
+            for everyone and couldn’t introduce computers to each other. Run a hub on a Linux
+            machine with Docker Engine, not with Docker Desktop.
+          </p>
+        </div>
+
+        <h3>1. Certificate</h3>
+        <p>
+          The hub reads its certificate once, when it starts, so a renewal needs a restart. Get one
+          with certbot on the host (it needs TCP 80 forwarded), and let a renewal hook copy it where
+          the container reads it. The container runs as user <code>node</code> (uid 1000), so the
+          copies belong to uid 1000; certbot’s own files are readable only by root.
+        </p>
+        <pre><code>sudo apt install certbot
+sudo mkdir -p /etc/communal-hub/tls /etc/letsencrypt/renewal-hooks/deploy
+sudo tee /etc/letsencrypt/renewal-hooks/deploy/communal-hub.sh &gt;/dev/null &lt;&lt;'EOF'
+#!/bin/sh
+set -e
+src=/etc/letsencrypt/live/hub.example.com
+install -o 1000 -g 1000 -m 0644 "$src/fullchain.pem" /etc/communal-hub/tls/fullchain.pem
+install -o 1000 -g 1000 -m 0600 "$src/privkey.pem" /etc/communal-hub/tls/privkey.pem
+if docker inspect communal-hub &gt;/dev/null 2&gt;&amp;1; then docker restart communal-hub; fi
+EOF
+sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/communal-hub.sh
+sudo certbot certonly --standalone -d hub.example.com \
+  --deploy-hook /etc/letsencrypt/renewal-hooks/deploy/communal-hub.sh</code></pre>
+
+        <h3>2. Start the hub</h3>
+        <p>
+          With host networking the hub listens on the machine’s own ports, exactly like the
+          installed version, so nothing stands between it and the clients. This is the recommended
+          way:
+        </p>
+        <pre><code>docker run -d --name communal-hub --restart unless-stopped \
+  --network host \
+  -v communal-hub-data:/data \
+  -v /etc/communal-hub/tls:/tls:ro \
+  -e COMMUNAL_HUB_PORT=443 \
+  -e COMMUNAL_TLS_CERT=/tls/fullchain.pem \
+  -e COMMUNAL_TLS_KEY=/tls/privkey.pem \
+  -e COMMUNAL_JOIN_MODE=approval \
+  ghcr.io/hypnopompia/communal-hub:latest</code></pre>
+        <p>
+          Forward TCP 443 and UDP 3478 and 3479 from your router to this machine, as for any hub.
+          The hub’s key and database live in the <code>communal-hub-data</code> volume: back it up.
+          <code>COMMUNAL_JOIN_MODE</code> is only read on the first start (see
+          <a href="#admin">Who can join</a>). Check it’s up with
+          <code>curl https://hub.example.com/healthz</code>.
+        </p>
+        <p>The same with Docker Compose, in a <code>compose.yml</code>:</p>
+        <pre><code>services:
+  hub:
+    image: ghcr.io/hypnopompia/communal-hub:latest
+    container_name: communal-hub
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - communal-hub-data:/data
+      - /etc/communal-hub/tls:/tls:ro
+    environment:
+      COMMUNAL_HUB_PORT: '443'
+      COMMUNAL_TLS_CERT: /tls/fullchain.pem
+      COMMUNAL_TLS_KEY: /tls/privkey.pem
+      COMMUNAL_JOIN_MODE: approval
+
+volumes:
+  communal-hub-data:
+    name: communal-hub-data</code></pre>
+        <p>Then <code>docker compose up -d</code>.</p>
+
+        <h3>Without host networking</h3>
+        <p>
+          Published ports also work on Linux: Docker forwards them in the kernel and keeps each
+          client’s address. Inside the container the hub listens on 8443. Publish the probe ports
+          under the same numbers on the host, since the hub tells clients which ports to probe:
+        </p>
+        <pre><code>docker run -d --name communal-hub --restart unless-stopped \
+  -p 443:8443/tcp -p 3478:3478/udp -p 3479:3479/udp \
+  -v communal-hub-data:/data \
+  -v /etc/communal-hub/tls:/tls:ro \
+  -e COMMUNAL_TLS_CERT=/tls/fullchain.pem \
+  -e COMMUNAL_TLS_KEY=/tls/privkey.pem \
+  -e COMMUNAL_JOIN_MODE=approval \
+  ghcr.io/hypnopompia/communal-hub:latest</code></pre>
+        <p>
+          In Compose, replace <code>network_mode: host</code> and
+          <code>COMMUNAL_HUB_PORT</code> with
+          <code>ports: ['443:8443/tcp', '3478:3478/udp', '3479:3479/udp']</code>. Use host
+          networking instead if your hub’s name has an IPv6 address: the hub listens on IPv4, and
+          Docker hands IPv6 connections to it through a proxy that hides the client’s address.
+        </p>
+
+        <h3>Admin commands</h3>
+        <p>
+          The <a href="#admin">admin commands</a> run inside the container, on the same database,
+          while the hub runs:
+        </p>
+        <pre><code>docker exec communal-hub communal-hub users
+docker exec communal-hub communal-hub approve &lt;user_id&gt;
+docker exec communal-hub communal-hub set name "Hunter family"
+docker exec communal-hub communal-hub admin add &lt;user_id&gt;
+docker exec communal-hub communal-hub log</code></pre>
+        <p>Logs: <code>docker logs communal-hub</code>.</p>
+
+        <h3>Upgrading</h3>
+        <p>
+          A new version updates the database when it first starts, so stop the hub and back up its
+          data before upgrading:
+        </p>
+        <pre><code>docker pull ghcr.io/hypnopompia/communal-hub:latest
+docker stop communal-hub
+docker run --rm -v communal-hub-data:/data -v "$PWD":/backup debian:bookworm-slim \
+  tar czf "/backup/hub-data-$(date +%Y%m%d).tar.gz" -C /data .
+docker rm communal-hub</code></pre>
+        <p>
+          Then start it again with the same <code>docker run</code> command as above. With Compose:
+          <code>docker compose pull</code>, <code>docker compose stop</code>, the backup, then
+          <code>docker compose up -d</code>.
         </p>
 
         <h2 id="privacy">What a hub knows</h2>
