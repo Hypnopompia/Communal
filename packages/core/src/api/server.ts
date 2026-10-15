@@ -351,6 +351,13 @@ export class LocalApi {
       const b = SetRule.parse(body);
       return this.core.previewRule(b.hub, b.path, b.audience);
     });
+    // Who can see one path now, and which rule decides it.
+    route('GET', '/v1/acl/explain', async (_req, url) => {
+      const q = z
+        .object({ hub: z.string(), path: z.string().min(1).max(4096) })
+        .parse(Object.fromEntries(url.searchParams));
+      return this.core.explainRule(q.hub, q.path);
+    });
     route('PUT', '/v1/acl', async (_req, _url, body) => {
       const b = SetRule.parse(body);
       await this.core.setRule(b.hub, b.path, b.audience);

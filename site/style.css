@@ -446,3 +446,36 @@ figure {
   height: auto;
   border-radius: 24px;
 }
+
+/* ── things to ask an assistant ── */
+.asks {
+  list-style: none;
+  padding-left: 0 !important;
+  display: grid;
+  gap: 8px;
+}
+.asks li {
+  margin: 0;
+  padding: 8px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.asks li small {
+  display: block;
+  color: var(--ink-3);
+  font-size: 14px;
+}
+.exchange {
+  margin: 0 0 20px;
+  padding: 4px 0 4px 16px;
+  border-left: 3px solid var(--accent);
+}
+.exchange p {
+  margin: 0 0 10px;
+}
+.exchange b {
+  color: var(--ink-3);
+  font-size: 14px;
+  display: block;
+}

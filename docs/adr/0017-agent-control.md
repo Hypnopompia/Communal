@@ -39,6 +39,7 @@ The core's local API (`LocalApi`) is the only interface agents use, just as it i
 
 - **Destinations** (ADR 0018): `list_destinations`, `save_destination` (add, or rename/move with `was`), `remove_destination`, and `destination` on `download_file`, `download_folder` and `subscribe_folder`.
 - **Remote control** (ADR 0023): `get_remote_settings` and `set_remote_settings` (`allowed`, `downloads`; the server's instructions say to confirm before turning `allowed` on), `list_remote_devices` (online, takes requests, destination names), and `on_device` (id or name) on `download_file`, `download_folder`, `subscribe_folder`, `list_transfers` and `cancel_transfer`. With `on_device`, a `dest` path is refused before anything is sent: another device saves only into its downloads folder or a destination it names. Tested in `m13-remote-control.test.ts`.
+- **The rest of the local API**: `read_file_part` (a verified ranged read, 64 KiB at most), `wait_for_transfer`, `explain_access` (`GET /v1/acl/explain`), `clear_finished_transfers`, `clear_activity`, `set_thumbnail_cache`, and filters on `get_activity`. The safety code (`/v1/people/safety-code`) stays out with verifying: it only means something read out between two people.
 - None of these touch the excluded areas: no recovery key, device linking or revoking, verifying people, or making hub admins.
 
 ## Consequences

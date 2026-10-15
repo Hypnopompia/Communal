@@ -18,14 +18,26 @@ export class LocalApiClient {
   delete<T = unknown>(path: string): Promise<T> {
     return this.call('DELETE', path);
   }
-  /** A binary GET (a thumbnail, say): the bytes and their content type. */
-  bytes(path: string): Promise<{ type: string; data: Buffer }> {
-    return this.call('GET', path, undefined, true);
+  /**
+   * A binary GET (a thumbnail, say): the bytes and their content type, plus the response
+   * headers (`content-range` for a ranged read).
+   */
+  bytes(
+    path: string,
+    extra: Record<string, string> = {},
+  ): Promise<{ type: string; data: Buffer; headers: Record<string, string> }> {
+    return this.call('GET', path, undefined, true, extra);
   }
 
-  private call<T>(method: string, path: string, body?: unknown, raw = false): Promise<T> {
+  private call<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    raw = false,
+    extra: Record<string, string> = {},
+  ): Promise<T> {
     const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = { ...extra };
     if (payload) headers['content-type'] = 'application/json';
     if (this.on.token) headers.authorization = `Bearer ${this.on.token}`;
     const target =
@@ -43,14 +55,20 @@ export class LocalApiClient {
           const all = Buffer.concat(chunks);
           if (raw && (res.statusCode ?? 500) < 400) {
             const type = String(res.headers['content-type'] ?? 'application/octet-stream');
-            return resolve({ type, data: all } as T);
+            const h: Record<string, string> = {};
+            for (const [k, v] of Object.entries(res.headers)) if (typeof v === 'string') h[k] = v;
+            return resolve({ type, data: all, headers: h } as T);
           }
           const text = all.toString();
           let json: unknown;
           try {
             json = JSON.parse(text);
           } catch {
-            return reject(new Error(`bad response from core (${res.statusCode})`));
+            return reject(
+              Object.assign(new Error(`bad response from core (${res.statusCode})`), {
+                status: res.statusCode,
+              }),
+            );
           }
           if ((res.statusCode ?? 500) >= 400) {
             const e = json as { error?: string; message?: string };

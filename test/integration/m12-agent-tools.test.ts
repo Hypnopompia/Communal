@@ -1,6 +1,6 @@
 /**
  * Agent tools beyond ADR 0017 (ADR 0021): thumbnails an agent can look at, through the same
- * access checks as the app.
+ * access checks as the app; reading part of a file, waiting for a download, explaining access.
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -261,5 +261,100 @@ describe('M12: agent tools', () => {
     expect(JSON.parse((checked.content[0] as { text: string }).text)).toMatchObject({
       others: true,
     });
+  }, 60_000);
+
+  it('reads part of a file, waits for its download and explains who can see it', async () => {
+    const h = await hub();
+    const alice = await core('alice');
+    const bob = await core('bob');
+    await alice.addHub(h.url, acct('alice'));
+    const hb = (await bob.addHub(h.url, acct('bob'))).hub.id;
+    // Bob shares a log with the hub, and keeps a diary to himself.
+    const shared = tmp('communal-m12-logs-');
+    const lines = Array.from({ length: 5000 }, (_, i) => `line ${i}`).join('\n') + '\nTHE END\n';
+    writeFileSync(join(shared, 'server.log'), lines);
+    await png(join(shared, 'pic.png'), 40, 30, 3);
+    mkdirSync(join(shared, 'Private'));
+    writeFileSync(join(shared, 'Private', 'diary.txt'), 'dear diary');
+    await bob.addShare('Logs', shared);
+    await bob.setRule(hb, 'Logs/', 'hub');
+    await bob.setRule(hb, 'Logs/Private/', 'me');
+    await until(() => bob.store.counts().hashed === 3, 10_000, 'hashing');
+    const log = bob.store.file('Logs', 'server.log')!.hash!;
+    const pic = bob.store.file('Logs', 'pic.png')!.hash!;
+    const diary = bob.store.file('Logs', 'Private/diary.txt')!.hash!;
+    await until(
+      async () => (await alice.search({ q: 'server', limit: 10 })).hits.length === 1,
+      10_000,
+      'search',
+    );
+
+    const call = await agentOn(alice);
+    const json = async (name: string, args: Record<string, unknown> = {}) => {
+      const r = await call(name, args);
+      const text = (r.content[0] as { text: string }).text;
+      if (r.isError) throw new Error(text);
+      return JSON.parse(text) as Record<string, unknown>;
+    };
+
+    const start = await json('read_file_part', { hash: log, offset: 7, length: 6 });
+    expect(start).toEqual({ start: 7, end: 12, size: lines.length, text: 'line 1' });
+    const tail = await json('read_file_part', { hash: log, length: 8, from_end: true });
+    expect(tail).toMatchObject({ text: 'THE END\n', end: lines.length - 1 });
+    expect(await json('read_file_part', { hash: pic, length: 8 })).toMatchObject({
+      binary: true,
+      base64: Buffer.from('\x89PNG\r\n\x1a\n', 'latin1').toString('base64'),
+    });
+    await expect(json('read_file_part', { hash: log, offset: lines.length + 10 })).rejects.toThrow(
+      /past the end/,
+    );
+    // Bob's computer refuses what alice may not see.
+    await expect(json('read_file_part', { hash: diary })).rejects.toThrow();
+    await expect(json('read_file_part', { hash: log, length: 64 * 1024 + 1 })).rejects.toThrow();
+
+    // A download, waited for.
+    const dest = tmp('communal-m12-dl-');
+    const { download } = (await json('download_file', { hash: log, dest })) as {
+      download: { id: string };
+    };
+    expect(await json('wait_for_transfer', { id: download.id, timeout_seconds: 30 })).toMatchObject(
+      { id: download.id, state: 'done' },
+    );
+    expect(await json('clear_finished_transfers')).toMatchObject({ cleared: 1 });
+    await expect(json('wait_for_transfer', { id: download.id })).rejects.toThrow(/no download/);
+
+    // Bob's agent sees who took it, then clears his log.
+    const bobCall = await agentOn(bob);
+    const bobJson = async (name: string, args: Record<string, unknown> = {}) =>
+      JSON.parse(((await bobCall(name, args)).content[0] as { text: string }).text) as {
+        log?: { path: string }[];
+        cleared?: number;
+      } & Record<string, unknown>;
+    await until(
+      async () => ((await bobJson('get_activity', { path: 'Logs/' })).log ?? []).length > 0,
+      10_000,
+      'upload log',
+    );
+    expect((await bobJson('get_activity', { path: 'Nope/' })).log).toEqual([]);
+    expect((await bobJson('clear_activity')).cleared).toBeGreaterThan(0);
+    expect((await bobJson('get_activity')).log).toEqual([]);
+
+    // Why can people see it?
+    expect(
+      await bobJson('explain_access', { hub: hb, path: 'Logs/Private/diary.txt' }),
+    ).toMatchObject({
+      rule_path: 'Logs/Private/',
+      inherited: true,
+      audience: { audience: 'me', label: 'only you' },
+    });
+    const open = await bobJson('explain_access', { hub: hb, path: 'Logs/server.log' });
+    expect(open).toMatchObject({ rule_path: 'Logs/', listed: true });
+    expect(open.summary).toContain('everyone on 127.0.0.1');
+    expect((await bobCall('explain_access', { hub: hb, path: 'Nope/x' })).isError).toBe(true);
+
+    // The thumbnail cache.
+    expect(
+      await json('set_thumbnail_cache', { max_bytes: 32 * 1024 * 1024, clear: true }),
+    ).toMatchObject({ thumb_cache: { bytes: 0, cap: 32 * 1024 * 1024 } });
   }, 60_000);
 });

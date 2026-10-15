@@ -44,7 +44,7 @@ The plan is in `docs/plans/downloads.md`.
 - **Download rules by kind** (audio → Music, video → Movies), unless Save to… turns out to be enough.
 - **Transfers grouped by folder**, with one progress bar per folder download.
 - **New sources during a download.** Re-query sources every ~30 s so a copy that appears mid-download gets used.
-- **More agent tools** from `docs/plans/agents.md`, beyond the first step.
+- **More agent tools** from `docs/plans/agents.md`: search filters on metadata, duplicate and gap reports, requests between people, batch actions with one plan, and tier 3. Tiers 1 and 2's smaller items are built.
 
 ### Android (ADR 0023)
 
@@ -84,6 +84,18 @@ These are fine for now. Fix them if they start to bite.
 
 - **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
 - **From HANDOFF §15:** hubs caching thumbnails of hub-wide files.
+
+## MCP: the rest of the local API (2026-10-14)
+
+Checked `packages/mcp` against `docs/plans/agents.md`, ADR 0017 and every local API route. Everything an agent may use now has a tool. Left out on purpose: the recovery key, link codes and requests, device revoking, account link and restore, verifying people, and the safety code (it only means something read out between two people).
+
+- **`read_file_part`** (plan tier 1.2): a ranged read through `/v1/stream/:hash`, at most 64 KiB a call, or the last bytes with `from_end`. Chunks are verified and the uploader checks access, as for streaming. Answers with text, or base64 when the bytes aren't UTF-8 (a character cut at either end of the range is dropped). `LocalApiClient.bytes()` takes extra headers and returns the response headers.
+- **`wait_for_transfer`** (tier 1.3, the part agents need): waits up to 10 minutes for a download, here or with `on_device`, to be done, failed or cancelled. `/v1/events` only carries topic hints, so a general events tool would add little.
+- **`explain_access`** (tier 2.2): `GET /v1/acl/explain` → `CommunalCore.explainRule()` → `explainAccess()` in `access-preview.ts`: the rule in force, whether it's inherited and from where, the people it reaches, and whether the share is listed on that hub.
+- **`clear_finished_transfers`**, **`clear_activity`** (destructive), **`set_thumbnail_cache`** (size and clear), and `user` / `path` filters on `get_activity`.
+- The server's instructions point at `list_transfers` and `get_network` for stuck downloads and at `explain_access`.
+- **Site:** `agents.html` rewritten around what to ask, by area (finding and downloading, sharing and access, people, devices and remote control, subscriptions and the synced folder, when it's stuck, running a hub), with two example exchanges (an access change confirmed after its preview, a failed connection explained), the safety limits, and the full tool list.
+- **Tests:** `m12-agent-tools` (ranged reads, tail, binary, past the end, a private file refused, the size cap; waiting for and clearing a download; the upload log filtered and cleared; explain; the cache), the tool list in `m9-mcp`, and `explainAccess` in `access-preview.test.ts`.
 
 ## Site: Android, destinations and remote control (2026-10-14)
 

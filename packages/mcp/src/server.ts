@@ -59,6 +59,10 @@ class Raw {
 
 const Hash = z.string().regex(/^[0-9a-f]{64}$/);
 const THUMB_LIMIT = { small: 12, large: 2 } as const;
+/** read_file_part's most bytes per call. */
+const READ_LIMIT = 64 * 1024;
+/** Download states that don't change by themselves. */
+const SETTLED = new Set(['done', 'failed', 'cancelled']);
 
 const READ = { readOnlyHint: true, openWorldHint: false } as const;
 const CHANGE = { readOnlyHint: false, destructiveHint: false, openWorldHint: false } as const;
@@ -96,6 +100,27 @@ function noPath(dest: string | undefined) {
   if (dest) throw new Error('dest is a folder on this computer; on another device use destination');
 }
 
+/**
+ * The bytes as text if they're UTF-8 (a range may cut a character at either end), else null.
+ */
+function asText(b: Buffer, fromStart: boolean): string | null {
+  if (b.includes(0)) return null;
+  let start = 0;
+  while (!fromStart && start < 3 && start < b.length && (b[start]! & 0xc0) === 0x80) start++;
+  let end = b.length;
+  for (let i = 1; i <= 3 && b.length - i >= start; i++) {
+    const x = b[b.length - i]!;
+    if ((x & 0xc0) === 0x80) continue;
+    if (x >= 0xc0 && (x >= 0xf0 ? 4 : x >= 0xe0 ? 3 : 2) > i) end = b.length - i;
+    break;
+  }
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(b.subarray(start, end));
+  } catch {
+    return null;
+  }
+}
+
 export function createServer(api: () => Promise<LocalApiClient>, where: () => string): McpServer {
   const server = new McpServer(
     { name: 'communal', version: MCP_VERSION },
@@ -114,7 +139,10 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
         'change with the user first. Admins are only made on the hub server, never here. ' +
         'Downloads can go to a named destination (list_destinations) and, with on_device, to ' +
         'another of my devices (list_remote_devices), which saves only into its downloads folder ' +
-        'or its destinations; confirm with the user before set_remote_settings turns allowed on.',
+        'or its destinations; confirm with the user before set_remote_settings turns allowed on. ' +
+        'When a download is stuck, list_transfers carries the diagnosis and tips, and ' +
+        'get_network says how reachable this computer is. explain_access says who can see ' +
+        'something of mine now and why.',
     },
   );
 
@@ -219,6 +247,38 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
     { hub: Hub, device: z.string(), hash: z.string().regex(/^[0-9a-f]{64}$/) },
     READ,
     (c, a) => c.get(`/v1/peek${q(a)}`),
+  );
+  tool(
+    'read_file_part',
+    "Reads part of a file from its owner's computer without downloading it: offset and length in bytes (at most 64 KiB per call), or from_end for the last length bytes (a log's tail). Every chunk is checked against the file's hash, and the owner's computer checks access. Answers with the file's size and the text, or base64 when the bytes aren't text. Use preview_text for just the start of a text file.",
+    {
+      hash: Hash,
+      offset: z.number().int().nonnegative().default(0),
+      length: z
+        .number()
+        .int()
+        .min(1)
+        .max(READ_LIMIT)
+        .default(16 * 1024),
+      from_end: z.boolean().default(false).describe('Read the last length bytes instead'),
+    },
+    READ,
+    async (c, a) => {
+      const range = a.from_end
+        ? `bytes=-${a.length}`
+        : `bytes=${a.offset}-${a.offset + a.length - 1}`;
+      const r = await c
+        .bytes(`/v1/stream/${a.hash}`, { range })
+        .catch((e: Error & { status?: number }) => {
+          throw e.status === 416 ? new Error('offset is past the end of the file') : e;
+        });
+      const m = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(r.headers['content-range'] ?? '');
+      const at = m ? { start: Number(m[1]), end: Number(m[2]), size: Number(m[3]) } : {};
+      const text = asText(r.data, !m || m[1] === '0');
+      return text === null
+        ? { ...at, binary: true, base64: r.data.toString('base64') }
+        : { ...at, text };
+    },
   );
 
   tool(
@@ -386,7 +446,7 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
   );
   tool(
     'list_remote_devices',
-    'My other devices, whether each is online and takes requests, and the names of the destinations each offers (its folders never leave it). Use one as on_device in download_file, download_folder, subscribe_folder, list_subscriptions, update_subscription, unsubscribe, list_transfers and cancel_transfer.',
+    'My other devices, whether each is online and takes requests, and the names of the destinations each offers (its folders never leave it). Use one as on_device in download_file, download_folder, subscribe_folder, list_subscriptions, update_subscription, unsubscribe, list_transfers, wait_for_transfer and cancel_transfer.',
     {},
     READ,
     async (c) => {
@@ -445,11 +505,57 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
         : c.delete(`/v1/downloads/${enc(a.id)}`),
   );
   tool(
-    'get_activity',
-    'Who downloaded what from this computer (the local upload log, never sent to hubs).',
-    { limit: z.number().int().min(1).max(1000).default(50) },
+    'wait_for_transfer',
+    'Waits until a download is done, failed or cancelled, or until timeout_seconds pass, and answers with it as it then is (state waiting means no source is reachable now; it retries by itself). Use it to tell the user when a download finishes. With on_device, a download on another of my devices.',
+    {
+      id: z.string(),
+      timeout_seconds: z.number().int().min(1).max(600).default(120),
+      on_device: z.string().max(64).optional().describe('Another device of mine (id or name)'),
+    },
     READ,
-    (c, a) => c.get(`/v1/uploads/log${q({ limit: a.limit })}`),
+    async (c, a) => {
+      const end = Date.now() + a.timeout_seconds * 1000;
+      for (;;) {
+        const list = a.on_device
+          ? (
+              await remote<{ transfers: { id: string; state: string }[] }>(c, a.on_device, {
+                op: 'transfers',
+              })
+            ).transfers
+          : (await c.get<{ downloads: { id: string; state: string }[] }>('/v1/downloads'))
+              .downloads;
+        const t = list.find((x) => x.id === a.id);
+        if (!t) throw new Error(`no download ${a.id}`);
+        if (SETTLED.has(t.state)) return t;
+        if (Date.now() >= end) return { ...t, still_going: true };
+        await new Promise((r) => setTimeout(r, a.on_device ? 3000 : 1000));
+      }
+    },
+  );
+  tool(
+    'clear_finished_transfers',
+    'Removes finished, failed and cancelled downloads from the list. The downloaded files stay.',
+    {},
+    CHANGE,
+    (c) => c.post('/v1/downloads/clear', {}),
+  );
+  tool(
+    'get_activity',
+    'Who downloaded what from this computer (the local upload log, never sent to hubs). Narrow it with user (a user id) or path (a hub path prefix, e.g. "Photos/2024/").',
+    {
+      limit: z.number().int().min(1).max(1000).default(50),
+      user: z.string().optional(),
+      path: z.string().max(4096).optional(),
+    },
+    READ,
+    (c, a) => c.get(`/v1/uploads/log${q({ limit: a.limit, user: a.user, path: a.path })}`),
+  );
+  tool(
+    'clear_activity',
+    'Deletes the upload log on this computer: the record of who downloaded what from it. It can’t be undone; confirm with the user first.',
+    {},
+    REMOVE,
+    (c) => c.post('/v1/uploads/log/clear', {}),
   );
 
   // ── sharing ──
@@ -491,6 +597,16 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
     { hub: Hub },
     READ,
     (c, a) => c.get(`/v1/acl${q({ hub: a.hub })}`),
+  );
+  tool(
+    'explain_access',
+    'Who can see one of my files or folders on one hub right now, and why: the rule in force (its own, or the nearest folder above it it inherits from; none means only me), with people named and counted, and whether the share is listed on that hub at all.',
+    {
+      hub: Hub,
+      path: z.string().min(1).max(4096).describe('e.g. "Photos/" or "Photos/2024/beach.jpg"'),
+    },
+    READ,
+    (c, a) => c.get(`/v1/acl/explain${q({ hub: a.hub, path: a.path })}`),
   );
   tool(
     'preview_access',
@@ -695,6 +811,27 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
     { dir: z.string().max(4096).nullable() },
     CHANGE,
     (c, a) => c.put('/v1/settings/downloads', a),
+  );
+  tool(
+    'set_thumbnail_cache',
+    'How much disk the cache of other people’s thumbnails may use, in bytes (16 MiB to 64 GiB), and/or clear it now. Thumbnails are fetched again when needed.',
+    {
+      max_bytes: z
+        .number()
+        .int()
+        .min(16 * 1024 * 1024)
+        .max(64 * 1024 ** 3)
+        .optional(),
+      clear: z.boolean().optional(),
+    },
+    CHANGE,
+    async (c, a) => {
+      let out: unknown = undefined;
+      if (a.max_bytes !== undefined)
+        out = await c.put('/v1/settings/storage', { thumb_cache_bytes: a.max_bytes });
+      if (a.clear) out = await c.post('/v1/settings/storage/clear', {});
+      return out ?? c.get('/v1/settings/storage');
+    },
   );
   tool(
     'set_upload_limits',

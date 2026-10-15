@@ -222,3 +222,48 @@ export function exposureOf(
     : `Files saved here go into your shared folder ${share}, but only you can see that folder.`;
   return { shared: true, share, path, hubs: out, others: seen.length > 0, summary };
 }
+
+/** Who can see one file or folder on one hub now, and which rule decides it. */
+export interface AccessExplanation {
+  hub: string;
+  path: string;
+  /** Whether the share is listed on this hub at all. If not, nobody there sees it. */
+  listed: boolean;
+  /** The rule in force: the path's own, else the nearest folder's; null = none (only you). */
+  rule_path: string | null;
+  /** The rule comes from a folder above the path. */
+  inherited: boolean;
+  audience: AudienceView;
+  summary: string;
+}
+
+export function explainAccess(
+  store: IndexStore,
+  hub: string,
+  path: string,
+  people: PeopleOnHub,
+): AccessExplanation {
+  const share = path.split('/')[0]!;
+  const rules = new Map(store.rules(hub).map((r) => [r.path, r.audience]));
+  const rulePath = governingRule(new Set(rules.keys()), path);
+  const audience = describeAudience(rulePath === null ? 'me' : rules.get(rulePath)!, people);
+  const listed = store.share(share)?.hubs.includes(hub) ?? false;
+  const why =
+    rulePath === null
+      ? 'no rule covers it, so only you can see it'
+      : rulePath === path
+        ? `its own rule lets ${audience.label} see it`
+        : `it follows the rule on ${rulePath}, which lets ${audience.label} see it`;
+  const summary = listed
+    ? `On ${people.hubName}, ${why}.`
+    : `${share} isn’t listed on ${people.hubName}, so nobody there sees ${path} (once listed, ${why}).`;
+  return {
+    hub,
+    path,
+    listed,
+    rule_path: rulePath,
+    inherited: rulePath !== null && rulePath !== path,
+    audience,
+    summary,
+  };
+}

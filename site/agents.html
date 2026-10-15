@@ -6,12 +6,12 @@
     <title>AI agents · Communal</title>
     <meta
       name="description"
-      content="Let Claude or another MCP assistant use Communal: search, download, share and more."
+      content="Let Claude or another MCP assistant use Communal for you: find and download files, share them, manage your devices and run your hub."
     />
     <meta property="og:title" content="AI agents · Communal" />
     <meta
       property="og:description"
-      content="Let Claude or another MCP assistant use Communal: search, download, share and more."
+      content="Let Claude or another MCP assistant use Communal for you: find and download files, share them, manage your devices and run your hub."
     />
     <meta
       property="og:image"
@@ -45,19 +45,24 @@
     </header>
     <main class="wrap doc">
       <nav class="toc" aria-label="On this page">
-        <strong>On this page</strong><a href="#app">With the app</a><a href="#server">On a server</a
-        ><a href="#tools">What an assistant can do</a><a href="#limits">What it can’t do</a
-        ><a href="#examples">Things to ask</a>
+        <strong>On this page</strong><a href="#connect">Connect an assistant</a
+        ><a href="#finding">Finding and downloading</a><a href="#sharing">Sharing and access</a
+        ><a href="#people">People and groups</a><a href="#devices">Devices and remote control</a
+        ><a href="#subscriptions">Subscriptions and sync</a><a href="#network">When it’s stuck</a
+        ><a href="#hub">Running a hub</a><a href="#limits">Safety limits</a
+        ><a href="#tools">All the tools</a>
       </nav>
       <article>
         <h1>AI agents</h1>
         <p class="lede">
           Claude, or any assistant that speaks the Model Context Protocol (MCP), can use Communal
-          for you: find and download files, share folders, change who can see them, manage
-          connections and subscriptions, and show you the result in the app.
+          for you. Ask in your own words: it searches, downloads, shares, sorts out who can see
+          what, drives your other computers and helps run your hub, and asks you before anything
+          that matters.
         </p>
 
-        <h2 id="app">With the app</h2>
+        <h2 id="connect">Connect an assistant</h2>
+        <h3>With the desktop app</h3>
         <ol>
           <li>
             Open <b>Settings › AI agents</b> and turn on
@@ -81,24 +86,209 @@
           />
         </figure>
         <p>
-          The assistant then talks to the app that’s already open. When it opens a screen for you,
-          the app’s window comes forward and goes there.
-        </p>
-        <p>
-          Only programs running as you on the same computer can connect, and only while the setting
-          is on.
+          The app runs the assistant’s connection itself, so there’s nothing else to install. The
+          assistant talks to the app that’s already open, and when it wants to show you something,
+          the window comes forward and goes there.
         </p>
 
-        <h2 id="server">On a server</h2>
-        <p>With the headless client, use its own command:</p>
+        <h3>On a server or with the command line</h3>
+        <p>The headless client has the same thing built in:</p>
         <pre><code>claude mcp add communal -- communal mcp</code></pre>
         <p>
-          It finds the running <code>communal daemon</code> (or the open app) by itself, and keeps
-          working when either restarts. Set <code>COMMUNAL_DATA</code> if the daemon uses a
-          different data folder.
+          <code>communal mcp</code> finds the running <code>communal daemon</code>, or the open app
+          if there’s no daemon, and keeps working when either restarts. Set
+          <code>COMMUNAL_DATA</code> if the daemon uses a different data folder. For other clients
+          the command is <code>communal</code> with the argument <code>mcp</code>.
         </p>
 
-        <h2 id="tools">What an assistant can do</h2>
+        <h2 id="finding">Finding and downloading</h2>
+        <p>
+          The assistant searches every hub you’re on, browses people’s folders, and can look before
+          it downloads: it sees thumbnails of photos, videos and PDFs, and can read part of a text
+          file straight from its owner’s computer.
+        </p>
+        <ul class="asks">
+          <li>“Find the lake trip photos Maya shared and download them to my Pictures folder.”</li>
+          <li>
+            “Look through Alex’s Photos/2024 folder and download just the ones with the dog in
+            them.”
+          </li>
+          <li>“What columns does the budget spreadsheet in Jo’s Shared folder have?”</li>
+          <li>“Show me the last 50 lines of the server log on my NAS.”</li>
+          <li>
+            “Is anyone sharing a live recording of Blue Lines? Only from people I’ve verified.”
+          </li>
+          <li>“Download Sam’s whole Recipes folder, then tell me when it’s finished.”</li>
+          <li>“Clear the finished downloads.”</li>
+        </ul>
+        <p>
+          If you ask it to save into a folder that you share yourself, it checks first who would see
+          the files there and tells you, since a download inside a shared folder is shared like the
+          rest of it.
+        </p>
+
+        <h2 id="sharing">Sharing and who can see what</h2>
+        <p>
+          New shares are visible only to you. Who can see a folder is set on each hub separately,
+          and the assistant always says which hub it means.
+        </p>
+        <ul class="asks">
+          <li>“Share my Photos folder only with my Family group on the family hub.”</li>
+          <li>
+            “Make Music visible to everyone on the family hub, but keep Music/Demos to myself.”
+          </li>
+          <li>“Who can see Photos/2024/beach.jpg on the work hub, and why?”</li>
+          <li>“List my shares on the book club hub too.”</li>
+          <li>“Stop sharing Old Projects.”</li>
+          <li>“Who downloaded files from me this week?”</li>
+        </ul>
+        <p>
+          Before it changes who can see something, the assistant works out exactly what would change
+          and tells you. It goes ahead only once you say yes:
+        </p>
+        <div class="exchange">
+          <p><b>You</b>Share my Photos folder only with my Family group on the family hub.</p>
+          <p>
+            <b>Assistant</b>On the family hub, 1,284 files in Photos (Photos/2023/lake.jpg,
+            Photos/2023/cabin.jpg, …) would go from only you to the group Family (4 people). People
+            who can’t see these files now would be able to. Go ahead?
+          </p>
+          <p><b>You</b>Yes.</p>
+          <p>
+            <b>Assistant</b>Done. Ana, Ben, Cleo and Dad can see Photos on the family hub. It stays
+            private on your other hubs.
+          </p>
+        </div>
+
+        <h2 id="people">People and groups</h2>
+        <ul class="asks">
+          <li>“Has anyone asked to connect with me?”</li>
+          <li>“Find Jo on the family hub and send a connection request.”</li>
+          <li>“Accept Sam’s request and add them to my Book Club group.”</li>
+          <li>“Make a group called Neighbours with Priya and Tom.”</li>
+          <li>“Take Chris out of the Family group.”</li>
+        </ul>
+        <p>
+          Marking someone as verified isn’t something an assistant can do: that means comparing a
+          safety code with them yourself.
+        </p>
+
+        <h2 id="devices">Your devices and remote control</h2>
+        <p>
+          Your assistant can ask your other computers to download things, as long as remote control
+          is on there. Another computer saves only into its downloads folder or a destination it
+          offers (like Movies or TV), never into a folder named from outside.
+        </p>
+        <ul class="asks">
+          <li>“Download season 2 of Northern Lights to Movies on my Jellyfin server.”</li>
+          <li>“Which of my computers are online, and which take requests?”</li>
+          <li>“What’s the media server downloading right now? Cancel the big one.”</li>
+          <li>“Tell me when the download on the media server is done.”</li>
+          <li>“Add a destination called Music at /Volumes/Media/Music on this computer.”</li>
+          <li>
+            “Let my other devices start downloads here, but only into Movies and TV.”
+            <small>It asks you before turning remote control on.</small>
+          </li>
+        </ul>
+
+        <h2 id="subscriptions">Subscriptions and the synced folder</h2>
+        <ul class="asks">
+          <li>“What’s my Jellyfin server subscribed to? Pause the anime one.”</li>
+          <li>“Follow Maya’s Photos/2025 folder, and keep my copies if she deletes hers.”</li>
+          <li>“Subscribe the media server to Alex’s New Episodes folder, into TV.”</li>
+          <li>“Stop following Sam’s Podcasts folder. Keep what’s already downloaded.”</li>
+          <li>“Turn on the synced folder on this laptop.”</li>
+          <li>“Which of my computers is my Communal folder in step with?”</li>
+        </ul>
+        <p>
+          When you subscribe, the assistant asks whether to delete your copies when the owner
+          deletes theirs. It leaves them alone unless you say otherwise.
+        </p>
+
+        <h2 id="network">When something doesn’t work</h2>
+        <p>
+          A download that can’t reach its source comes with a diagnosis: what went wrong, whose side
+          can fix it, and how. The assistant reads it and checks your own network.
+        </p>
+        <div class="exchange">
+          <p><b>You</b>Why can’t I download from Bob?</p>
+          <p>
+            <b>Assistant</b>Your download of trip.mov is waiting: Bob’s computer is online, but no
+            direct connection could be made. Your network looks fine (an open NAT, and your router
+            mapped the port). Bob’s router is the strict kind. The easier fix is on his side:
+            turning on UPnP on his router, or forwarding a port, should do it. Want me to open the
+            details in the app?
+          </p>
+        </div>
+        <ul class="asks">
+          <li>“Run the network check again. Did my router map the port?”</li>
+          <li>“Is this install working properly?”</li>
+          <li>“Limit uploads to 2 MB/s and three people at a time.”</li>
+          <li>“Make my downloads go to /Volumes/Big/Downloads from now on.”</li>
+          <li>“The thumbnail cache is huge. Clear it and keep it under 1 GB.”</li>
+        </ul>
+
+        <h2 id="hub">Running a hub</h2>
+        <p>
+          On a hub you administer, the assistant can do what <b>Settings › Hubs › Manage</b> does.
+          It asks you before every approval, ban and settings change.
+        </p>
+        <ul class="asks">
+          <li>“Who’s waiting to join my hub?”</li>
+          <li>“Let Priya and Tom in.”</li>
+          <li>“Switch the hub to approval mode and call it Hilltop Friends.”</li>
+          <li>“Ban the account that keeps sending requests. Reason: spam.”</li>
+          <li>“What changed on the hub this week?”</li>
+          <li>
+            “Who shares the most on the hub, and whose computers have been offline for a month?”
+          </li>
+        </ul>
+        <p>
+          It sees what the hub sees: people, their computers and how much they share, and who’s
+          connected to whom. Never anyone’s file names, groups or access rules. Making someone an
+          admin is done on the hub’s server, not by an assistant.
+        </p>
+
+        <h2 id="limits">Safety limits</h2>
+        <ul>
+          <li>
+            <b>Some things always need you.</b> An assistant can’t see or save your recovery key,
+            add, approve or remove your computers, mark a person as verified, or make anyone a hub
+            admin. Those tools don’t exist, so no prompt can reach them.
+          </li>
+          <li>
+            <b>It asks before changes.</b> Every tool that changes something is marked as such, so
+            your assistant asks first. Before it opens a folder to more people it shows you exactly
+            who would see what, and a preview is never taken as your yes.
+          </li>
+          <li>
+            <b>It sees only what you can.</b> Searches and folders go through the same access rules
+            as yours, and the owner’s computer checks every thumbnail and every part of a file it
+            hands over.
+          </li>
+          <li>
+            <b>Only programs running as you.</b> The connection is a local socket that only your
+            user account on this computer can open. In the desktop app it exists only while the
+            setting is on.
+          </li>
+          <li>
+            <b>Your other computers decide for themselves.</b> They take requests only with remote
+            control switched on there, and save only into their downloads folder or their
+            destinations.
+          </li>
+          <li>
+            <b>What it reads goes to your AI provider.</b> File names, thumbnails and parts of files
+            the assistant looks at are sent to the AI service you use, like anything else you show
+            it. Files you download never are.
+          </li>
+          <li>
+            <b>Names are written by other people.</b> File and folder names come from whoever shared
+            them. If your assistant suddenly suggests something you didn’t ask for, say no.
+          </li>
+        </ul>
+
+        <h2 id="tools">All the tools</h2>
+        <p>For the curious, and for checking what a client is allowed to call.</p>
         <table>
           <tr>
             <th>Area</th>
@@ -112,7 +302,8 @@
             <td>Finding files</td>
             <td>
               <code>search_files</code>, <code>list_library</code>, <code>browse_folder</code>,
-              <code>preview_text</code>, <code>view_thumbnails</code>
+              <code>preview_text</code>, <code>read_file_part</code>,
+              <code>view_thumbnails</code>
             </td>
           </tr>
           <tr>
@@ -120,7 +311,9 @@
             <td>
               <code>download_file</code>, <code>download_folder</code>,
               <code>check_destination</code>, <code>list_transfers</code>,
-              <code>cancel_transfer</code>, <code>get_activity</code>
+              <code>wait_for_transfer</code>, <code>cancel_transfer</code>,
+              <code>clear_finished_transfers</code>, <code>list_destinations</code>,
+              <code>save_destination</code>, <code>remove_destination</code>
             </td>
           </tr>
           <tr>
@@ -128,7 +321,8 @@
             <td>
               <code>list_shares</code>, <code>share_folder</code>, <code>stop_sharing</code>,
               <code>set_share_hubs</code>, <code>get_access_rules</code>,
-              <code>preview_access</code>, <code>set_access</code>
+              <code>explain_access</code>, <code>preview_access</code>, <code>set_access</code>,
+              <code>get_activity</code>, <code>clear_activity</code>
             </td>
           </tr>
           <tr>
@@ -141,6 +335,14 @@
             </td>
           </tr>
           <tr>
+            <td>Your devices</td>
+            <td>
+              <code>list_devices</code>, <code>list_remote_devices</code>,
+              <code>get_remote_settings</code>, <code>set_remote_settings</code>, and
+              <code>on_device</code> on downloads, transfers and subscriptions
+            </td>
+          </tr>
+          <tr>
             <td>Subscriptions</td>
             <td>
               <code>list_subscriptions</code>, <code>subscribe_folder</code>,
@@ -149,11 +351,12 @@
             </td>
           </tr>
           <tr>
-            <td>Hubs and settings</td>
+            <td>Hubs, network and settings</td>
             <td>
-              <code>join_hub</code>, <code>leave_hub</code>, <code>list_devices</code>,
-              <code>get_network</code>, <code>check_network</code>, <code>get_settings</code>,
-              <code>set_upload_limits</code>, <code>set_downloads_folder</code>
+              <code>join_hub</code>, <code>leave_hub</code>, <code>get_network</code>,
+              <code>check_network</code>, <code>get_settings</code>, <code>set_upload_limits</code>,
+              <code>set_downloads_folder</code>,
+              <code>set_thumbnail_cache</code>
             </td>
           </tr>
           <tr>
@@ -170,28 +373,6 @@
             <td><code>show_in_app</code></td>
           </tr>
         </table>
-        <p>
-          Tools that change something are marked as such, so your assistant asks before using them.
-          Before it changes who can see a folder, the assistant runs <code>preview_access</code>
-          and tells you which files would be seen by whom. It still waits for you to say yes.
-        </p>
-
-        <h2 id="limits">What it can’t do</h2>
-        <p>
-          Some things always need you: an assistant can’t see or save your recovery key, add,
-          approve or remove your computers, mark a person as verified (that means comparing a code
-          with them yourself), or make anyone a hub admin. On a hub you administer it can let people
-          in, ban them and change settings, and it asks you first.
-        </p>
-
-        <h2 id="examples">Things to ask</h2>
-        <ul>
-          <li>“Find the lake trip photos Maya shared and download them to my Pictures folder.”</li>
-          <li>“Share my Music folder with everyone on the family hub.”</li>
-          <li>“Who downloaded files from me this week?”</li>
-          <li>“Why is my download from Sam stuck?”</li>
-          <li>“Show me Maya’s Photos folder in the app.”</li>
-        </ul>
       </article>
     </main>
     <footer>

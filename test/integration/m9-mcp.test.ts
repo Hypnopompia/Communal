@@ -90,6 +90,9 @@ describe('M9: MCP server', () => {
       'share_folder',
       'set_access',
       'show_in_app',
+      'read_file_part',
+      'wait_for_transfer',
+      'explain_access',
     ])
       expect(names).toContain(t);
     // Hub admins may approve people onto their hub (ADR 0020), never devices onto an account,
@@ -108,6 +111,7 @@ describe('M9: MCP server', () => {
     const ann = (n: string) => tools.find((t) => t.name === n)!.annotations;
     expect(ann('search_files')).toMatchObject({ readOnlyHint: true });
     expect(ann('stop_sharing')).toMatchObject({ destructiveHint: true });
+    expect(ann('clear_activity')).toMatchObject({ destructiveHint: true });
   });
 
   it('joins a hub, shares a folder, opens it to the hub and finds it, all through tools', async () => {

@@ -31,6 +31,8 @@ import { HubAdmin } from './hub-admin.js';
 import {
   exposureOf,
   previewRule,
+  explainAccess,
+  type AccessExplanation,
   type AccessPreview,
   type Exposure,
   type PeopleOnHub,
@@ -755,6 +757,11 @@ export class CommunalCore {
   async previewRule(hub: string, path: string, audience: Audience | null): Promise<AccessPreview> {
     const rulePath = this.rulePath(hub, path);
     return previewRule(this.store, hub, rulePath, audience, await this.peopleOn(hub));
+  }
+
+  /** Who can see a file or folder on one hub now, and which rule decides it. */
+  async explainRule(hub: string, path: string): Promise<AccessExplanation> {
+    return explainAccess(this.store, hub, this.rulePath(hub, path), await this.peopleOn(hub));
   }
 
   /**
