@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.1.12",
+    "date": "2026-10-15",
+    "changes": [
+      "Communal on Windows updates itself again. Until now an update was found but its download failed, so Windows computers stayed on the version they first installed.",
+      "When you get a code to add a computer or phone, Settings › Devices now shows the hub address to type with it, and if you’re on several hubs you choose which one the code is for.",
+      "The Linux app shows the Communal icon again instead of a gear.",
+      "Hubs can now run from a ready-made Docker image (ghcr.io/hypnopompia/communal-hub). The Run a hub page explains how."
+    ]
+  },
+  {
     "version": "0.1.11",
     "date": "2026-10-15",
     "changes": [
