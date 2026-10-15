@@ -10,7 +10,10 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { pino } from 'pino';
 import { generateKeyPair, sealTo, toB64 } from '@communal/crypto';
-import { CommunalCore, RemoteError } from '@communal/core';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { CommunalCore, LocalApi, LocalApiClient, RemoteError, apiSocketPath } from '@communal/core';
+import { createServer } from '@communal/mcp';
 import type { RemoteTransfer } from '@communal/protocol';
 import { sleep, startTestHub, type TestHub } from '@communal/hub/testing';
 
@@ -316,4 +319,81 @@ describe('remote control', () => {
     // Locally, the downloads folder is still there.
     expect(desktop.destinations()[0]!.name).toBe('Downloads');
   });
+
+  it('lets an AI agent manage destinations and remote control, and use other devices (MCP)', async () => {
+    const { desktop, phone, hash } = await world();
+    const onDesktop = await agentOn(desktop);
+    const onPhone = await agentOn(phone);
+    const movies = tmp('communal-m13-movies-');
+    const json = (r: Awaited<ReturnType<typeof onDesktop>>) =>
+      JSON.parse((r.content[0] as { text: string }).text) as Record<string, unknown>;
+
+    // Off by default; the desktop's agent turns it on, keeping the downloads folder back.
+    expect(json(await onDesktop('get_remote_settings'))).toEqual({
+      allowed: false,
+      downloads: true,
+    });
+    await onDesktop('save_destination', { name: 'Movies', folder: movies });
+    expect(
+      json(await onDesktop('set_remote_settings', { allowed: true, downloads: false })),
+    ).toEqual({ allowed: true, downloads: false });
+
+    // The phone's agent sees the desktop and what it offers, by name only.
+    const { devices } = json(await onPhone('list_remote_devices')) as {
+      devices: { device_id: string; takes_requests: boolean; destinations?: string[] }[];
+    };
+    expect(devices).toEqual([
+      expect.objectContaining({
+        device_id: desktop.deviceId,
+        takes_requests: true,
+        destinations: ['Movies'],
+      }),
+    ]);
+    // A path is refused before anything is sent; a destination by name works.
+    expect(
+      (await onPhone('download_file', { hash, dest: movies, on_device: 'alice-box' })).isError,
+    ).toBe(true);
+    const r = await onPhone('download_file', {
+      hash,
+      destination: 'Movies',
+      on_device: 'alice-box',
+    });
+    expect(r.isError).toBeFalsy();
+    await until(
+      () => desktop.downloads.list().some((t) => t.state === 'done'),
+      15_000,
+      'download done',
+    );
+    expect(desktop.downloads.list()[0]!.dest_dir).toBe(movies);
+    const t = json(await onPhone('list_transfers', { on_device: desktop.deviceId })) as {
+      transfers: { requested_by: string }[];
+    };
+    expect(t.transfers[0]!.requested_by).toBe('Pixel');
+
+    await onDesktop('remove_destination', { name: 'Movies' });
+    expect(desktop.destinations().map((d) => d.name)).toEqual(['Downloads']);
+  });
 });
+
+/** An AI agent on `c`, through its local API and the MCP server. */
+async function agentOn(c: CommunalCore) {
+  const api = new LocalApi(c);
+  const socketPath = apiSocketPath(tmp('communal-m13-sock-'));
+  await api.listen({ socketPath });
+  cleanups.push(() => api.close());
+  const client = new LocalApiClient({ socketPath });
+  const server = createServer(
+    async () => client,
+    () => 'test core',
+  );
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a);
+  const agent = new Client({ name: 'test-agent', version: '0' });
+  await agent.connect(b);
+  cleanups.push(() => agent.close());
+  return async (name: string, args: Record<string, unknown> = {}) =>
+    (await agent.callTool({ name, arguments: args })) as {
+      isError?: boolean;
+      content: { type: 'text'; text: string }[];
+    };
+}

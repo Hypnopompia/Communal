@@ -35,6 +35,12 @@ The core's local API (`LocalApi`) is the only interface agents use, just as it i
 
 `POST /v1/ui/show {screen, …}` lets an agent show the person what it did. `LocalApi` takes an optional `ui` hook, and only the desktop host provides one. The host sends the route to main, which brings the window forward and passes the route to the renderer as `ui:navigate`. On the headless daemon the route answers `not_found` ("no app window").
 
+## Later additions (2026-10-14)
+
+- **Destinations** (ADR 0018): `list_destinations`, `save_destination` (add, or rename/move with `was`), `remove_destination`, and `destination` on `download_file`, `download_folder` and `subscribe_folder`.
+- **Remote control** (ADR 0023): `get_remote_settings` and `set_remote_settings` (`allowed`, `downloads`; the server's instructions say to confirm before turning `allowed` on), `list_remote_devices` (online, takes requests, destination names), and `on_device` (id or name) on `download_file`, `download_folder`, `subscribe_folder`, `list_transfers` and `cancel_transfer`. With `on_device`, a `dest` path is refused before anything is sent: another device saves only into its downloads folder or a destination it names. Tested in `m13-remote-control.test.ts`.
+- None of these touch the excluded areas: no recovery key, device linking or revoking, verifying people, or making hub admins.
+
 ## Consequences
 
 - A local process running as the user can, once the setting is on, do anything the tools allow. That's no more than such a process could already do to that user's files. The recovery key and device trust stay out of reach.

@@ -64,6 +64,38 @@ const READ = { readOnlyHint: true, openWorldHint: false } as const;
 const CHANGE = { readOnlyHint: false, destructiveHint: false, openWorldHint: false } as const;
 const REMOVE = { readOnlyHint: false, destructiveHint: true, openWorldHint: false } as const;
 
+type RemoteDevice = { device_id: string; name: string; platform: string; online: boolean };
+
+/** A request on another device of mine (ADR 0023), by its id or name. */
+async function remote<T = unknown>(c: LocalApiClient, which: string, request: object): Promise<T> {
+  let id = which;
+  if (!/^d_[a-z2-7]{26}$/.test(which)) {
+    const { devices } = await c.get<{ devices: RemoteDevice[] }>('/v1/remote/devices');
+    const hits = devices.filter((d) => d.name.toLowerCase() === which.toLowerCase());
+    if (hits.length !== 1)
+      throw new Error(
+        hits.length
+          ? `several devices are called ${which}: use its id`
+          : `no device of mine called ${which}`,
+      );
+    id = hits[0]!.device_id;
+  }
+  return (await c.post<{ result: T }>(`/v1/remote/${encodeURIComponent(id)}`, request)).result;
+}
+
+/** Another device numbers its hubs its own way: requests name them by URL. */
+async function hubUrl(c: LocalApiClient, hub: string): Promise<string> {
+  const { hubs } = await c.get<{ hubs: { id: string; url: string }[] }>('/v1/hubs');
+  const h = hubs.find((x) => x.id === hub || x.url === hub);
+  if (!h) throw new Error(`no such hub: ${hub}`);
+  return h.url;
+}
+
+/** Another device saves only into its downloads folder or a destination, never a path. */
+function noPath(dest: string | undefined) {
+  if (dest) throw new Error('dest is a folder on this computer; on another device use destination');
+}
+
 export function createServer(api: () => Promise<LocalApiClient>, where: () => string): McpServer {
   const server = new McpServer(
     { name: 'communal', version: MCP_VERSION },
@@ -79,7 +111,10 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
         'desktop window to a screen so the user can see what you did. On hubs where list_hubs ' +
         'says admin: true, the *_hub_* tools manage the hub (people waiting to join, bans, its ' +
         'settings, connections and the admin log); confirm every ban, approval and settings ' +
-        'change with the user first. Admins are only made on the hub server, never here.',
+        'change with the user first. Admins are only made on the hub server, never here. ' +
+        'Downloads can go to a named destination (list_destinations) and, with on_device, to ' +
+        'another of my devices (list_remote_devices), which saves only into its downloads folder ' +
+        'or its destinations; confirm with the user before set_remote_settings turns allowed on.',
     },
   );
 
@@ -232,7 +267,7 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
   // ── downloads ──
   tool(
     'download_file',
-    'Downloads a file by content hash from every online source. It lands in the downloads folder unless dest is given. If the folder is inside one of my shares, the files are shared like the rest of it: the answer then carries reshared (who will see them), which you should tell the user. Check first with check_destination when choosing dest.',
+    'Downloads a file by content hash from every online source, on this computer or, with on_device, on another of my devices. It lands in the downloads folder unless dest (a path, this computer only) or destination (a name) is given. If the folder is inside one of my shares, the files are shared like the rest of it: the answer then carries reshared (who will see them), which you should tell the user. Check first with check_destination when choosing dest.',
     {
       hash: z.string().regex(/^[0-9a-f]{64}$/),
       name: z.string().max(255).optional().describe('File name to save as'),
@@ -242,9 +277,25 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
         .max(40)
         .optional()
         .describe('A named destination from list_destinations, e.g. "Movies" (instead of dest)'),
+      on_device: z
+        .string()
+        .max(64)
+        .optional()
+        .describe(
+          'Another device of mine (id or name from list_remote_devices) to do it instead; it saves into its downloads folder or one of its destinations, never a path',
+        ),
     },
     CHANGE,
-    (c, a) => c.post('/v1/downloads', a),
+    async (c, { on_device, ...a }) => {
+      if (!on_device) return c.post('/v1/downloads', a);
+      noPath(a.dest);
+      return remote(c, on_device, {
+        op: 'download',
+        hash: a.hash,
+        ...(a.name ? { name: a.name } : {}),
+        ...(a.destination ? { destination: a.destination } : {}),
+      });
+    },
   );
   tool(
     'list_destinations',
@@ -252,6 +303,27 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
     {},
     READ,
     (c) => c.get('/v1/destinations'),
+  );
+  tool(
+    'save_destination',
+    'Adds a named destination on this computer (e.g. Movies → /media/movies), or with was, renames or moves one. The folder is created if missing. Other devices of mine can then ask this computer to save into it by name. Check the folder with check_destination first: one inside my shares re-shares what lands there.',
+    {
+      name: z.string().min(1).max(40),
+      folder: z.string().min(1).max(4096).describe('Absolute folder path'),
+      was: z.string().max(40).optional().describe('The current name, to rename or move it'),
+    },
+    CHANGE,
+    (c, a) =>
+      a.was
+        ? c.put(`/v1/destinations/${enc(a.was)}`, { name: a.name, path: a.folder })
+        : c.post('/v1/destinations', { name: a.name, path: a.folder }),
+  );
+  tool(
+    'remove_destination',
+    'Forgets a named destination. The folder and its files stay. "Downloads" is the downloads folder and can\'t be removed.',
+    { name: z.string().min(1).max(40) },
+    REMOVE,
+    (c, a) => c.delete(`/v1/destinations/${enc(a.name)}`),
   );
   tool(
     'check_destination',
@@ -276,10 +348,67 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
         .max(40)
         .optional()
         .describe('A named destination from list_destinations, e.g. "Movies" (instead of dest)'),
+      on_device: z
+        .string()
+        .max(64)
+        .optional()
+        .describe(
+          'Another device of mine (id or name from list_remote_devices) to do it instead; it saves into its downloads folder or one of its destinations, never a path',
+        ),
     },
     CHANGE,
-    (c, a) => c.post('/v1/downloads/folder', a),
+    async (c, { on_device, ...a }) => {
+      if (!on_device) return c.post('/v1/downloads/folder', a);
+      noPath(a.dest);
+      return remote(c, on_device, {
+        op: 'download_folder',
+        hub: await hubUrl(c, a.hub),
+        device_id: a.device,
+        path: a.path,
+        ...(a.destination ? { destination: a.destination } : {}),
+      });
+    },
   );
+  // ── remote control (ADR 0023): my devices downloading for each other ──
+  tool(
+    'get_remote_settings',
+    'Whether my other devices may start downloads on this computer (allowed), and whether they may use its downloads folder or only its named destinations (downloads).',
+    {},
+    READ,
+    (c) => c.get('/v1/settings/remote'),
+  );
+  tool(
+    'set_remote_settings',
+    'Changes whether my other devices may start downloads on this computer (allowed), and whether they may save into its downloads folder or only into its named destinations (downloads). Turning allowed on lets every device of mine start downloads here: confirm with the user first.',
+    { allowed: z.boolean().optional(), downloads: z.boolean().optional() },
+    CHANGE,
+    (c, a) => c.put('/v1/settings/remote', a),
+  );
+  tool(
+    'list_remote_devices',
+    'My other devices, whether each is online and takes requests, and the names of the destinations each offers (its folders never leave it). Use one as on_device in download_file, download_folder, subscribe_folder, list_transfers and cancel_transfer.',
+    {},
+    READ,
+    async (c) => {
+      const { devices } = await c.get<{ devices: RemoteDevice[] }>('/v1/remote/devices');
+      return {
+        devices: await Promise.all(
+          devices.map(async (d) => {
+            if (!d.online) return { ...d, takes_requests: false };
+            const h = await remote<{ allowed: boolean; destinations?: string[] }>(c, d.device_id, {
+              op: 'hello',
+            }).catch(() => null);
+            return {
+              ...d,
+              takes_requests: h?.allowed ?? false,
+              ...(h?.allowed ? { destinations: h.destinations ?? ['Downloads'] } : {}),
+            };
+          }),
+        ),
+      };
+    },
+  );
+
   // ── the synced folder (ADR 0019) ──
   tool(
     'get_synced_folder',
@@ -300,13 +429,20 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
   );
   tool(
     'list_transfers',
-    "Downloads: queued, running (with per-source speeds), waiting, done and failed, with the diagnosis and tips when a source can't be reached.",
-    {},
+    "Downloads: queued, running (with per-source speeds), waiting, done and failed, with the diagnosis and tips when a source can't be reached. With on_device, another of my devices' 30 newest downloads instead.",
+    { on_device: z.string().max(64).optional().describe('Another device of mine (id or name)') },
     READ,
-    (c) => c.get('/v1/downloads'),
+    (c, a) => (a.on_device ? remote(c, a.on_device, { op: 'transfers' }) : c.get('/v1/downloads')),
   );
-  tool('cancel_transfer', 'Cancels a download.', { id: z.string() }, REMOVE, (c, a) =>
-    c.delete(`/v1/downloads/${enc(a.id)}`),
+  tool(
+    'cancel_transfer',
+    'Cancels a download, here or, with on_device, on another of my devices.',
+    { id: z.string(), on_device: z.string().max(64).optional() },
+    REMOVE,
+    (c, a) =>
+      a.on_device
+        ? remote(c, a.on_device, { op: 'cancel', id: a.id })
+        : c.delete(`/v1/downloads/${enc(a.id)}`),
   );
   tool(
     'get_activity',
@@ -456,9 +592,27 @@ export function createServer(api: () => Promise<LocalApiClient>, where: () => st
         .max(40)
         .optional()
         .describe('A named destination from list_destinations, e.g. "Movies" (instead of dest)'),
+      on_device: z
+        .string()
+        .max(64)
+        .optional()
+        .describe(
+          'Another device of mine (id or name from list_remote_devices) to do it instead; it saves into its downloads folder or one of its destinations, never a path',
+        ),
     },
     CHANGE,
-    (c, a) => c.post('/v1/subscriptions', a),
+    async (c, { on_device, ...a }) => {
+      if (!on_device) return c.post('/v1/subscriptions', a);
+      noPath(a.dest);
+      return remote(c, on_device, {
+        op: 'subscribe',
+        hub: await hubUrl(c, a.hub),
+        device_id: a.device,
+        path: a.path,
+        mirror_deletes: a.mirror_deletes,
+        ...(a.destination ? { destination: a.destination } : {}),
+      });
+    },
   );
   tool(
     'update_subscription',
