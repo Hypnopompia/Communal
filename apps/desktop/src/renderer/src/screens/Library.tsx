@@ -8,6 +8,7 @@ import { baseName, plural, seenLabel, computerName } from '../format';
 import { useLibrary, useStatus } from '../hubs';
 import { useNav, type Route } from '../nav';
 import { useApi } from '../query';
+import { ConnectState } from '../ui/connect';
 import { Disc } from '../ui/Disc';
 import { useRemoteDownload, useRemoteTargets } from '../ui/remote';
 import { VerifiedMark } from '../ui/VerifiedMark';
@@ -66,7 +67,14 @@ function People({ devices, error }: { devices: LibraryDevice[] | undefined; erro
   const me = useStatus().data?.account.user_id;
   const people = new Map<
     string,
-    { name: string; fingerprint: string; verified: boolean; devices: LibraryDevice[] }
+    {
+      name: string;
+      fingerprint: string;
+      verified: boolean;
+      devices: LibraryDevice[];
+      /** Every hub they appear on, even where a twin of the same computer was merged away. */
+      hubs: string[];
+    }
   >();
   for (const d of devices ?? []) {
     const p = people.get(d.user.user_id) ?? {
@@ -74,7 +82,9 @@ function People({ devices, error }: { devices: LibraryDevice[] | undefined; erro
       fingerprint: d.user.fingerprint,
       verified: d.user.verified,
       devices: [],
+      hubs: [],
     };
+    if (!p.hubs.includes(d.hub)) p.hubs.push(d.hub);
     // The same computer on two hubs is one entry; prefer the hub where it's online.
     const twin = p.devices.findIndex((x) => x.device_id === d.device_id);
     if (twin < 0) p.devices.push(d);
@@ -88,7 +98,9 @@ function People({ devices, error }: { devices: LibraryDevice[] | undefined; erro
       <div className="page-head">
         <div>
           <h1>Library</h1>
-          <p className="lede">Everything people have shared with you, computer by computer.</p>
+          <p className="lede">
+            Everything shared with you or with everyone on your hub, computer by computer.
+          </p>
         </div>
       </div>
       <ErrorNote error={error} />
@@ -118,6 +130,7 @@ function People({ devices, error }: { devices: LibraryDevice[] | undefined; erro
               {id === me ? `${p.name} (you)` : p.name}
               <VerifiedMark on={p.verified} />
             </h2>
+            {id !== me && <ConnectState userId={id} name={p.name} hubs={p.hubs} />}
           </div>
           <div className="panel rows">
             {p.devices.map((d) => (
@@ -217,6 +230,13 @@ function Browse({
           </span>
         </div>
         <div className="actions">
+          {device && !mine && (
+            <ConnectState
+              userId={device.user.user_id}
+              name={device.user.display_name}
+              hubs={[hub]}
+            />
+          )}
           {segs.length > 0 && (!own || targets.length > 0) && (
             <>
               <button className="btn" onClick={() => setGetFolder(true)}>

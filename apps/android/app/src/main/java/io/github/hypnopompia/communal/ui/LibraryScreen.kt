@@ -1,6 +1,7 @@
 package io.github.hypnopompia.communal.ui
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,6 +19,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -26,15 +28,18 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.hypnopompia.communal.Entry
+import io.github.hypnopompia.communal.Hub
+import io.github.hypnopompia.communal.Person
 import io.github.hypnopompia.communal.LibraryDevice
 import io.github.hypnopompia.communal.Listing
 
-/** Computers you can browse: yours first, then the people you're connected with. */
+/** Computers you can browse: yours first, then people sharing with you or with the whole hub. */
 @Composable
 fun LibraryScreen(model: AppModel, onOpen: (Place) -> Unit) {
     val devices by model.library.collectAsStateWithLifecycle()
@@ -54,10 +59,43 @@ fun LibraryScreen(model: AppModel, onOpen: (Place) -> Unit) {
             items(mine, key = { it.hub + it.device_id }) { DeviceRow(it, onOpen) }
         }
         for ((user, list) in others.groupBy { it.user.user_id }) {
-            item(key = user) { Header(list.first().user.display_name + if (list.first().user.verified) " ✓" else "") }
+            item(key = user) {
+                Header(list.first().user.display_name + if (list.first().user.verified) " ✓" else "")
+                ConnectLines(model, list.first().user, list.map { it.hub }.distinct(), status?.hubs.orEmpty())
+            }
             items(list, key = { it.hub + it.device_id }) { DeviceRow(it, onOpen) }
         }
     }
+}
+
+/**
+ * People who share with the whole hub show up before you're connected: ask them to connect
+ * from here, as on the desktop. Connections are per hub, so one line per hub they're on.
+ */
+@Composable
+private fun ConnectLines(model: AppModel, person: Person, hubs: List<String>, all: List<Hub>) {
+    val connections by model.connections.collectAsStateWithLifecycle()
+    for (hub in hubs) {
+        // A hub that's offline or hasn't answered: say nothing rather than guess.
+        val known = connections[hub] ?: continue
+        val on = if (all.size > 1) all.firstOrNull { it.id == hub }?.let { " on ${hubName(it)}" }.orEmpty() else ""
+        Row(Modifier.padding(start = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            when (known[person.user_id]) {
+                "accepted" -> StateText("Connected$on")
+                "pending_out" -> StateText("Request sent$on")
+                "pending_in" -> {
+                    StateText("Wants to connect$on")
+                    TextButton({ model.act("Connected with ${person.display_name}") { model.api.connect(hub, person.user_id, "accept"); model.reloadConnections() } }) { Text("Accept") }
+                }
+                else -> TextButton({ model.act("Asked ${person.display_name} to connect") { model.api.connect(hub, person.user_id); model.reloadConnections() } }) { Text("Connect$on") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StateText(text: String) {
+    Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
 }
 
 @Composable

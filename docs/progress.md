@@ -85,6 +85,13 @@ These are fine for now. Fix them if they start to bite.
 - **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
 - **From HANDOFF §15:** hubs caching thumbnails of hub-wide files.
 
+## Connect from the Library (2026-10-14)
+
+The owner asked whether someone you aren't connected to, but who shares with the whole hub, shows up in the Library. They already did: `Catalog.library()` takes as candidates your own devices, your connections' devices and the devices of anyone with a `hub` rule, then keeps only devices where `visible()` lets you see at least one entry. A stranger sees the computer and only its hub-public files. Nothing changed on the hub. The new access test in `access.test.ts` ("lists a stranger sharing with the hub…") covers the stranger seeing the device, a pending request changing nothing, an accepted connection still showing only what was granted, and the device disappearing once the hub rule goes.
+
+- **Desktop:** each person in the Library, and the header when browsing one of their computers, shows the connection state per hub: **Connect** (sends the same `POST /v1/people/request` as People › Find people), **Request sent**, **Wants to connect** with **Accept**, or **Connected**. A person on several of your hubs gets one line per hub ("on <hub>"). `useConnectionStates()` in `hubs.ts` shares its queries with the People screen. The Library lede now says it shows what is shared with you or with everyone on your hub.
+- **Android:** the same states and buttons under each person's header in the Library (`AppModel.connections`, `Api.connections()` / `connect()`).
+
 ## MCP: the rest of the local API (2026-10-14)
 
 Checked `packages/mcp` against `docs/plans/agents.md`, ADR 0017 and every local API route. Everything an agent may use now has a tool. Left out on purpose: the recovery key, link codes and requests, device revoking, account link and restore, verifying people, and the safety code (it only means something read out between two people).

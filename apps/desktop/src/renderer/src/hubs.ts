@@ -1,5 +1,5 @@
 import { useQueries } from '@tanstack/react-query';
-import { api, type Connection, type HubStatus, type LibraryDevice, type Status } from './api';
+import { api, qs, type Connection, type HubStatus, type LibraryDevice, type Status } from './api';
 import { hubName } from './format';
 import { useApi } from './query';
 
@@ -69,4 +69,29 @@ export function useNames() {
     verified: (id: string) => verified.has(id),
     device: (id: string) => devices.get(id),
   };
+}
+
+/**
+ * Your connection state with each person on each ready hub (connections are per hub), from the
+ * same queries as the People screen. `undefined` for a hub means it hasn't answered yet; a
+ * person missing from a loaded hub's map isn't connected there and nobody has asked.
+ */
+export function useConnectionStates(): Map<string, Map<string, Connection['state']> | undefined> {
+  const { hubs } = useHubs();
+  const ready = hubs.filter((h) => h.ready);
+  const lists = useQueries({
+    queries: ready.map((h) => {
+      const path = `/v1/people${qs({ hub: h.id })}`;
+      return {
+        queryKey: ['api', ['people', 'presence'], path],
+        queryFn: () => api.get<{ connections: Connection[] }>(path),
+      };
+    }),
+  });
+  return new Map(
+    ready.map((h, i) => {
+      const data = lists[i]?.data;
+      return [h.id, data ? new Map(data.connections.map((c) => [c.user_id, c.state])) : undefined];
+    }),
+  );
 }

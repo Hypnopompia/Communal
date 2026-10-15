@@ -64,6 +64,11 @@ data class LibraryDevice(
 
 @Serializable data class Library(val devices: List<LibraryDevice>)
 
+/** Your connection with someone on one hub: accepted, pending_in or pending_out. */
+@Serializable data class Connection(val user_id: String, val state: String)
+
+@Serializable data class Connections(val connections: List<Connection>)
+
 @Serializable
 data class Meta(
     val width: Int? = null,
@@ -240,6 +245,16 @@ class Api(private val host: CoreHost) {
     suspend fun status(): Status = get("/v1/status")
     suspend fun library(): Library = get("/v1/library")
     suspend fun devices(): Devices = get("/v1/devices")
+
+    suspend fun connections(hub: String): Connections = get("/v1/people?hub=${q(hub)}")
+
+    /** `request` asks someone to connect on that hub; `accept` answers their request. */
+    suspend fun connect(hub: String, user: String, action: String = "request") {
+        call("POST", "/v1/people/$action", buildJsonObject {
+            put("hub", hub)
+            put("user_id", user)
+        })
+    }
 
     suspend fun search(query: String, kind: String? = null): SearchResult =
         get("/v1/search?q=${q(query)}&limit=100" + (kind?.let { "&kind=$it" } ?: ""))

@@ -222,6 +222,31 @@ describe('access control: library', () => {
       expect(await devices(p.c)).toEqual([p.deviceId, w.alice.deviceId].sort());
   });
 
+  it('lists a stranger sharing with the hub, showing only the hub-public files, until connected', async () => {
+    const w = await world();
+    // erin isn't connected to alice: alice's device is in her library, under alice's name.
+    const listing = body<Listing>(await w.erin.c.request('library', {}));
+    expect(listing.devices.find((d) => d.device_id === w.alice.deviceId)?.user.user_id).toBe(
+      w.alice.userId,
+    );
+    await expectSees(w.erin.c, w.alice.deviceId, PUBLIC);
+    // A request from the Library changes nothing until alice accepts it.
+    expect((await w.erin.c.request('connection.request', { user_id: w.alice.userId })).t).toBe(
+      'ok',
+    );
+    await expectSees(w.erin.c, w.alice.deviceId, PUBLIC);
+    // Accepted, she still sees only what alice granted her: nothing beyond the public files.
+    expect((await w.alice.c.request('connection.accept', { user_id: w.erin.userId })).t).toBe('ok');
+    await expectSees(w.erin.c, w.alice.deviceId, PUBLIC);
+    // Without a hub rule, a stranger's computer isn't listed at all.
+    await w.alice.c.request('acl.set', {
+      device_id: w.alice.deviceId,
+      path: 'S/hub/',
+      audience: null,
+    });
+    expect(await devices(w.carol.c)).toEqual([w.carol.deviceId]);
+  });
+
   it('drops a device once nothing on it is visible, and hides banned owners', async () => {
     const w = await world();
     // Only bob's list rule and group rule left: dave (connected, not granted) loses the device.

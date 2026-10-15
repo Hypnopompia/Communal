@@ -36,6 +36,8 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     val subscriptions = MutableStateFlow<List<Subscription>>(emptyList())
     val library = MutableStateFlow<List<LibraryDevice>>(emptyList())
     val remotes = MutableStateFlow<List<Remote>>(emptyList())
+    /** Your connection state with each person, per ready hub (hub id → user id → state). */
+    val connections = MutableStateFlow<Map<String, Map<String, String>>>(emptyMap())
     /** Phones of this account (this one included): they never share, so Library leaves them out. */
     val phones = MutableStateFlow<Set<String>>(emptySet())
     val update = MutableStateFlow<Updates.Available?>(null)
@@ -73,9 +75,19 @@ class AppModel(application: Application) : AndroidViewModel(application) {
             if (all || "transfers" in topics) refreshTransfers()
             if (all || "subscriptions" in topics) runCatching { subscriptions.value = api.subscriptions().subscriptions }
             if (all || "library" in topics || "presence" in topics) runCatching { library.value = api.library().devices }
+            if (all || "people" in topics || "hubs" in topics) refreshConnections()
             if (all || "devices" in topics || "presence" in topics) refreshRemotes()
             tick.value++
         }
+    }
+
+    fun reloadConnections() = viewModelScope.launch { refreshConnections() }
+
+    private suspend fun refreshConnections() {
+        val hubs = status.value?.hubs?.filter { it.ready } ?: return
+        connections.value = hubs.mapNotNull { h ->
+            runCatching { h.id to api.connections(h.id).connections.associate { it.user_id to it.state } }.getOrNull()
+        }.toMap()
     }
 
     private suspend fun refreshTransfers() {

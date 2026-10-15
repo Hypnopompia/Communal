@@ -911,3 +911,18 @@ textarea.input {
 .attention-row > span {
   flex: 1;
 }
+
+/* Library: connect with someone who shares with the whole hub. */
+.connect-state {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px 12px;
+}
+.connect-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
