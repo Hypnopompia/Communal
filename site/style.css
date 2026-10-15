@@ -434,3 +434,15 @@ footer a {
 figure {
   margin: 0;
 }
+.phones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  justify-content: center;
+}
+.phones img {
+  width: 240px;
+  max-width: calc(50% - 8px);
+  height: auto;
+  border-radius: 24px;
+}

@@ -57,6 +57,8 @@ The plan is in `docs/plans/downloads.md`.
 
 ### Known limitations
 
+- **Remote requests name the hub by its URL**, so they fail with "this computer isn't on wss://…" when two of your devices joined the same hub under different addresses (a LAN IP and a domain name, or `10.0.2.2` from the Android emulator against `localhost`). Seen while taking the site's Android screenshots: a remote `subscribe` from the emulator to a headless device. Matching on the hub's pinned key or `hub_id` instead of the URL would fix it (core `runRemote`).
+
 These are fine for now. Fix them if they start to bite.
 
 - **Devices** (ADR 0014):
@@ -82,6 +84,12 @@ These are fine for now. Fix them if they start to bite.
 
 - **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
 - **From HANDOFF §15:** hubs caching thumbnails of hub-wide files.
+
+## Site: Android, destinations and remote control (2026-10-14)
+
+- The front page has an Android download button (`downloads.js` picks the release's `.apk`, puts it first on Android, and says "Not in this release" when a release has none), plus "On your phone" and "Send it home" sections.
+- The app guide gained Destinations, Your other devices (remote control, managing another computer's subscriptions, a media-server walkthrough) and Android phones (what it does, installing from unknown sources, linking with a code). The CLI page gained Destinations and Remote control, and `--to` / `--on` on the commands that take them.
+- Four phone screenshots in `site/screenshots/android-*.webp`, from the debug build on an emulator against a dev hub with generated demo data (Maya's iMac, a Media server with Movies and TV, Alex's laptop).
 
 ## Subscriptions of all your devices, from any device (2026-10-14)
 

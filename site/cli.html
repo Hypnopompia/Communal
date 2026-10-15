@@ -49,6 +49,7 @@
         ><a href="#desktop">With the desktop app</a><a href="#setup">Setting up</a
         ><a href="#sharing">Sharing and access</a><a href="#people">People and groups</a
         ><a href="#finding">Finding and downloading</a><a href="#subscriptions">Subscriptions</a
+        ><a href="#destinations">Destinations</a><a href="#remote">Remote control</a
         ><a href="#devices">Devices and recovery</a><a href="#env">Settings</a>
       </nav>
       <article>
@@ -252,14 +253,16 @@ sudo -u communal communal status</code></pre>
             <td><code>communal get &lt;hash&gt;</code></td>
             <td>
               Download by content hash from every online source. <code>--name</code>,
-              <code>--dest</code>.
+              <code>--dest &lt;folder&gt;</code>, <code>--to &lt;destination&gt;</code>,
+              <code>--on &lt;device&gt;</code>.
             </td>
           </tr>
           <tr>
             <td><code>communal get-folder &lt;device&gt; &lt;path&gt;</code></td>
             <td>
               Download a folder and the folders inside it, once. Files you already have are copied,
-              not downloaded. <code>--dest</code>, <code>--hub</code>.
+              not downloaded. <code>--dest</code>, <code>--to</code>, <code>--on</code>,
+              <code>--hub</code>.
             </td>
           </tr>
           <tr>
@@ -272,7 +275,7 @@ sudo -u communal communal status</code></pre>
             <td><code>communal transfers</code></td>
             <td>
               Downloads, with the reason and tips when a source can’t be reached.
-              <code>communal cancel &lt;id&gt;</code>.
+              <code>communal cancel &lt;id&gt;</code>. Both take <code>--on &lt;device&gt;</code>.
             </td>
           </tr>
           <tr>
@@ -291,13 +294,17 @@ sudo -u communal communal status</code></pre>
             <td><code>communal subscribe &lt;device&gt; &lt;path&gt; --no-mirror-deletes</code></td>
             <td>
               Follow a folder. You must say <code>--mirror-deletes</code> or
-              <code>--no-mirror-deletes</code>. Also <code>--dest</code>, <code>--flat</code>,
-              <code>--hub</code>.
+              <code>--no-mirror-deletes</code>. Also <code>--dest</code>, <code>--to</code>,
+              <code>--flat</code>, <code>--hub</code>, <code>--on</code>.
             </td>
           </tr>
           <tr>
             <td><code>communal subscriptions [list|set|remove]</code></td>
-            <td>List, change (pause, mirror deletes) or remove subscriptions.</td>
+            <td>
+              List, change (<code>set &lt;id&gt;</code> with <code>--pause</code>,
+              <code>--resume</code> or <code>--mirror-deletes on|off</code>) or remove
+              subscriptions. Add <code>--on &lt;device&gt;</code> for another device’s.
+            </td>
           </tr>
           <tr>
             <td><code>communal sync [on [folder]|off]</code></td>
@@ -308,6 +315,102 @@ sudo -u communal communal status</code></pre>
             </td>
           </tr>
         </table>
+
+        <h2 id="destinations">Destinations</h2>
+        <p>
+          Named folders on this device that downloads can go into, like <code>Movies</code> or
+          <code>TV</code>. <code>Downloads</code> is built in and is the downloads folder. A folder
+          you download or subscribe to goes inside the destination under its own name.
+        </p>
+        <table>
+          <tr>
+            <th>Command</th>
+            <th>What it does</th>
+          </tr>
+          <tr>
+            <td><code>communal dest [list]</code></td>
+            <td>This device’s destinations and their folders.</td>
+          </tr>
+          <tr>
+            <td><code>communal dest add &lt;name&gt; &lt;folder&gt;</code></td>
+            <td>Add one, e.g. <code>communal dest add Movies /srv/media/movies</code>.</td>
+          </tr>
+          <tr>
+            <td><code>communal dest set &lt;name&gt; &lt;folder&gt;</code></td>
+            <td>Point a destination at another folder.</td>
+          </tr>
+          <tr>
+            <td><code>communal dest remove &lt;name&gt;</code></td>
+            <td>Forget it. The folder and its files stay.</td>
+          </tr>
+          <tr>
+            <td><code>--to &lt;name&gt;</code></td>
+            <td>
+              On <code>get</code>, <code>get-folder</code> and <code>subscribe</code>: save into a
+              destination instead of the downloads folder. With <code>--on</code>, it names one of
+              that device’s destinations.
+            </td>
+          </tr>
+        </table>
+
+        <h2 id="remote">Remote control</h2>
+        <p>
+          Your devices can download for each other: a laptop or phone sends a film to the media
+          server, or subscribes it to a friend’s folder. Only the request goes through the hub,
+          sealed so the hub can’t read it, and the files still travel directly. A device takes
+          requests only once you allow it, and other devices can only name its destinations, never a
+          folder.
+        </p>
+        <table>
+          <tr>
+            <th>Command</th>
+            <th>What it does</th>
+          </tr>
+          <tr>
+            <td><code>communal remote [status]</code></td>
+            <td>
+              Whether this device takes requests, and your other devices: online, and whether they
+              do, with their destinations.
+            </td>
+          </tr>
+          <tr>
+            <td><code>communal remote allow|deny</code></td>
+            <td>Let your other devices start downloads here, or stop them (off to begin with).</td>
+          </tr>
+          <tr>
+            <td><code>communal remote downloads on|off</code></td>
+            <td>
+              Off: your other devices can only save into the destinations here, not the downloads
+              folder, and must name one.
+            </td>
+          </tr>
+          <tr>
+            <td><code>--on &lt;device&gt;</code></td>
+            <td>
+              Another of your devices, by name or id, does it instead: on <code>get</code>,
+              <code>get-folder</code>, <code>subscribe</code>, <code>subscriptions</code> (list,
+              set, remove), <code>transfers</code> and <code>cancel</code>.
+            </td>
+          </tr>
+        </table>
+        <p>Setting up a media server, on the server:</p>
+        <pre><code>sudo -u communal communal dest add Movies /srv/media/movies
+sudo -u communal communal dest add TV /srv/media/tv
+sudo -u communal communal remote allow
+sudo -u communal communal remote downloads off</code></pre>
+        <p>Then from your laptop:</p>
+        <pre><code>$ communal remote
+this device: doesn't take downloads from your other devices
+  Media server             linux    takes requests  d_rr75yzpn5xtcvtlpiilx2nluta
+    destinations: Movies, TV
+$ communal get-folder d_4kq… "Films/Night Bus (2024)" --on "Media server" --to Movies
+$ communal subscribe d_4kq… "Shows/Harbor Lights" --on "Media server" --to TV --no-mirror-deletes
+$ communal subscriptions --on "Media server"
+$ communal transfers --on "Media server"</code></pre>
+        <p>
+          The desktop and Android apps do the same from their Download menus, Subscriptions and
+          Transfers (see the <a href="guide.html#remote">app guide</a>).
+        </p>
 
         <h2 id="devices">Devices and recovery</h2>
         <table>
@@ -321,7 +424,10 @@ sudo -u communal communal status</code></pre>
           </tr>
           <tr>
             <td><code>communal devices add</code></td>
-            <td>Make a link code for a new computer, then approve it.</td>
+            <td>
+              Make a link code for a new computer or phone, then approve it. <code>--yes</code>
+              approves whoever claims the code.
+            </td>
           </tr>
           <tr>
             <td><code>communal devices requests|approve|deny</code></td>

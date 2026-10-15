@@ -50,8 +50,9 @@
         ><a href="#search">Search</a><a href="#sharing">Sharing and access</a
         ><a href="#people">People and groups</a><a href="#transfers">Transfers</a
         ><a href="#subscriptions">Subscriptions</a><a href="#synced-folder">Synced folder</a
-        ><a href="#activity">Activity</a><a href="#settings">Settings</a
-        ><a href="#background">Running in the background</a>
+        ><a href="#destinations">Destinations</a><a href="#remote">Your other devices</a
+        ><a href="#android">Android phones</a><a href="#activity">Activity</a
+        ><a href="#settings">Settings</a><a href="#background">Running in the background</a>
       </nav>
       <article>
         <h1>Using the app</h1>
@@ -64,6 +65,10 @@
           <code>curl -fsSL https://hypnopompia.github.io/Communal/install.sh | sh</code>. Communal
           checks for updates itself and installs them the next time you quit; a
           <b>Restart to update</b> button appears in the sidebar when one is ready.
+        </p>
+        <p>
+          There’s also an app for Android phones that downloads but doesn’t share; see
+          <a href="#android">Android phones</a>.
         </p>
         <p>
           The first time it runs, macOS asks whether Communal may find devices on your local
@@ -128,9 +133,11 @@
           </li>
           <li>
             <b>Double-click</b> a file, or use <b>Download</b>, to save it in your downloads folder
-            (Settings › Downloads). <b>Save to…</b> asks where to put it instead. If that’s inside
-            one of your shared folders, the file is shared like the rest of that folder, so Communal
-            says who will see it and asks first.
+            (Settings › Downloads). The arrow next to Download has <b>Save to…</b>, which asks where
+            to put it instead, and <b>Save to Movies</b> and the like for your
+            <a href="#destinations">destinations</a>. If that’s inside one of your shared folders,
+            the file is shared like the rest of that folder, so Communal says who will see it and
+            asks first.
           </li>
           <li>
             <b>Download folder</b> saves the folder you’re in, with the folders inside it, once.
@@ -256,6 +263,12 @@
           computer that’s offline waits and starts by itself when it’s back.
         </p>
         <p>
+          If you have more than one computer, the switch at the top shows another computer’s
+          downloads instead, and lets you cancel them (see
+          <a href="#remote">Your other devices</a>). A download one of your devices asked for says
+          “Started from” and that device’s name.
+        </p>
+        <p>
           If two computers can’t reach each other, Transfers says why (for example a router that
           blocks direct connections) and what usually fixes it, and on whose side.
         </p>
@@ -269,8 +282,14 @@
           deleted files go to your trash, not straight away.
         </p>
         <p>
+          A subscribed folder goes into your downloads folder, or into one of your
+          <a href="#destinations">destinations</a> if you pick one.
+        </p>
+        <p>
           In <b>Subscriptions</b> you can pause a folder, change that choice, or unsubscribe (files
-          you already have stay).
+          you already have stay). Your other computers’ subscriptions are listed there too, one
+          computer at a time, and you can change them the same way while remote control is on there
+          (see <a href="#remote">Your other devices</a>).
         </p>
 
         <h2 id="synced-folder">Synced folder</h2>
@@ -299,6 +318,178 @@
           The synced folder is the folder you share under the name <code>Communal</code>, so sharing
           a folder by that name turns syncing on too. A hidden <code>.communal-sync</code> file in
           it lets your other computers find it even when it’s empty.
+        </p>
+
+        <h2 id="destinations">Destinations</h2>
+        <p>
+          Destinations are named folders on a computer, like <b>Movies</b>, <b>TV</b> or
+          <b>Music</b>, that downloads can go into. Add them in
+          <b>Settings › Downloads › Destinations</b>: give each a name and choose its folder.
+          <b>Downloads</b> is always there and is your downloads folder.
+        </p>
+        <ul>
+          <li>
+            On the computer itself they’re shortcuts: <b>Save to Movies</b> under the Download
+            arrow, and a <b>Destination</b> choice when you download or subscribe to a folder. A
+            folder goes inside the destination under its own name, so subscribing to Alex’s
+            <code>Films</code> folder into Movies fills <code>Movies/Films</code>.
+          </li>
+          <li>
+            From your other devices, names are all they get. A phone or laptop asking this computer
+            to download can pick <b>Movies</b> or <b>TV</b>, but never sees or chooses the folders
+            behind them, so nothing can be saved anywhere you didn’t name.
+          </li>
+        </ul>
+
+        <h2 id="remote">Your other devices</h2>
+        <p>
+          Any of your devices can ask another of your computers to download something: your laptop
+          or phone can put a film straight onto the media server at home, while you’re away from it.
+          The files still go directly from the computer that has them to the one downloading; only
+          the request travels through the hub, sealed so that the hub can’t read it.
+        </p>
+        <h3>Turning it on</h3>
+        <p>
+          A computer only takes requests if you allow it. On that computer, open
+          <b>Settings › Downloads</b> and turn on
+          <b>Let my other devices start downloads on this computer</b> (on a server with no screen,
+          run <code>communal remote allow</code>; see the <a href="cli.html#remote">CLI</a>). It’s
+          off until you do.
+        </p>
+        <p>
+          With <b>Into the downloads folder too</b> turned off, your other devices can only save
+          into this computer’s <a href="#destinations">destinations</a>. That suits a media server
+          that should only ever get files in Movies or TV.
+        </p>
+        <h3>Asking another computer</h3>
+        <ul>
+          <li>
+            <b>A file:</b> the arrow next to <b>Download</b> lists your computers that take
+            requests: <b>Download on Media server</b>, or <b>On Media server: Movies</b> for each of
+            its destinations.
+          </li>
+          <li>
+            <b>A folder:</b> <b>Download folder</b> and <b>Subscribe to this folder</b> have an
+            <b>On</b> choice, followed by that computer’s destinations. This works for your own
+            computers’ folders too, say to copy your laptop’s Music folder onto the server.
+          </li>
+          <li>
+            <b>Keeping an eye on it:</b> the switch at the top of <b>Transfers</b> shows that
+            computer’s downloads, and <b>Subscriptions</b> lists its subscriptions, which you can
+            pause, resume, change or stop following from here.
+          </li>
+        </ul>
+        <p>
+          A computer that’s off or asleep can’t take requests; Subscriptions says so, and its
+          subscriptions catch up when it’s back. Other devices can’t change its settings, its shares
+          or who sees what: only downloads and subscriptions.
+        </p>
+        <div class="note">
+          <p>
+            <b>A media server you control from anywhere.</b> Install Communal on the server with the
+            <a href="cli.html#install">command line</a>, add it to your account with a code, then on
+            it run <code>communal dest add Movies /srv/media/movies</code> (and TV),
+            <code>communal remote allow</code> and <code>communal remote downloads off</code>. From
+            your laptop or phone you can now send anything you find to its Movies or TV, and
+            subscribe it to a friend’s folder of new episodes.
+          </p>
+        </div>
+
+        <h2 id="android">Android phones</h2>
+        <p>
+          The Android app is for getting things: search everything shared with you, browse people’s
+          folders with previews, download to your phone, keep a folder in sync (music from your
+          computer, say), and send downloads to your computers at home. It never shares the phone’s
+          own files.
+        </p>
+        <figure class="phones">
+          <img
+            class="shot"
+            src="screenshots/android-browse.webp"
+            alt="Browsing a folder of lake trip photos on Maya’s iMac from the phone"
+            loading="lazy"
+            width="540"
+            height="1200"
+          />
+          <img
+            class="shot"
+            src="screenshots/android-sheet.webp"
+            alt="A folder’s options: download or keep in sync on this phone, or on the media server’s Movies or TV"
+            loading="lazy"
+            width="540"
+            height="1200"
+          />
+          <img
+            class="shot"
+            src="screenshots/android-remote.webp"
+            alt="Transfers for the media server, showing a film started from the phone"
+            loading="lazy"
+            width="540"
+            height="1200"
+          />
+        </figure>
+        <h3>Installing it</h3>
+        <p>
+          The app isn’t in the Play Store. It comes from the same GitHub releases as the computer
+          apps, and needs Android 11 or later on a 64-bit phone (almost every phone from the last
+          few years).
+        </p>
+        <ol>
+          <li>
+            On the phone, open this site and tap <b>Android</b> on the
+            <a href="index.html">front page</a>, or get <code>communal-…-arm64.apk</code> from the
+            <a href="https://github.com/Hypnopompia/Communal/releases/latest">latest release</a>. If
+            a release has no APK, the one before it does.
+          </li>
+          <li>
+            Open the downloaded file. Android asks whether your browser (or Files app) may install
+            unknown apps: tap <b>Settings</b>, turn on <b>Allow from this source</b>, and go back.
+          </li>
+          <li>Tap <b>Install</b>, then <b>Open</b>.</li>
+        </ol>
+        <h3>Setting it up</h3>
+        <ul>
+          <li>
+            <b>I have Communal.</b> On your computer, open <b>Settings › Devices</b> and choose
+            <b>Get a code</b>. On the phone, type the hub’s address and that code, then tap
+            <b>Link this phone</b>. Your computer then asks you to approve it, by the name you gave
+            the phone. Once approved, the phone sees everything your computer does.
+          </li>
+          <li>
+            <b>I’m new.</b> Join a hub with a new account, from the phone alone. You can add your
+            computers to it later.
+          </li>
+        </ul>
+        <h3>Using it</h3>
+        <ul>
+          <li>
+            <b>Search</b> and <b>Library</b> work like on a computer. Tap a file or folder for what
+            you can do with it: <b>Download to this phone</b>, <b>Keep in sync on this phone</b>,
+            and the same for each of your computers that takes requests.
+          </li>
+          <li>
+            Downloads go to <code>Download/Communal</code> and show up in your gallery and music
+            apps. A synced folder’s deleted files go to the app’s own trash and are emptied after 30
+            days.
+          </li>
+          <li>
+            <b>Transfers</b> shows the phone’s downloads and synced folders, or one of your
+            computers’ downloads and subscriptions.
+          </li>
+          <li>
+            Phones can’t keep running in the background like a computer, so synced folders catch up
+            on a schedule you choose in Settings (hourly, every 6 hours, daily, or only when the app
+            is open; on Wi-Fi only unless you change it), and whenever the app is open.
+          </li>
+          <li>
+            The app checks for a new version once a day and offers to download it. Installing it
+            keeps your account and settings.
+          </li>
+        </ul>
+        <p class="muted">
+          On mobile data, many networks don’t let other computers reach a phone directly, and
+          Communal never relays files through the hub, so downloads to the phone may wait until
+          you’re on Wi-Fi. Asking your computer at home to download works from anywhere.
         </p>
 
         <h2 id="activity">Activity</h2>
@@ -374,7 +565,9 @@
         <h3>Downloads</h3>
         <p>
           The folder <b>Download</b> saves into. <b>Save to…</b> next to any Download picks another
-          folder for that file.
+          folder for that file. <b>Destinations</b> adds, moves and removes your named folders (see
+          <a href="#destinations">Destinations</a>). <b>Downloads from your other devices</b> turns
+          remote control on for this computer (see <a href="#remote">Your other devices</a>).
         </p>
         <h3>Storage</h3>
         <p>How much space previews of other people’s files may take, and <b>Clear previews</b>.</p>
