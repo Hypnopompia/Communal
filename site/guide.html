@@ -109,14 +109,20 @@
         <h2 id="library">Library</h2>
         <p>
           The Library lists everyone whose files you can see, computer by computer, starting with
-          your own. A green dot means the computer is online now; otherwise it says when it was last
-          seen.
+          your own. An icon shows whether each is a Mac, Windows or Linux computer. A green dot
+          means it’s online now; otherwise it says when it was last seen.
+        </p>
+        <p>
+          People who share something with everyone on your hub are listed too, before you’re
+          connected with them. Next to each person you see where you stand: <b>Connect</b> sends
+          them a request, <b>Accept</b> answers theirs, and <b>Request sent</b> or
+          <b>Connected</b> says the rest. On several hubs, there’s a line for each.
         </p>
         <figure>
           <img
             class="shot"
             src="screenshots/library.webp"
-            alt="The Library: Alex’s and Maya’s computers, both online"
+            alt="The Library: Alex’s MacBook and media server, Maya’s iMac, and Sam, who wants to connect"
             loading="lazy"
             width="1600"
             height="1000"
@@ -124,8 +130,19 @@
         </figure>
         <p>
           Open a computer to browse its shared folders. Switch between <b>Grid</b> and
-          <b>List</b> at the top right.
+          <b>List</b> at the top right. A long file name is shortened in the middle, so its end and
+          type stay in view; hover over it for the whole name.
         </p>
+        <figure>
+          <img
+            class="shot"
+            src="screenshots/folder.webp"
+            alt="Maya’s iMac open at Photos › Lake trip 2026, with Download folder and Subscribe to this folder"
+            loading="lazy"
+            width="1600"
+            height="1000"
+          />
+        </figure>
         <ul>
           <li>
             <b>Click</b> a file to look at it: pictures and PDF pages open large, text and code show
@@ -156,7 +173,8 @@
         <p>
           Search looks through everything shared with you on every hub at once. Type part of a name:
           every word counts, so <code>beach 2019</code> finds “Beach trip (2019).mp4”. Narrow it by
-          kind (pictures, videos, music, documents…) or size.
+          kind (pictures, videos, music, documents…), by size, or by who it’s from: anyone, your
+          connections, or people you’ve verified.
         </p>
         <figure>
           <img
@@ -192,8 +210,9 @@
           />
         </figure>
         <p>
-          A new folder is visible only to you. Under <b>Who can see what</b>, choose
-          <b>Change</b> on a folder or file:
+          A new folder is visible only to you. Each folder in My shares says who can see it.
+          <b>Change</b> sets that for the whole folder. <b>Files inside…</b> opens it, so you can
+          choose differently for a file or a folder within it. The choices are:
         </p>
         <ul>
           <li><b>Only me</b>: your other computers can still see it.</li>
@@ -221,18 +240,20 @@
         </figure>
         <div class="note">
           <p>
-            Access is set separately on each hub. If you’re on more than one, pick the hub at the
-            top of <b>Who can see what</b>: a folder can be public on one hub and private on
-            another.
+            Access is set separately on each hub. If you’re on more than one, each folder has a line
+            per hub, each with its own <b>Change</b>: a folder can be public on one hub and private
+            on another. <b>List it on</b>, when you share a folder, chooses which hubs see it at
+            all.
           </p>
         </div>
 
         <h2 id="people">People and groups</h2>
         <p>
           To share with someone in particular, connect with them first. In <b>People</b>, search for
-          their name and choose <b>Connect</b>; they’ll see your request and can accept it. Either
-          of you can disconnect at any time, which ends access granted through the connection
-          straight away.
+          their name and choose <b>Connect</b>, or use <b>Connect</b> next to them in the
+          <a href="#library">Library</a>. They’ll see your request and can accept it. Your
+          connections show whether they’re online. Either of you can disconnect at any time, which
+          ends access granted through the connection straight away.
         </p>
         <p>
           On several hubs, you connect on each one separately, and so do groups. Someone you know on
@@ -242,7 +263,7 @@
           <img
             class="shot"
             src="screenshots/people.webp"
-            alt="People: one connection, and the groups section"
+            alt="People: Sam wants to connect, Maya is a connection and online, and the groups section"
             loading="lazy"
             width="1600"
             height="1000"
@@ -260,8 +281,20 @@
         <h2 id="transfers">Transfers</h2>
         <p>
           Downloads show their progress and how fast each computer is sending. A download from a
-          computer that’s offline waits and starts by itself when it’s back.
+          computer that’s offline waits and starts by itself when it’s back, and one from a computer
+          that’s busy sending to others waits its turn. <b>Clear</b> takes finished downloads off
+          the list; the files stay.
         </p>
+        <figure>
+          <img
+            class="shot"
+            src="screenshots/transfers.webp"
+            alt="Transfers: this computer’s finished downloads, with a switch for the media server"
+            loading="lazy"
+            width="1600"
+            height="1000"
+          />
+        </figure>
         <p>
           If you have more than one computer, the switch at the top shows another computer’s
           downloads instead, and lets you cancel them (see
@@ -291,6 +324,16 @@
           computer at a time, and you can change them the same way while remote control is on there
           (see <a href="#remote">Your other devices</a>).
         </p>
+        <figure>
+          <img
+            class="shot"
+            src="screenshots/subscriptions.webp"
+            alt="Subscriptions: two folders on this computer, and two on the media server saved in TV and Music"
+            loading="lazy"
+            width="1600"
+            height="1000"
+          />
+        </figure>
 
         <h2 id="synced-folder">Synced folder</h2>
         <p>
@@ -362,6 +405,16 @@
           that should only ever get files in Movies or TV.
         </p>
         <h3>Asking another computer</h3>
+        <figure>
+          <img
+            class="shot"
+            src="screenshots/remote.webp"
+            alt="The Download menu for a photo: Save to…, and On Media server: Movies, TV or Music"
+            loading="lazy"
+            width="1600"
+            height="1000"
+          />
+        </figure>
         <ul>
           <li>
             <b>A file:</b> the arrow next to <b>Download</b> lists your computers that take
@@ -495,13 +548,14 @@
         <h2 id="activity">Activity</h2>
         <p>
           Activity lists who got which of your files and when. This list is kept on your computer
-          only; the hub never sees it.
+          only; the hub never sees it. <b>Include previews</b> adds the thumbnails and previews
+          people looked at, and <b>Clear…</b> forgets the whole list.
         </p>
         <figure>
           <img
             class="shot"
             src="screenshots/activity.webp"
-            alt="Activity: three files Alex downloaded"
+            alt="Activity: episodes downloaded by Maya and by Alex’s media server"
             loading="lazy"
             width="1600"
             height="1000"
@@ -525,10 +579,21 @@
         </p>
         <h3>Devices</h3>
         <p>
-          Your computers. <b>Get a code</b> adds another one. <b>Remove</b> signs a lost or stolen
-          computer out of every hub and stops other people’s computers trusting it; it can’t be
-          undone. Your first computer can’t be removed (see Account above).
+          Your computers and phones, each with what kind it is. <b>Get a code</b> adds another one.
+          <b>Remove</b> signs a lost or stolen computer out of every hub and stops other people’s
+          computers trusting it; it can’t be undone. Your first computer can’t be removed (see
+          Account above).
         </p>
+        <figure>
+          <img
+            class="shot"
+            src="screenshots/devices.webp"
+            alt="Settings › Devices: Alex’s MacBook, the first computer, and a Linux media server"
+            loading="lazy"
+            width="1600"
+            height="1000"
+          />
+        </figure>
         <h3>Hubs</h3>
         <p>
           The hubs you’re on, whether each is connected, and <b>Join another hub</b>. Your existing
@@ -537,9 +602,11 @@
         <p>
           On a hub you administer (the first person to join a hub is its admin), <b>Manage</b> opens
           its people and their computers, who’s connected to whom, the admin log, and its settings:
-          its name and whether new people wait for you to let them in. You can let people in, ban
-          and unban them there. A banner tells you when someone is waiting. Admins see how much each
-          computer shares, never file names, groups or who can see what.
+          its name, whether new people wait for you to let them in, and limits against abuse (new
+          accounts per hour from one address, files per computer, computers per account; 0 means no
+          limit). You can let people in, ban and unban them there. A banner tells you when someone
+          is waiting. Admins see how much each computer shares, never file names, groups or who can
+          see what.
         </p>
         <figure>
           <img
@@ -581,7 +648,7 @@
         <p>
           Closing the window doesn’t stop sharing: Communal keeps running so others can download
           from you. Quit from the menu bar icon (or the taskbar icon on Windows and Linux) or with
-          ⌘Q.
+          ⌘Q. The window opens again where you left it, at the same size.
         </p>
       </article>
     </main>

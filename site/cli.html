@@ -48,9 +48,10 @@
         <strong>On this page</strong><a href="#install">Install on Linux</a
         ><a href="#desktop">With the desktop app</a><a href="#setup">Setting up</a
         ><a href="#sharing">Sharing and access</a><a href="#people">People and groups</a
-        ><a href="#finding">Finding and downloading</a><a href="#subscriptions">Subscriptions</a
-        ><a href="#destinations">Destinations</a><a href="#remote">Remote control</a
-        ><a href="#devices">Devices and recovery</a><a href="#env">Settings</a>
+        ><a href="#admin">Managing a hub</a><a href="#finding">Finding and downloading</a
+        ><a href="#subscriptions">Subscriptions</a><a href="#destinations">Destinations</a
+        ><a href="#remote">Remote control</a><a href="#devices">Devices and recovery</a
+        ><a href="#env">Settings</a>
       </nav>
       <article>
         <h1>Command line</h1>
@@ -216,7 +217,11 @@ sudo -u communal communal status</code></pre>
             <td>
               <code>communal admin settings [--join-mode open|approval] [--name|--clear-name]</code>
             </td>
-            <td>Show or change the hub’s name and who can join.</td>
+            <td>
+              Show or change the hub’s name and who can join, and its limits:
+              <code>--signups-per-hour</code>, <code>--max-files</code> (per device),
+              <code>--max-devices</code> (per account). 0 means no limit.
+            </td>
           </tr>
           <tr>
             <td><code>communal admin graph</code>, <code>communal admin log</code></td>
@@ -234,7 +239,8 @@ sudo -u communal communal status</code></pre>
             <td><code>communal search &lt;words…&gt;</code></td>
             <td>
               Search every hub. <code>--kind</code>, <code>--min-size</code>, <code>--online</code>,
-              <code>--seen today|week|month</code>, <code>--json</code>.
+              <code>--seen today|week|month</code>, <code>--from connections|verified</code>,
+              <code>--json</code>.
             </td>
           </tr>
           <tr>
@@ -275,12 +281,16 @@ sudo -u communal communal status</code></pre>
             <td><code>communal transfers</code></td>
             <td>
               Downloads, with the reason and tips when a source can’t be reached.
+              <code>--clear</code> removes finished ones from the list (the files stay).
               <code>communal cancel &lt;id&gt;</code>. Both take <code>--on &lt;device&gt;</code>.
             </td>
           </tr>
           <tr>
             <td><code>communal log</code></td>
-            <td>Who downloaded what from this computer (kept locally only).</td>
+            <td>
+              Who downloaded what from this computer (kept locally only). <code>--user</code>,
+              <code>--path</code>, <code>--clear</code>.
+            </td>
           </tr>
         </table>
 
@@ -337,7 +347,7 @@ sudo -u communal communal status</code></pre>
           </tr>
           <tr>
             <td><code>communal dest set &lt;name&gt; &lt;folder&gt;</code></td>
-            <td>Point a destination at another folder.</td>
+            <td>Point a destination at another folder. <code>--rename</code> renames it too.</td>
           </tr>
           <tr>
             <td><code>communal dest remove &lt;name&gt;</code></td>

@@ -85,6 +85,19 @@ These are fine for now. Fix them if they start to bite.
 - **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
 - **From HANDOFF §15:** hubs caching thumbnails of hub-wide files.
 
+## Site audit before 0.1.9 (2026-10-14)
+
+Checked every page of `site/` against the code (CLI and `communal-hub` options, MCP tools, desktop screens, ADRs, this log).
+
+- **Agents page:** current. Its tool list matches `packages/mcp` exactly.
+- **App guide:** the Library now says people who share with the whole hub appear before you're connected, with Connect / Accept per hub, and that icons show the device type. It also covers long names shortened in the middle, the Search "From" filter, and the My shares cards (Change, Files inside…, a line per hub, List it on). The old "Who can see what" hub picker was stale. Also added: connecting from the Library, Transfers' Clear and "waits its turn", Activity's Include previews and Clear…, phones in Devices, Manage's limits, and the window reopening where you left it.
+- **Front page:** Follow a folder shows Subscriptions (it showed Transfers) and mentions the synced folder. Find and download mentions hub-wide shares from people you haven't met.
+- **CLI page:** `search --from`, `transfers --clear`, `log --user/--path/--clear`, `admin settings --signups-per-hour/--max-files/--max-devices`, `dest set --rename`, and a contents link to Managing a hub.
+- **Hub page:** a Limits section (ADR 0022: the three settings with their defaults, fixed per-address limits, slowing down instead of refusing), plus `get` and `unban`.
+- **Screenshots** from a dev hub with generated demo data, in profiles under the scratchpad: the desktop app as Alex, native daemons for Maya's iMac and Sam's laptop, and a Linux headless container linked to Alex as "Media server" so its penguin icon and subscriptions show. Retaken: library, folder, preview, search, transfers, people, activity, agents (for the Downloads tab; the dev build's Claude command and socket error were swapped for what the installed app shows). New: subscriptions (grouped by device), remote (the Download menu with the media server's destinations), devices. Unchanged and still accurate: welcome, shares, access, manage, android-*.
+- **Style:** `.doc` set `padding: 48px 0 0`, which removed the 24 px side gutter on every doc page (text touched the screen edge on phones). Long inline commands and CLI table cells now wrap under 560 px, and headings reached by an anchor clear the two-line phone header. Checked all five pages at 375 and 1280 px: no horizontal scroll, and every local link and anchor resolves.
+- **Left out:** no screenshots of the synced folder, netcheck or the Manage graph. Their text was accurate. Shares and access still show the old "/Users/Shared/maya" paths, which is fine.
+
 ## Long file names, the window's place, and device icons (2026-10-14)
 
 Three desktop fixes the owner asked for.

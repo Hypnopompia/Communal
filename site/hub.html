@@ -46,8 +46,8 @@
     <main class="wrap doc">
       <nav class="toc" aria-label="On this page">
         <strong>On this page</strong><a href="#needs">What it needs</a><a href="#install">Install</a
-        ><a href="#tls">Certificate</a><a href="#admin">Who can join</a><a href="#docker">Docker</a
-        ><a href="#privacy">What a hub knows</a>
+        ><a href="#tls">Certificate</a><a href="#admin">Who can join</a><a href="#limits">Limits</a
+        ><a href="#docker">Docker</a><a href="#privacy">What a hub knows</a>
       </nav>
       <article>
         <h1>Run a hub</h1>
@@ -130,6 +130,7 @@ sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr
 sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub ban &lt;user_id&gt; --reason "…"
 sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub set join_mode open
 sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub set name "Hunter family"
+sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub get
 sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub admin add &lt;user_id&gt;
 sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr/local/bin/communal-hub log</code></pre>
         <p>
@@ -156,7 +157,29 @@ sudo runuser -u communal-hub -- env COMMUNAL_HUB_DATA=/var/lib/communal-hub /usr
         <p>
           With <code>join_mode open</code> anyone who knows the address can join. Since accounts
           need no email, a banned person can come back with a new key on an open hub; use approval
-          mode if that matters.
+          mode if that matters. <code>unban &lt;user_id&gt;</code> lifts a ban, and
+          <code>get</code> shows every setting.
+        </p>
+
+        <h2 id="limits">Limits</h2>
+        <p>
+          A hub limits how much any one person or address can ask of it, so a misbehaving client
+          can’t take it over. Three of the limits are settings, changed with
+          <code>communal-hub set &lt;key&gt; &lt;n&gt;</code> or in the app under Manage › Settings,
+          where 0 means no limit:
+        </p>
+        <ul>
+          <li>
+            <code>signups_per_hour</code> (20): new accounts and new devices from one internet
+            address in an hour. An IPv6 /64 counts as one address.
+          </li>
+          <li><code>max_files_per_device</code> (1,000,000): files one computer may list.</li>
+          <li><code>max_devices_per_account</code> (20): computers and phones per account.</li>
+        </ul>
+        <p>
+          The rest are fixed, such as how many connections one address may hold open. A client that
+          sends too much is slowed down rather than refused, so older apps keep working. Every
+          change to the settings goes in the admin log.
         </p>
 
         <h2 id="docker">Docker</h2>

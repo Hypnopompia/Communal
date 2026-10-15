@@ -291,7 +291,7 @@ section > .lede {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
   gap: 48px;
-  padding: 48px 0 0;
+  padding-top: 48px;
 }
 .toc {
   position: sticky;
@@ -429,6 +429,21 @@ footer a {
   }
   .top nav {
     margin-left: 0;
+  }
+  /* Long commands wrap instead of widening the page. */
+  code,
+  td code {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  th,
+  td {
+    padding: 8px 6px;
+  }
+  /* The header wraps onto two lines here. */
+  .doc h2,
+  .doc h3 {
+    scroll-margin-top: 140px;
   }
 }
 figure {
