@@ -9,3 +9,5 @@ apps/android/build/
 apps/android/.gradle/
 apps/android/runtime/
 .claude/
+# Icon Composer writes its own JSON style; keep it as the app does.
+apps/desktop/build/icon.icon/

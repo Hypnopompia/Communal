@@ -74,7 +74,7 @@ class CoreService : Service() {
                 context, 0, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
             )
             return Notification.Builder(context, CHANNEL)
-                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setSmallIcon(R.drawable.ic_stat_communal)
                 .setContentTitle("Communal")
                 .setContentText(text)
                 .setContentIntent(open)

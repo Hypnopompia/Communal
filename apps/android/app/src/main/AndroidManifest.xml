@@ -10,8 +10,8 @@
     <application
         android:name=".CommunalApp"
         android:label="Communal"
-        android:icon="@drawable/ic_launcher"
-        android:roundIcon="@drawable/ic_launcher"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/Theme.Communal"
         android:extractNativeLibs="true"
         android:allowBackup="false"

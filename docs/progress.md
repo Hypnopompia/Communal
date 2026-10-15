@@ -85,6 +85,22 @@ These are fine for now. Fix them if they start to bite.
 - **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
 - **From HANDOFF §15:** hubs caching thumbnails of hub-wide files.
 
+## New app icon, 0.1.10 (2026-10-15)
+
+ADR 0025. The mark is now three overlapping hexagons. Each overlap has its own colour, and the shared core is white. `apps/desktop/scripts/icons.mjs` makes every icon from it:
+
+- an Icon Composer `build/icon.icon` for macOS (light, dark, clear and tinted looks, so the Dock no longer shows a white tile in dark mode)
+- an adaptive Android icon with a themed monochrome layer (no more small icon in a white circle)
+- the navy tile for Windows, Linux and the site
+- the tray template
+- the inline mark for the app and the site headers
+
+The Android notification now shows the mark too, instead of the system download icon.
+
+The hand-made `.icns` is gone: electron-builder compiles the `.icon` with Xcode 26's actool.
+
+The site screenshots weren't retaken. Only the mark changed on those screens, so the new mark was drawn over the old one in the sidebar and on Welcome, dimmed to match where a dialog darkens the sidebar. The Android screenshots show no mark.
+
 ## Site audit before 0.1.9 (2026-10-14)
 
 Checked every page of `site/` against the code (CLI and `communal-hub` options, MCP tools, desktop screens, ADRs, this log).
