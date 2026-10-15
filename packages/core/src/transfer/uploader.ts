@@ -71,6 +71,8 @@ class RateLimiter {
 export class Uploader {
   private active = 0;
   private previews = 0;
+  /** Sessions still running, so `stop()` can let them write their upload log first. */
+  private readonly sessions = new Set<Promise<void>>();
   private readonly limiter: RateLimiter;
   private readonly log: Logger;
 
@@ -94,7 +96,28 @@ export class Uploader {
     return this.active;
   }
 
-  async serve({ hub, offer, channel }: InboundPeer): Promise<void> {
+  /** Serves one inbound peer session (see `session`), tracked until it ends. */
+  serve(peer: InboundPeer): Promise<void> {
+    const run = this.session(peer).finally(() => this.sessions.delete(run));
+    this.sessions.add(run);
+    return run;
+  }
+
+  /**
+   * Waits for running sessions to finish their upload log before the store closes (at most
+   * `waitMs`: by now the transport is stopped, so their channels are already failing).
+   */
+  async stop(waitMs = 2000): Promise<void> {
+    if (!this.sessions.size) return;
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      Promise.allSettled([...this.sessions]),
+      new Promise((r) => (timer = setTimeout(r, waitMs))),
+    ]);
+    clearTimeout(timer);
+  }
+
+  private async session({ hub, offer, channel }: InboundPeer): Promise<void> {
     const deny = async (reason: PeerHeader<'denied'>['reason']) => {
       await channel.send({ t: 'denied', reason }).catch(() => {});
       channel.close();

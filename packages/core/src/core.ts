@@ -364,6 +364,7 @@ export class CommunalCore {
     await this.hubs.stop();
     await this.network.stop();
     await this.transport.stop();
+    await this.uploader.stop();
     this.store.close();
   }
 

@@ -85,6 +85,10 @@ These are fine for now. Fix them if they start to bite.
 - **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
 - **From HANDOFF §15:** hubs caching thumbnails of hub-wide files.
 
+## CI: an upload logged after the core stopped (2026-10-15)
+
+The macOS `check` job failed for 0.1.9 and 0.1.10 with "The database connection is not open", from `IndexStore.logUpload` in `Uploader.serve`. The test files differed (m12, m13). `CommunalCore.stop()` closed the store while an upload that was ending (its channel failing as the transport stopped) still had to write its log row. The uploader now tracks its sessions, and `stop()` waits for them, 2 s at most, after the transport stops and before the store closes.
+
 ## New app icon, 0.1.10 (2026-10-15)
 
 ADR 0025. The mark is now three overlapping hexagons. Each overlap has its own colour, and the shared core is white. `apps/desktop/scripts/icons.mjs` makes every icon from it:
