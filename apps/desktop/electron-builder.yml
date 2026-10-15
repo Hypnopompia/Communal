@@ -55,6 +55,9 @@ win:
   target: [nsis]
   # Authenticode signing uses WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD when present.
 nsis:
+  # No spaces: the default "Communal Setup X.exe" is uploaded as "Communal.Setup.X.exe" by
+  # `gh release upload`, while latest.yml names "Communal-Setup-X.exe", so updates 404'd.
+  artifactName: Communal-Setup-${version}.${ext}
   oneClick: true
   perMachine: false
   createDesktopShortcut: true
