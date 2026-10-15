@@ -5,7 +5,9 @@
 // - build/icon.icon: the Icon Composer document for macOS (light, dark, clear and tinted looks).
 //   electron-builder compiles it with Xcode 26's actool into Assets.car plus an .icns for older
 //   macOS, so packaging a Mac app needs Xcode 26.
-// - build/icon.png, resources/icon.png: the plain tile for Windows and Linux, and the window icon.
+// - build/icon.png, resources/icon.png: the plain tile for Windows, and the window icon.
+// - build/icons/<n>x<n>.png: the tile at the hicolor theme's sizes for Linux, which looks icons up
+//   only at the sizes its theme lists (up to 512), so a lone 1024 one shows as a generic icon.
 // - resources/trayTemplate*.png: the macOS menu bar template.
 // - The Android adaptive icon layers (foreground, background, monochrome for themed icons)
 //   and the notification icon.
@@ -151,6 +153,10 @@ mkdirSync(join(desktop, 'resources'), { recursive: true });
 const png = (svg, px) => sharp(Buffer.from(svg)).resize(px, px).png();
 await png(tile, 1024).toFile(join(desktop, 'build/icon.png'));
 await png(tile, 256).toFile(join(desktop, 'resources/icon.png'));
+rmSync(join(desktop, 'build/icons'), { recursive: true, force: true });
+mkdirSync(join(desktop, 'build/icons'));
+for (const px of [16, 24, 32, 48, 64, 128, 256, 512])
+  await png(tile, px).toFile(join(desktop, `build/icons/${px}x${px}.png`));
 await png(tile, 256).toFile(join(root, 'site/icon.png'));
 await png(tray(16), 16).toFile(join(desktop, 'resources/trayTemplate.png'));
 await png(tray(32), 32).toFile(join(desktop, 'resources/trayTemplate@2x.png'));

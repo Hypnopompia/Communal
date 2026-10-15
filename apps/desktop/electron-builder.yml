@@ -51,6 +51,7 @@ publish:
 dmg:
   sign: false
 win:
+  icon: build/icon.png
   target: [nsis]
   # Authenticode signing uses WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD when present.
 nsis:
@@ -58,6 +59,9 @@ nsis:
   perMachine: false
   createDesktopShortcut: true
 linux:
+  # Needed: with none, Linux falls back to mac.icon, the macOS-only Icon Composer document, and
+  # the app ships with no icon (a generic gear in the dock). A folder of sizes from icons.mjs.
+  icon: build/icons
   target: [AppImage, deb]
   executableName: communal
   artifactName: communal-${version}-${arch}.${ext}
