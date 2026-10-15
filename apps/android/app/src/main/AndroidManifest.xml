@@ -9,7 +9,7 @@
 
     <application
         android:name=".CommunalApp"
-        android:label="Communal"
+        android:label="${appLabel}"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/Theme.Communal"

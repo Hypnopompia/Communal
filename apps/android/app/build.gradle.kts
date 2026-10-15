@@ -47,9 +47,12 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix = ".dev"
+            // Installs next to the release app: name it differently, or the two look the same.
+            manifestPlaceholders["appLabel"] = "Communal Dev"
             buildConfigField("String", "COMMUNAL_BUILD", "\"dev\"")
         }
         release {
+            manifestPlaceholders["appLabel"] = "Communal"
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")

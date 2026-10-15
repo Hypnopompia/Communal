@@ -175,12 +175,10 @@ fun SettingsScreen(model: AppModel) {
 
         SectionTitle("About")
         Panel {
-            Item(
-                "Communal ${BuildConfig.VERSION_NAME}",
-                sub = "Private file sharing",
-                leading = { Mark(32.dp) },
-                trailing = { TextButton({ model.checkForUpdate() }) { Text("Check for updates") } },
-            )
+            // The version gets its own line: next to a button it was cut short on narrow phones.
+            Item("Communal", sub = "Version ${BuildConfig.VERSION_NAME}", leading = { Mark(32.dp) })
+            PanelDivider()
+            Item("Check for updates", leading = { Icon(Glyphs.Update, null) }, onClick = { model.checkForUpdate() })
             PanelDivider()
             Item("Website", sub = "hypnopompia.github.io/Communal", leading = { Icon(Glyphs.Globe, null) }, onClick = { view(SITE) })
             PanelDivider()

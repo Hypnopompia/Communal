@@ -23,7 +23,7 @@ sh scripts/prepare-jnilibs.sh arm64-v8a # the runtime into jniLibs/, the core bu
 
 Add `x86_64` to both scripts, and to `communal.abis` in `gradle.properties`, for an emulator on an Intel host.
 
-Debug builds get the `.dev` application id and accept a dev hub's self-signed certificate, so they install next to a release. From the emulator the host is `10.0.2.2`, so a dev hub on port 18443 is `10.0.2.2:18443`.
+Debug builds get the `.dev` application id and the name "Communal Dev" (so they can't be mistaken for the release app next to them), and accept a dev hub's self-signed certificate, so they install next to a release. From the emulator the host is `10.0.2.2`, so a dev hub on port 18443 is `10.0.2.2:18443`.
 
 ## Releases
 
