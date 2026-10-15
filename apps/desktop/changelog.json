@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.1.10",
+    "date": "2026-10-15",
+    "changes": [
+      "A new icon: three overlapping hexagons, for the people sharing and what they have in common. On macOS it follows your Dock’s look (dark, clear or tinted) instead of always showing a white tile.",
+      "On Android, the icon fills the launcher’s shape instead of sitting small inside a white circle, follows themed icons on Android 13 and later, and the notification shown while downloading carries it too."
+    ]
+  },
+  {
     "version": "0.1.9",
     "date": "2026-10-15",
     "changes": [
