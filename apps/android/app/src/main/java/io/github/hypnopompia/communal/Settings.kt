@@ -10,6 +10,8 @@ data class Settings(
     val syncHours: Int = 6,
     /** Only catch up in the background on Wi-Fi (or another unmetered network). */
     val wifiOnly: Boolean = true,
+    /** Library folders as a grid of thumbnails, else a list. */
+    val grid: Boolean = true,
 )
 
 class SettingsStore(context: Context) {
@@ -20,6 +22,7 @@ class SettingsStore(context: Context) {
     private fun load() = Settings(
         syncHours = prefs.getInt("sync_hours", 6),
         wifiOnly = prefs.getBoolean("wifi_only", true),
+        grid = prefs.getBoolean("grid", true),
     )
 
     fun update(change: (Settings) -> Settings): Settings {
@@ -27,6 +30,7 @@ class SettingsStore(context: Context) {
         prefs.edit()
             .putInt("sync_hours", s.syncHours)
             .putBoolean("wifi_only", s.wifiOnly)
+            .putBoolean("grid", s.grid)
             .apply()
         _value.value = s
         return s

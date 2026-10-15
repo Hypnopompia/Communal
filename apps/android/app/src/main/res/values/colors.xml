@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The window behind the app before Compose draws: the desktop's background colour (styles.css). -->
+<resources>
+    <color name="window">#FFE9EEEC</color>
+</resources>

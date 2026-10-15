@@ -8,8 +8,10 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.viewModelScope
 import io.github.hypnopompia.communal.ApiError
 import io.github.hypnopompia.communal.CommunalApp
+import io.github.hypnopompia.communal.Connection
 import io.github.hypnopompia.communal.CoreHost
 import io.github.hypnopompia.communal.LibraryDevice
+import io.github.hypnopompia.communal.Person
 import io.github.hypnopompia.communal.RemoteDevice
 import io.github.hypnopompia.communal.Status
 import io.github.hypnopompia.communal.Subscription
@@ -39,8 +41,8 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     val subscriptions = MutableStateFlow<List<Subscription>>(emptyList())
     val library = MutableStateFlow<List<LibraryDevice>>(emptyList())
     val remotes = MutableStateFlow<List<Remote>>(emptyList())
-    /** Your connection state with each person, per ready hub (hub id → user id → state). */
-    val connections = MutableStateFlow<Map<String, Map<String, String>>>(emptyMap())
+    /** Your connections, requests and requests sent, per ready hub (hub id → list). */
+    val connections = MutableStateFlow<Map<String, List<Connection>>>(emptyMap())
     /** Phones of this account (this one included): they never share, so Library leaves them out. */
     val phones = MutableStateFlow<Set<String>>(emptySet())
     val update = MutableStateFlow<Updates.Available?>(null)
@@ -85,7 +87,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         ProcessLifecycleOwner.get().lifecycle.removeObserver(foreground)
     }
 
-    private fun refresh(topics: Set<String>) {
+    private fun refresh(topics: Set<String>) = run {
         val all = "*" in topics
         viewModelScope.launch {
             if (all || "hubs" in topics || "devices" in topics) runCatching { status.value = api.status() }
@@ -103,7 +105,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     private suspend fun refreshConnections() {
         val hubs = status.value?.hubs?.filter { it.ready } ?: return
         connections.value = hubs.mapNotNull { h ->
-            runCatching { h.id to api.connections(h.id).connections.associate { it.user_id to it.state } }.getOrNull()
+            runCatching { h.id to api.connections(h.id).connections }.getOrNull()
         }.toMap()
     }
 
@@ -138,10 +140,41 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Pull to refresh: everything, and says when it's done. */
+    val refreshing = MutableStateFlow(false)
+
+    fun refreshAll() = viewModelScope.launch {
+        refreshing.value = true
+        refresh(setOf("*")).join()
+        refreshing.value = false
+    }
+
     fun reloadStatus() = viewModelScope.launch { runCatching { status.value = api.status() } }
 
     fun checkForUpdate() = viewModelScope.launch {
         update.value = app.updates.check(force = true)
         if (update.value == null) message.value = "You have the latest version"
     }
+}
+
+/**
+ * Who's who, as the desktop's `useNames()`: people from your connections first (hubs in the order
+ * you joined them), then from the Library; devices from the Library.
+ */
+class Names(connections: Map<String, List<Connection>>, library: List<LibraryDevice>) {
+    private val people = LinkedHashMap<String, Person>()
+    private val devices = HashMap<String, LibraryDevice>()
+
+    init {
+        for (list in connections.values) for (c in list) people.putIfAbsent(c.user_id, c.person)
+        for (d in library) {
+            people.putIfAbsent(d.user.user_id, d.user)
+            devices.putIfAbsent(d.device_id, d)
+        }
+    }
+
+    fun user(id: String): String = people[id]?.display_name ?: "Someone"
+    fun person(id: String): Person? = people[id]
+    fun verified(id: String): Boolean = people[id]?.verified == true
+    fun device(id: String): LibraryDevice? = devices[id]
 }

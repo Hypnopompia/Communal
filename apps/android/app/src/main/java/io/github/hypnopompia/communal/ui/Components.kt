@@ -15,36 +15,23 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
-import androidx.compose.material.icons.filled.Archive
-import androidx.compose.material.icons.filled.Audiotrack
-import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.Computer
-import androidx.compose.material.icons.filled.DesktopWindows
-import androidx.compose.material.icons.filled.LaptopMac
-import androidx.compose.material.icons.filled.Terminal
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Movie
-import androidx.compose.material.icons.filled.PhoneAndroid
-import androidx.compose.material.icons.filled.Sync
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -56,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -65,6 +53,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.hypnopompia.communal.Api
+import io.github.hypnopompia.communal.Meta
 import java.io.File
 
 private val thumbs = LruCache<String, ImageBitmap>(300)
@@ -72,31 +61,26 @@ private val thumbs = LruCache<String, ImageBitmap>(300)
 /** The built-in destination every computer has, unless it keeps it from other devices. */
 private const val DOWNLOADS = "Downloads"
 
-/** What kind of device it is (ADR 0023), as an icon; anything unknown is a plain computer. */
-fun platformIcon(platform: String?): ImageVector = when (platform) {
-    "darwin" -> Icons.Default.LaptopMac
-    "win32" -> Icons.Default.DesktopWindows
-    "linux" -> Icons.Default.Terminal
-    "android" -> Icons.Default.PhoneAndroid
-    else -> Icons.Default.Computer
-}
-
-fun kindIcon(kind: String): ImageVector = when (kind) {
-    "image" -> Icons.Default.Image
-    "video" -> Icons.Default.Movie
-    "audio" -> Icons.Default.Audiotrack
-    "document", "text" -> Icons.Default.Description
-    "archive", "disk_image" -> Icons.Default.Archive
-    "code" -> Icons.Default.Code
-    else -> Icons.AutoMirrored.Filled.InsertDriveFile
-}
-
 /**
  * A file's thumbnail once it's in the core's cache (screens fetch thumbnails in batches first),
- * else its kind's icon.
+ * else its icon, as the desktop's `FileArt`. `fill` takes the whole of a grid tile.
  */
 @Composable
-fun Thumb(api: Api, hash: String?, kind: String, hasThumb: Boolean, ready: Int, size: Dp = 44.dp) {
+fun Thumb(api: Api, hash: String?, icon: String, hasThumb: Boolean, ready: Int, size: Dp = 44.dp, fill: Boolean = false) {
+    val b = rememberThumb(api, hash, hasThumb, ready)
+    Box(
+        (if (fill) Modifier.fillMaxSize() else Modifier.size(size))
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (b != null) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (b != null) Image(b, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        else FileIcon(icon, if (fill) 56.dp else size * 0.86f)
+    }
+}
+
+@Composable
+private fun rememberThumb(api: Api, hash: String?, hasThumb: Boolean, ready: Int): ImageBitmap? {
     val bitmap by produceState(hash?.let { thumbs.get(it) }, hash, hasThumb, ready) {
         if (hash == null || !hasThumb || value != null) return@produceState
         val bytes = runCatching { api.thumb(hash) }.getOrNull() ?: return@produceState
@@ -104,29 +88,27 @@ fun Thumb(api: Api, hash: String?, kind: String, hasThumb: Boolean, ready: Int, 
         thumbs.put(hash, bmp)
         value = bmp
     }
-    Box(
-        Modifier.size(size).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
-        contentAlignment = Alignment.Center,
-    ) {
-        val b = bitmap
-        if (b != null) Image(b, null, Modifier.size(size), contentScale = ContentScale.Crop)
-        else Icon(kindIcon(kind), null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
-fun FolderIcon(size: Dp = 44.dp) {
-    Box(
-        Modifier.size(size).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.primaryContainer),
-        contentAlignment = Alignment.Center,
-    ) { Icon(Icons.Default.Folder, null, tint = MaterialTheme.colorScheme.primary) }
+    return bitmap
 }
 
 /** What an action sheet acts on: one file, or a folder on someone's device. */
 sealed interface Target {
     val title: String
 
-    data class File(val hash: String, val name: String, override val title: String = name) : Target
+    data class File(
+        val hash: String,
+        val name: String,
+        val size: Long? = null,
+        val icon: String = iconForName(name),
+        val thumb: Boolean = false,
+        val meta: Meta = Meta(),
+        /** Who has it: "From Maya and Sam". */
+        val from: String? = null,
+        /** The folder it's in on its best source, for "Show folder" (search results). */
+        val folder: Place? = null,
+    ) : Target {
+        override val title: String get() = meta.title ?: name
+    }
 
     /** `hubId` is this phone's id for the hub; computers name hubs by URL. */
     data class Folder(val hubId: String, val hubUrl: String, val device: String, val path: String) : Target {
@@ -140,7 +122,7 @@ sealed interface Target {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ActionSheet(model: AppModel, target: Target, onClose: () -> Unit) {
+fun ActionSheet(model: AppModel, target: Target, onClose: () -> Unit, onShowFolder: ((Place) -> Unit)? = null) {
     val remotes by model.remotes.collectAsStateWithLifecycle()
     var following by remember { mutableStateOf<String?>(null) } // "phone" or a device id
     // A computer action waiting for the person to pick one of its destinations (ADR 0018).
@@ -153,20 +135,14 @@ fun ActionSheet(model: AppModel, target: Target, onClose: () -> Unit) {
             else -> act(r.destinations.singleOrNull()?.takeIf { it != DOWNLOADS })
         }
     }
-    ModalBottomSheet(onDismissRequest = onClose) {
+    ModalBottomSheet(onDismissRequest = onClose, containerColor = MaterialTheme.colorScheme.surfaceContainerLowest) {
         // With several computers the options outgrow the screen: scroll, and keep the last one
         // clear of the navigation bar.
         Column(
             Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 16.dp),
         ) {
-            Text(
-                target.title,
-                Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Option(Icons.Default.PhoneAndroid, "Download to this phone", "Saved in Download/Communal") {
+            SheetHeader(model, target)
+            Option(Glyphs.Phone, "Download to this phone", "Saved in Download/Communal", primary = true) {
                 onClose()
                 when (target) {
                     is Target.File -> model.act("Downloading ${target.name}") { model.api.download(target.hash, target.name) }
@@ -176,11 +152,25 @@ fun ActionSheet(model: AppModel, target: Target, onClose: () -> Unit) {
                 }
             }
             if (target is Target.Folder) {
-                Option(Icons.Default.Sync, "Keep in sync on this phone", "New files arrive here automatically") {
+                Option(Glyphs.Sync, "Keep in sync on this phone", "New files arrive here automatically") {
                     following = "phone"
                 }
             }
-            if (remotes.isNotEmpty()) HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            val folder = (target as? Target.File)?.folder
+            if (folder != null && onShowFolder != null) {
+                Option(Glyphs.Folder, "Show the folder it’s in", "On ${folder.name}") {
+                    onClose()
+                    onShowFolder(folder)
+                }
+            }
+            if (remotes.isNotEmpty()) {
+                Text(
+                    "On your computers",
+                    Modifier.padding(start = 24.dp, top = 16.dp, bottom = 4.dp),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             for (r in remotes) {
                 val d = r.device
                 val why = when {
@@ -221,7 +211,7 @@ fun ActionSheet(model: AppModel, target: Target, onClose: () -> Unit) {
                         r.destinations.singleOrNull()?.let { it != DOWNLOADS } == true -> "Into its ${r.destinations.single()} folder"
                         else -> why
                     }
-                    Option(Icons.Default.Sync, "Keep in sync on ${d.name}", syncWhy, enabled = usable) {
+                    Option(Glyphs.Sync, "Keep in sync on ${d.name}", syncWhy, enabled = usable) {
                         following = d.device_id
                     }
                 }
@@ -259,10 +249,11 @@ fun ActionSheet(model: AppModel, target: Target, onClose: () -> Unit) {
             text = {
                 Column {
                     r.destinations.forEach { dest ->
-                        ListItem(
-                            headlineContent = { Text(dest) },
-                            supportingContent = if (dest == DOWNLOADS) ({ Text("Its downloads folder") }) else null,
-                            modifier = Modifier.clickableRow {
+                        Item(
+                            dest,
+                            sub = if (dest == DOWNLOADS) "Its downloads folder" else null,
+                            leading = { FolderIcon(32.dp) },
+                            onClick = {
                                 choosing = null
                                 act(dest.takeIf { it != DOWNLOADS })
                             },
@@ -282,13 +273,21 @@ private fun FollowDialog(where: String, onCancel: () -> Unit, onOk: (mirrorDelet
     var mirror by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onCancel,
+        icon = { Icon(Glyphs.Sync, null) },
         title = { Text("Keep in sync on $where") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text("New and changed files in this folder will be downloaded to $where whenever both are online.")
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(mirror, { mirror = it })
-                    Text("Also remove files that are deleted there (they go to the trash, never straight away)")
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Also remove deleted files", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "They go to the trash, never straight away",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(mirror, { mirror = it })
                 }
             }
         },
@@ -298,13 +297,76 @@ private fun FollowDialog(where: String, onCancel: () -> Unit, onOk: (mirrorDelet
 }
 
 @Composable
-private fun Option(icon: ImageVector, title: String, sub: String, enabled: Boolean = true, onClick: () -> Unit) {
-    ListItem(
-        headlineContent = { Text(title, color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline) },
-        supportingContent = { Text(sub) },
-        leadingContent = { Icon(icon, null) },
-        modifier = Modifier.fillMaxWidth().let { if (enabled) it.clickableRow(onClick) else it },
+private fun Option(icon: ImageVector, title: String, sub: String, enabled: Boolean = true, primary: Boolean = false, onClick: () -> Unit) {
+    Item(
+        title,
+        Modifier.padding(horizontal = 8.dp),
+        sub = sub,
+        enabled = enabled,
+        onClick = onClick,
+        leading = {
+            Box(
+                Modifier.size(40.dp).clip(CircleShape).background(
+                    if (primary && enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    icon, null, Modifier.size(22.dp),
+                    tint = when {
+                        !enabled -> Brand.tones.faint
+                        primary -> MaterialTheme.colorScheme.onPrimary
+                        else -> MaterialTheme.colorScheme.onSurface
+                    },
+                )
+            }
+        },
     )
+}
+
+/** What the sheet is about: a picture's preview, else its icon, with what it is and who has it. */
+@Composable
+private fun SheetHeader(model: AppModel, target: Target) {
+    when (target) {
+        is Target.File -> {
+            val big = rememberThumb(model.api, target.hash, target.thumb, 0)
+            Column(
+                Modifier.padding(horizontal = 24.dp).padding(bottom = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                if (big != null) {
+                    Image(
+                        big, null,
+                        Modifier.fillMaxWidth().heightIn(max = 280.dp)
+                            .aspectRatio(big.width.toFloat() / big.height.coerceAtLeast(1))
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentScale = ContentScale.Fit,
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    if (big == null) FileIcon(target.icon, 48.dp)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(target.title, style = MaterialTheme.typography.titleMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        listOfNotNull(target.meta.album, target.size?.let { describe(target.meta, it) }, target.from).forEach {
+                            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        }
+        is Target.Folder -> Row(
+            Modifier.padding(horizontal = 24.dp).padding(bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            FolderIcon(48.dp)
+            Column {
+                Text(target.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text("Folder", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
 }
 
 /** Opens a downloaded file in whatever app handles it (through the media library). */

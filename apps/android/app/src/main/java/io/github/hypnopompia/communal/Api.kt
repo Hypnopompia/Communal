@@ -35,7 +35,14 @@ import okhttp3.WebSocketListener
 
 @Serializable data class Status(val device_id: String, val account: Identity, val hubs: List<Hub>)
 
-@Serializable data class Identity(val device_id: String, val user_id: String? = null, val fingerprint: String? = null)
+@Serializable
+data class Identity(
+    val device_id: String,
+    val user_id: String? = null,
+    val fingerprint: String? = null,
+    /** Another of your devices removed this one from the account. */
+    val revoked: Boolean = false,
+)
 
 @Serializable
 data class Hub(
@@ -67,9 +74,27 @@ data class LibraryDevice(
 @Serializable data class Library(val devices: List<LibraryDevice>)
 
 /** Your connection with someone on one hub: accepted, pending_in or pending_out. */
-@Serializable data class Connection(val user_id: String, val state: String)
+@Serializable
+data class Connection(
+    val user_id: String,
+    val state: String,
+    val display_name: String = "",
+    val fingerprint: String = "",
+    val verified: Boolean = false,
+    /** Unix seconds. */
+    val since: Long = 0,
+    /** Accepted connections, from hubs that say: any of their computers online, else when last. */
+    val online: Boolean? = null,
+    val seen: String? = null,
+) {
+    val person: Person get() = Person(user_id, display_name, fingerprint, verified)
+}
 
 @Serializable data class Connections(val connections: List<Connection>)
+
+@Serializable data class People(val users: List<Person>)
+
+@Serializable data class SafetyCode(val code: String)
 
 @Serializable
 data class Meta(
@@ -94,10 +119,14 @@ data class Hit(
     val kind: String,
     val meta: Meta = Meta(),
     val thumb: Boolean = false,
+    /** The core's icon id (`iconFor()`): "pdf", "audio", "archive"… */
+    val icon: String = "file",
     val sources: List<Source>,
 )
 
-@Serializable data class SearchResult(val hits: List<Hit>)
+@Serializable data class HubAnswer(val hub: String, val ok: Boolean, val cursor: String? = null)
+
+@Serializable data class SearchResult(val hits: List<Hit>, val hubs: List<HubAnswer> = emptyList())
 
 @Serializable
 data class Entry(
@@ -108,6 +137,7 @@ data class Entry(
     val meta: Meta = Meta(),
     val thumb: Boolean = false,
     val hash: String? = null,
+    val icon: String = "file",
 ) {
     val name: String get() = path.substringAfterLast('/')
 }
@@ -116,7 +146,10 @@ data class Entry(
 
 @Serializable data class Listing(val online: Boolean, val dirs: List<Dir>, val files: List<Entry>)
 
-@Serializable data class Diagnosis(val message: String, val tips: List<String> = emptyList())
+@Serializable data class Diagnosis(val message: String, val tips: List<String> = emptyList(), val fix: String? = null)
+
+/** A computer a download is coming from, and how fast (bytes a second). */
+@Serializable data class TransferSource(val hub: String, val device_id: String, val bytes: Long = 0, val rate: Double = 0.0)
 
 @Serializable
 data class Transfer(
@@ -130,7 +163,9 @@ data class Transfer(
     val final_path: String? = null,
     val requested_by: String? = null,
     val diagnosis: Diagnosis? = null,
+    /** Unix seconds. */
     val updated_at: Long,
+    val sources: List<TransferSource> = emptyList(),
 )
 
 @Serializable data class Transfers(val downloads: List<Transfer>)
@@ -258,8 +293,48 @@ class Api(private val host: CoreHost) {
         })
     }
 
-    suspend fun search(query: String, kind: String? = null): SearchResult =
-        get("/v1/search?q=${q(query)}&limit=100" + (kind?.let { "&kind=$it" } ?: ""))
+    suspend fun findPeople(hub: String, query: String): People = get("/v1/people/search?hub=${q(hub)}&q=${q(query)}")
+
+    /** Declines a request, cancels ours, or disconnects. */
+    suspend fun disconnect(hub: String, user: String) = connect(hub, user, "remove")
+
+    /** The code both people compare out of band (HANDOFF §2); only for your connections. */
+    suspend fun safetyCode(hub: String, user: String): SafetyCode =
+        get("/v1/people/safety-code?hub=${q(hub)}&user=${q(user)}")
+
+    suspend fun verify(hub: String, user: String, verified: Boolean) {
+        call("POST", "/v1/people/verify", buildJsonObject {
+            put("hub", hub)
+            put("user_id", user)
+            put("verified", verified)
+        })
+    }
+
+    /**
+     * Every hub at once (ADR 0007). `from` is anyone, connections or verified; `available` keeps
+     * files on computers seen in the past week; `cursors` (hub → cursor) asks for the next page.
+     */
+    suspend fun search(
+        query: String,
+        kind: String? = null,
+        minSize: Long = 0,
+        available: Boolean = false,
+        from: String = "anyone",
+        cursors: Map<String, String>? = null,
+    ): SearchResult {
+        val params = buildList {
+            add("q=${q(query)}")
+            add("limit=60")
+            kind?.let { add("kind=$it") }
+            if (minSize > 0) add("min_size=$minSize")
+            if (available) add("available=week")
+            if (from != "anyone") add("from=$from")
+            cursors?.let { c ->
+                add("cursors=" + q(JsonObject(c.mapValues { kotlinx.serialization.json.JsonPrimitive(it.value) }).toString()))
+            }
+        }
+        return get("/v1/search?" + params.joinToString("&"))
+    }
 
     suspend fun browse(hub: String, device: String, path: String): Listing =
         get("/v1/browse?hub=${q(hub)}&device=${q(device)}&path=${q(path)}")

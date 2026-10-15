@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ draws a splash while the app starts: the mark on the app's own background. -->
+<resources>
+    <style name="Theme.Communal" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/window</item>
+        <item name="android:windowSplashScreenBackground">@color/window</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>
+    </style>
+</resources>

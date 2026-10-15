@@ -3,6 +3,8 @@ package io.github.hypnopompia.communal.ui
 import io.github.hypnopompia.communal.Hub
 import io.github.hypnopompia.communal.Meta
 import java.net.URI
+import java.text.DateFormat
+import java.util.Date
 import kotlin.math.roundToInt
 
 /** Same rules as the desktop's format.ts. */
@@ -37,12 +39,42 @@ fun seenLabel(seen: String) = when (seen) {
 
 fun hubName(hub: Hub): String = hub.name ?: runCatching { URI(hub.url).host }.getOrNull() ?: hub.url
 
-/** "Artist · Album · 3:42" for music, "4032 × 3024" for pictures, and so on. */
-fun metaLine(meta: Meta, sizeBytes: Long): String = listOfNotNull(
-    meta.artist,
-    meta.album,
+fun rate(bytesPerSecond: Double) = size(bytesPerSecond.toLong()) + "/s"
+
+/** "just now", "5 min ago", "3 h ago", "2 days ago", else the date, as the desktop's `ago()`. */
+fun ago(unixSeconds: Long): String {
+    val d = System.currentTimeMillis() / 1000 - unixSeconds
+    return when {
+        d < 60 -> "just now"
+        d < 3600 -> "${d / 60} min ago"
+        d < 86400 -> "${d / 3600} h ago"
+        d < 7 * 86400 -> "${d / 86400} days ago"
+        else -> DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(unixSeconds * 1000))
+    }
+}
+
+/**
+ * "Maya’s iMac" from an owner and a device name, without doubling the owner when the device
+ * name already starts with it, as the desktop's `computerName()`.
+ */
+fun computerName(owner: String, device: String): String {
+    val o = owner.trim().lowercase()
+    return if (o.isNotEmpty() && device.trim().lowercase().startsWith(o)) device else "$owner’s $device"
+}
+
+/** "4032×3024, 3:42, Artist, 4.2 MB", as the desktop's `describe()`. */
+fun describe(meta: Meta, bytes: Long): String = listOfNotNull(
+    if (meta.width != null && meta.height != null) "${meta.width}×${meta.height}" else null,
     meta.duration?.let { duration(it) },
-    if (meta.width != null && meta.height != null) "${meta.width} × ${meta.height}" else null,
     meta.pages?.let { "$it pages" },
-    size(sizeBytes),
-).joinToString(" · ")
+    meta.artist,
+    size(bytes),
+).joinToString(", ")
+
+/** Turns what a person types ("hub.example.com") into the hub's WebSocket URL, as the desktop's `hubUrl()`. */
+fun hubUrl(input: String): String {
+    var s = input.trim()
+    if (!Regex("^wss?://", RegexOption.IGNORE_CASE).containsMatchIn(s)) s = "wss://" + s.replace(Regex("^https?://", RegexOption.IGNORE_CASE), "")
+    val u = URI(s)
+    return if (u.path.isNullOrEmpty() || u.path == "/") URI(u.scheme, u.userInfo, u.host, u.port, "/v1", u.query, u.fragment).toString() else s
+}

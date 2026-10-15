@@ -52,7 +52,18 @@ The plan is in `docs/plans/downloads.md`.
 - **On a real phone:** Wi-Fi and mobile data (carrier NAT is the big unknown), Doze, a network change mid-download, and a day of background sync windows.
 - **Our own Node 24 build** (Termux's patches, `--shared`, small-icu), loaded in-process over JNI. It replaces the pinned Termux packages, avoids Android 12+'s phantom-process killer, and shrinks the app (about 152 MB installed now). Termux replaces old files in its pool, so the pins in `scripts/fetch-node.sh` will break: mirror them on a GitHub release until our build exists.
 - **Link with a QR code** instead of typing the hub address and code.
-- **Previews on the phone**: tap a picture to see it large, play a song or video without downloading it (`/v1/stream`, `/v1/peek`).
+- **Previews on the phone**: the action sheet shows a picture's thumbnail, but there's no full-size view, and no playing a song or video without downloading it (`/v1/stream`, `/v1/peek`), as the desktop's Preview does.
+- **Before a Play Store listing:**
+  - a privacy policy page on the site
+  - a store listing (screenshots, feature graphic)
+  - an AAB build
+  - a Play flavour without `Updates` (Play doesn't allow an app to update itself from outside the store)
+  - the Data safety form
+  - the reason for the `dataSync` foreground service
+
+  Decide first whether to publish there at all (`docs/questions.md`).
+
+- **Hub admin on the phone** (ADR 0020 puts it in the clients): Settings › Hubs › Manage isn't on Android yet.
 - **Reinstalling loses the phone's identity** (the Keystore key goes with the app), and files it downloaded before can't be replaced by the new install. Link again; offer to clean up old phone devices in the desktop's Devices list.
 
 ### Known limitations
@@ -84,6 +95,42 @@ These are fine for now. Fix them if they start to bite.
 
 - **Retention for devices not seen for a long time** (ADR 0015), as a hub setting in Manage (ADR 0020).
 - **From HANDOFF §15:** hubs caching thumbnails of hub-wide files.
+
+## Android: the desktop's look, and closer to its features (2026-10-15)
+
+Owner request: the Android app looked bland, its device icons didn't match the desktop, and it should look like a finished app.
+
+**Look.** The look now comes from the desktop's `styles.css`:
+
+- the font, Atkinson Hyperlegible Next, as one variable TTF in `res/font` with its OFL text in `res/raw`
+- sage surfaces, cobalt and green, in light and dark (`ui/Theme.kt`, with the extra tones in `Brand.tones`)
+- the 6/10/16 radii
+
+**Brand.** The mark (`res/drawable/ic_mark.xml`, generated from `Mark` in `icons.tsx`) appears in each tab's top bar, while starting, and on the welcome screen. Android 12+ shows a splash with the launcher tile, and the window colour follows the theme, so there's no white flash.
+
+**Icons** (`ui/Icons.kt`), ported path for path from `icons.tsx`:
+
+- the line icons for navigation and actions
+- the device marks (apple, panes, penguin, Android head) in place of Material's laptop, monitor and terminal
+- file icons with the coloured, labelled band, from the core's `icon` id (now in `Hit` and `Entry`)
+- people's identity discs, coloured by the same FNV hash of the fingerprint
+- the verified shield
+
+**Parity.** The shared pieces (`ui/Kit.kt`: panels, rows, status dots, notices, empty states) match the desktop's `.panel`, `.status`, `.notice` and `.empty`. Screen by screen:
+
+- **Shell:** five tabs (Library first, as on the desktop), with badges for requests to answer, downloads running, and an update or a hub problem. The top bar shows the hub state ("Connected", "Needs attention"). Above every screen, notices say when the phone was removed from the account, a hub is waiting for its admin, or a hub refuses us.
+- **Library:** people with discs and verified marks, their computers in panels with platform icons and status. Pull to refresh.
+- **Browse:** a header with the owner's disc, device kind and status, plus breadcrumbs, a grid of thumbnails or a list (remembered, `Settings.grid`), and Download folder / Keep in sync buttons.
+- **Search:** the desktop's filters (kind, size, from anyone, connections or verified, only available files), "From Maya, Sam", "2 of 3 computers online", Show more (hub cursors), a notice when hubs didn't answer, and "Show the folder it's in" from a result.
+- **Action sheet:** the picture's thumbnail at its own proportions, or its file icon, with what it is and who has it.
+- **People** (new on Android): requests to accept or decline, find people per hub, connections with Verify (safety codes) and Disconnect, and requests sent.
+- **Transfers:** speed and per-computer rates, the hub's diagnosis with its tips, Finished kept apart with Clear, and file icons. A computer's chip carries its platform icon.
+- **Settings:** grouped panels, hub status, Join another hub (same account, ADR 0007), the catch-up choice, and About (version, website, source, open-source licences).
+
+**Checked** on the emulator (Android 15, light and dark) against a dev hub with two headless clients: linking with a code, the Library, browsing a photo folder with thumbnails, the sheet, a download, Search, People and Settings.
+
+- A fault on the emulator, not the app: in light mode it clips the status bar's clock and icons on the home screen too.
+- The `assets/core` bundle in a checkout goes stale. One built before `library.listing` carried `platform` silently drops it, and every computer shows the plain icon. Run `prepare-jnilibs.sh` again after changing core or protocol.
 
 ## CI: an upload logged after the core stopped (2026-10-15)
 

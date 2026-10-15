@@ -26,3 +26,19 @@ libudx counts any reordered packet as lost on a LAN, because its reorder window 
 
 - First, a baseline: how fast is AirDrop or a Finder copy of the same file between the same two laptops? And what do the new `link` stats in the uploader's log say during a slow download (many `fast_recoveries`, few `rtos`)?
 - If reordering is confirmed, how do we ship the fix? (a) Open an issue and PR on `holepunchto/libudx` with the lab reproduction and wait for a udx-native release. This posts publicly, so it needs your go-ahead. (b) Build our own udx-native prebuilds for every platform we release and pin them, until upstream catches up. That costs a CI job and a fork to keep in step. (c) Both: (a) now, and (b) only if upstream is slow.
+
+## Publishing the Android app on Google Play
+
+**Status:** waiting for the owner.
+
+The app now looks finished enough to list (progress.md, 2026-10-15), but ADR 0023 ships it as a signed APK from GitHub releases. Listing it on Play would mean:
+
+- **Updates:** Play doesn't allow an app to update itself from outside the store, so a Play build needs a flavour without `Updates`. The GitHub APK would keep it.
+- **Signing:** Play App Signing holds its own key, so the Play build and the GitHub APK can't update each other. People would have to pick one.
+- **Paperwork:**
+  - a privacy policy page (the hub sees display names, device names and file names, never file contents)
+  - the Data safety form
+  - a reason for the `dataSync` foreground service
+- **Review risk:** a file-sharing app that runs its own Node binary may draw extra review.
+
+The question: Play, F-Droid, or GitHub releases only?
