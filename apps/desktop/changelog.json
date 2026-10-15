@@ -1,5 +1,19 @@
 [
   {
+    "version": "0.1.9",
+    "date": "2026-10-15",
+    "changes": [
+      "See and manage the folders all your devices follow, from any of them. Subscriptions lists each of your computers, and you can pause, resume, change or stop what another computer (or a server) keeps in sync, as long as it allows remote control.",
+      "A computer can keep its downloads folder to itself, so your other devices can only save into its named destinations, like Movies and TV on a media server. Turn off “Into the downloads folder too” under Settings › Downloads (communal remote downloads off on a server).",
+      "Someone who shares with everyone on a hub can now be asked to connect straight from the Library, without searching for them under People first.",
+      "Devices show an icon for what they are (Mac, Windows, Linux or Android) in the Library, Settings › Devices and Subscriptions. This needs your hub to be updated too.",
+      "Long file names no longer spill over the rest of a row in Search, Browse and Transfers; the full name shows when you point at it.",
+      "Communal remembers the size and place of its window after a restart.",
+      "AI assistants can manage destinations, remote control and other devices’ subscriptions, read part of a file, wait for a download to finish, and explain why someone can or can’t see something.",
+      "On Android: a computer’s destinations and the folders it keeps in sync show up, setup fields stay above the keyboard, and hidden dotfiles are left out."
+    ]
+  },
+  {
     "version": "0.1.8",
     "date": "2026-10-14",
     "changes": [
