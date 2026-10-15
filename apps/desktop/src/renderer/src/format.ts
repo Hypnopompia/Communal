@@ -62,6 +62,18 @@ export function hubName(hub: { url: string; name?: string | null }): string {
 export const baseName = (p: string) => p.replace(/\/$/, '').split('/').pop() ?? p;
 export const dirName = (p: string) => p.replace(/\/$/, '').split('/').slice(0, -1).join('/');
 
+/**
+ * Splits a file name for an ellipsis in the middle: the start can be cut short, the end (the
+ * extension and a few characters before it) always shows, so "Show.S01E02…GROUP.mkv" keeps both
+ * the episode and the type. Splits by code point, never inside an emoji.
+ */
+export function splitName(name: string): [string, string] {
+  const chars = Array.from(name);
+  const ext = /\.[\p{L}\p{N}]{1,8}$/u.exec(name)?.[0];
+  const keep = Math.min(Math.floor(chars.length / 2), (ext ? Array.from(ext).length : 0) + 10);
+  return [chars.slice(0, chars.length - keep).join(''), chars.slice(chars.length - keep).join('')];
+}
+
 export function plural(n: number, one: string, many = `${one}s`) {
   return `${n.toLocaleString()} ${n === 1 ? one : many}`;
 }

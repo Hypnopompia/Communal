@@ -11,7 +11,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -92,7 +91,7 @@ fun SettingsScreen(model: AppModel) {
                         },
                     )
                 },
-                leadingContent = { Icon(Icons.Default.Computer, null) },
+                leadingContent = { Icon(platformIcon(r.device.platform), null) },
             )
         }
 

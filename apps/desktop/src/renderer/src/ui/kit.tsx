@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { Icon } from './icons';
+import { splitName } from '../format';
 import { invalidate, type Topic } from '../query';
 
 export function Dialog({
@@ -222,4 +223,18 @@ export function useAction<A extends unknown[], R>(
     [toast],
   );
   return { run, busy, error, clearError: () => setError(null) };
+}
+
+/**
+ * A file name on one line. When it doesn't fit, the middle gives way, so the start and the
+ * extension both stay in view; the whole name is the tooltip.
+ */
+export function FileName({ name, className = 'title' }: { name: string; className?: string }) {
+  const [head, tail] = splitName(name);
+  return (
+    <div className={`${className} name-cut`} title={name}>
+      <span className="name-head">{head}</span>
+      <span className="name-tail">{tail}</span>
+    </div>
+  );
 }

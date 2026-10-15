@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { effective } from './access';
-import { computerName, hubUrl, seenLabel, size } from './format';
+import { computerName, hubUrl, seenLabel, size, splitName } from './format';
 
 describe('hub addresses as people type them', () => {
   it('becomes the hub WebSocket URL', () => {
@@ -48,5 +48,24 @@ describe('computer names', () => {
     expect(computerName('Maya', 'iMac')).toBe('Maya’s iMac');
     expect(computerName('Maya', 'Maya’s iMac')).toBe('Maya’s iMac');
     expect(computerName('Maya', 'maya-laptop')).toBe('maya-laptop');
+  });
+});
+
+describe('names cut in the middle', () => {
+  it('keeps the extension and a little before it', () => {
+    expect(splitName('Breaking.Bad.S01E01.Pilot.1080p.BluRay.x264-GROUPNAME.mkv')).toEqual([
+      'Breaking.Bad.S01E01.Pilot.1080p.BluRay.x264',
+      '-GROUPNAME.mkv',
+    ]);
+    expect(splitName('a_very_long_name_without_any_extension_at_all')).toEqual([
+      'a_very_long_name_without_any_extens',
+      'ion_at_all',
+    ]);
+  });
+
+  it('never splits more than half, or inside an emoji', () => {
+    expect(splitName('ab.mkv')).toEqual(['ab.', 'mkv']);
+    expect(splitName('😀😀😀😀')).toEqual(['😀😀', '😀😀']);
+    expect(splitName('')).toEqual(['', '']);
   });
 });

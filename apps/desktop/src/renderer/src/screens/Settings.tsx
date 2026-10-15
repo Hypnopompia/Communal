@@ -18,7 +18,7 @@ import { hubUrl } from '../format';
 import { useHubs, useStatus } from '../hubs';
 import { useNav, type SettingsTab } from '../nav';
 import { useApi } from '../query';
-import { Icon } from '../ui/icons';
+import { Icon, PlatformIcon, platformLabel } from '../ui/icons';
 import { Dialog, ErrorNote, useAction } from '../ui/kit';
 import { ReshareNote, useExposure } from '../ui/files';
 
@@ -281,8 +281,9 @@ function Devices() {
           {requests.data!.requests.map((r) => (
             <div key={r.request_id} style={{ display: 'grid', gap: 10 }}>
               <p>
-                <b>{r.device_name}</b> asked {ago(r.at)} through {hubLabel(r.hub)}. Check that the
-                new computer shows this same ID before you approve:
+                <PlatformIcon platform={r.platform} size={15} /> <b>{r.device_name}</b> (
+                {platformLabel(r.platform)}) asked {ago(r.at)} through {hubLabel(r.hub)}. Check that
+                the new computer shows this same ID before you approve:
               </p>
               <div className="code-big mono" style={{ fontSize: 16 }}>
                 {r.device_id}
@@ -336,7 +337,7 @@ function Devices() {
               const seen = Math.max(0, ...d.hubs.map((h) => h.last_seen ?? 0));
               return (
                 <div key={d.device_id} className="row">
-                  <Icon name="device" size={22} />
+                  <PlatformIcon platform={d.platform} size={22} />
                   <div className="grow">
                     <div className="title">
                       {d.name}
@@ -355,7 +356,9 @@ function Devices() {
                         </span>
                       )}
                     </div>
-                    <div className="sub mono">{d.device_id}</div>
+                    <div className="sub">
+                      {platformLabel(d.platform)} · <span className="mono">{d.device_id}</span>
+                    </div>
                   </div>
                   <div className="end">
                     {d.revoked ? (

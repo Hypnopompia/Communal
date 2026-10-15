@@ -10,7 +10,7 @@ import { baseName, hubName, computerName } from '../format';
 import { useHubs, useNames } from '../hubs';
 import { useNav } from '../nav';
 import { useApi } from '../query';
-import { FolderIcon } from '../ui/icons';
+import { FolderIcon, PlatformIcon } from '../ui/icons';
 import { Dialog, Empty, ErrorNote, useAction } from '../ui/kit';
 import { remote, useRemoteComputers, type RemoteComputer } from '../ui/remote';
 import { VerifiedMark } from '../ui/VerifiedMark';
@@ -30,11 +30,17 @@ export function Subscriptions() {
           </p>
         </div>
       </div>
-      {computers.length > 0 && <h2>This computer</h2>}
+      {computers.length > 0 && (
+        <h2 className="device-head">
+          <PlatformIcon platform={window.communal.platform} size={20} />
+          This computer
+        </h2>
+      )}
       <LocalSubscriptions />
       {computers.map((c) => (
         <section key={c.device_id} style={{ display: 'grid', gap: 12 }}>
-          <h2>
+          <h2 className="device-head">
+            <PlatformIcon platform={c.platform} size={20} />
             {c.name}
             {c.state === 'offline' && (
               <span className="tag" style={{ marginLeft: 8 }}>
@@ -210,9 +216,13 @@ function SubRow({
     <div className="row" style={{ alignItems: 'flex-start' }}>
       <FolderIcon size={32} />
       <div className="grow" style={{ display: 'grid', gap: 6 }}>
-        <div className="title">{baseName(s.path)}</div>
+        <div className="title" title={s.path}>
+          {baseName(s.path)}
+        </div>
         <div className="sub">
-          From {d ? computerName(d.user, d.name) : 'another computer'}
+          From {d && <PlatformIcon platform={d.platform} size={13} />}
+          {d && ' '}
+          {d ? computerName(d.user, d.name) : 'another computer'}
           <VerifiedMark on={d && names.verified(d.user_id)} />
           {hubs.length > 1 && hub ? ` on ${hubName(hub)}` : ''}. Saved in {savedIn}
         </div>

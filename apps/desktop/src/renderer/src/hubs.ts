@@ -47,7 +47,10 @@ export function useNames() {
   });
   const users = new Map<string, string>();
   const verified = new Set<string>();
-  const devices = new Map<string, { name: string; user: string; user_id: string }>();
+  const devices = new Map<
+    string,
+    { name: string; user: string; user_id: string; platform: string | undefined }
+  >();
   // Hubs in the order you joined them: someone on several is named as on the first (ADR 0021).
   for (const q of people)
     for (const c of q.data?.connections ?? []) {
@@ -61,6 +64,7 @@ export function useNames() {
       name: d.device_name,
       user: d.user.display_name,
       user_id: d.user.user_id,
+      platform: d.platform,
     });
   }
   return {

@@ -204,10 +204,15 @@ export interface UploadLimits {
   lanOnly: boolean;
 }
 
+/** What kind of device it is (`Platform` in the protocol). */
+export type Platform = 'darwin' | 'win32' | 'linux' | 'android';
+
 export interface LibraryDevice {
   hub: string;
   device_id: string;
   device_name: string;
+  /** Missing from hubs before 0.1.9. */
+  platform?: Platform;
   user: Person;
   online: boolean;
   seen: Seen;

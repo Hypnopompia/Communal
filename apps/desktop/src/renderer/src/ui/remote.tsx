@@ -7,7 +7,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { api, type RemoteDevice, type RemoteTransfer } from '../api';
 import { size } from '../format';
-import { Progress, useAction } from './kit';
+import { platformLabel } from './icons';
+import { FileName, Progress, useAction } from './kit';
 
 /** Sends one request to another device of this account; resolves with its result. */
 export async function remote<T>(device: string, request: object): Promise<T> {
@@ -110,12 +111,18 @@ export function WhereField({
         {here && <option value="">This computer</option>}
         {targets.map((t) => (
           <option key={t.device_id} value={t.device_id}>
-            {t.name}
+            {withKind(t)}
           </option>
         ))}
       </select>
     </label>
   );
+}
+
+/** A device's name with its kind, for places that can only show text ("Den (Windows)"). */
+export function withKind(d: { name: string; platform: string }): string {
+  const kind = platformLabel(d.platform);
+  return d.name.toLowerCase().includes(kind.toLowerCase()) ? d.name : `${d.name} (${kind})`;
 }
 
 /** Another device's downloads, asked for every few seconds while shown. */
@@ -156,8 +163,11 @@ export function RemoteTransfers({ device }: { device: RemoteDevice }) {
                     : 'Cancelled';
         return (
           <div key={t.id} className="row" style={{ alignItems: 'flex-start' }}>
-            <div className="grow" style={{ display: 'grid', gap: 6 }}>
-              <div className="title">{t.name}</div>
+            <div
+              className="grow"
+              style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 6 }}
+            >
+              <FileName name={t.name} />
               <div className="sub" style={{ whiteSpace: 'normal' }}>
                 {sub}
                 {t.requested_by && ` · Started from ${t.requested_by}`}

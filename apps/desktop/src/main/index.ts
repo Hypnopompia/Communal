@@ -15,6 +15,7 @@ import {
   Menu,
   nativeImage,
   protocol,
+  screen,
   shell,
   Tray,
 } from 'electron';
@@ -24,6 +25,7 @@ import { CoreHost } from './host.js';
 import { PrefsFile } from './prefs.js';
 import { KeyStore, setAside } from './keys.js';
 import { Updater } from './updater.js';
+import { fitBounds, WindowStateFile } from './window-state.js';
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -221,12 +223,24 @@ function agentsState(host: CoreHost) {
   };
 }
 
+const MIN_SIZE = { width: 760, height: 520 };
+
 function createWindow() {
+  // Open where the window was left, moved onto a screen that's still there (see fitBounds).
+  const windowState = new WindowStateFile(app.getPath('userData'));
+  const saved = windowState.read();
+  const primary = screen.getPrimaryDisplay().workArea;
+  const bounds = saved
+    ? fitBounds(
+        saved.bounds,
+        [primary, ...screen.getAllDisplays().map((d) => d.workArea)],
+        MIN_SIZE,
+      )
+    : { width: 1200, height: 800 };
   win = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    minWidth: 760,
-    minHeight: 520,
+    ...bounds,
+    minWidth: MIN_SIZE.width,
+    minHeight: MIN_SIZE.height,
     title: 'Communal',
     show: false,
     backgroundColor: '#f7f6f3',
@@ -240,7 +254,25 @@ function createWindow() {
       additionalArguments: [`--communal-version=${app.getVersion()}`],
     },
   });
-  win.once('ready-to-show', () => win?.show());
+  win.once('ready-to-show', () => {
+    if (saved?.maximized) win?.maximize();
+    win?.show();
+  });
+  // Save as it changes (debounced), so a crash or a forced quit still remembers it.
+  let saveTimer: NodeJS.Timeout | undefined;
+  const save = () => {
+    clearTimeout(saveTimer);
+    if (!win || win.isDestroyed() || win.isMinimized() || win.isFullScreen()) return;
+    windowState.write({ bounds: win.getNormalBounds(), maximized: win.isMaximized() });
+  };
+  const saveSoon = () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(save, 500);
+  };
+  win.on('resize', saveSoon);
+  win.on('move', saveSoon);
+  win.on('maximize', saveSoon);
+  win.on('unmaximize', saveSoon);
   // The window never navigates away from the app; links open in the browser.
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -249,6 +281,7 @@ function createWindow() {
   });
   // Closing the window keeps sharing in the background; quit from the tray or app menu.
   win.on('close', (e) => {
+    save();
     if (quitting) return;
     e.preventDefault();
     win?.hide();

@@ -1,4 +1,4 @@
-import type { ClientBody, HubBody, Seen } from '@communal/protocol';
+import type { ClientBody, HubBody, Platform, Seen } from '@communal/protocol';
 import { rowToEntry, type Entry, type EntryRow, type HubDb } from './db.js';
 
 /**
@@ -201,6 +201,7 @@ export class Catalog {
   library(viewer: string): {
     device_id: string;
     device_name: string;
+    platform: Platform;
     user: { id: string; display_name: string; root_pubkey: string };
     online: boolean;
     seen: Seen;
@@ -208,7 +209,7 @@ export class Catalog {
     const t = this.clock();
     const candidates = this.db.raw
       .prepare(
-        `SELECT d.id, d.name, d.last_seen, u.id AS user_id, u.display_name, u.root_pubkey
+        `SELECT d.id, d.name, d.platform, d.last_seen, u.id AS user_id, u.display_name, u.root_pubkey
          FROM devices d JOIN users u ON u.id = d.user_id
          WHERE d.revoked_at IS NULL AND u.banned_at IS NULL AND (
            u.id = @viewer
@@ -223,6 +224,7 @@ export class Catalog {
       .all({ viewer }) as {
       id: string;
       name: string;
+      platform: Platform;
       last_seen: number | null;
       user_id: string;
       display_name: string;
@@ -235,6 +237,7 @@ export class Catalog {
         return {
           device_id: d.id,
           device_name: d.name,
+          platform: d.platform,
           user: { id: d.user_id, display_name: d.display_name, root_pubkey: d.root_pubkey },
           online,
           seen: online ? ('now' as const) : seenBucket(d.last_seen, t),

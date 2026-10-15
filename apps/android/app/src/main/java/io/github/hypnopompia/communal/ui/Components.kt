@@ -28,6 +28,9 @@ import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Computer
+import androidx.compose.material.icons.filled.DesktopWindows
+import androidx.compose.material.icons.filled.LaptopMac
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
@@ -68,6 +71,15 @@ private val thumbs = LruCache<String, ImageBitmap>(300)
 
 /** The built-in destination every computer has, unless it keeps it from other devices. */
 private const val DOWNLOADS = "Downloads"
+
+/** What kind of device it is (ADR 0023), as an icon; anything unknown is a plain computer. */
+fun platformIcon(platform: String?): ImageVector = when (platform) {
+    "darwin" -> Icons.Default.LaptopMac
+    "win32" -> Icons.Default.DesktopWindows
+    "linux" -> Icons.Default.Terminal
+    "android" -> Icons.Default.PhoneAndroid
+    else -> Icons.Default.Computer
+}
 
 fun kindIcon(kind: String): ImageVector = when (kind) {
     "image" -> Icons.Default.Image
@@ -185,7 +197,7 @@ fun ActionSheet(model: AppModel, target: Target, onClose: () -> Unit) {
                 for (label in dests) {
                     val dest = label?.takeIf { it != DOWNLOADS }
                     Option(
-                        Icons.Default.Computer,
+                        platformIcon(d.platform),
                         if (label == null) "Download to ${d.name}" else "Download to ${d.name}: $label",
                         if (usable && label != null) (if (label == DOWNLOADS) "Its downloads folder" else "Its $label folder") else why,
                         enabled = usable,

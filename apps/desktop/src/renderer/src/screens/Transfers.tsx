@@ -7,8 +7,8 @@ import { api, type Transfer } from '../api';
 import { ago, rate, size, computerName } from '../format';
 import { useNames } from '../hubs';
 import { useApi } from '../query';
-import { FileIcon, iconForName } from '../ui/icons';
-import { Empty, ErrorNote, Progress, useAction } from '../ui/kit';
+import { FileIcon, iconForName, PlatformIcon } from '../ui/icons';
+import { Empty, ErrorNote, FileName, Progress, useAction } from '../ui/kit';
 import { VerifiedMark } from '../ui/VerifiedMark';
 import { RemoteTransfers, useRemoteTargets } from '../ui/remote';
 
@@ -33,7 +33,10 @@ export function Transfers() {
           aria-label="Whose transfers"
           style={{ justifySelf: 'start' }}
         >
-          {[{ device_id: null, name: 'This computer' }, ...targets].map((t) => (
+          {[
+            { device_id: null, name: 'This computer', platform: window.communal.platform },
+            ...targets,
+          ].map((t) => (
             <button
               key={t.device_id ?? 'here'}
               role="tab"
@@ -41,6 +44,7 @@ export function Transfers() {
               aria-selected={(device?.device_id ?? null) === t.device_id}
               onClick={() => setOn(t.device_id)}
             >
+              <PlatformIcon platform={t.platform} size={14} />
               {t.name}
             </button>
           ))}
@@ -133,8 +137,11 @@ function TransferRow({ t, onCancel }: { t: Transfer; onCancel?: () => void }) {
   return (
     <div className="row" style={{ alignItems: 'flex-start' }}>
       <FileIcon icon={iconForName(t.name)} size={32} />
-      <div className="grow" style={{ display: 'grid', gap: 6 }}>
-        <div className="title">{t.name}</div>
+      <div
+        className="grow"
+        style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 6 }}
+      >
+        <FileName name={t.name} />
         <div className="sub" style={{ whiteSpace: 'normal' }}>
           {sub}
           {t.requested_by && ` · Started from ${t.requested_by}`}
@@ -149,6 +156,7 @@ function TransferRow({ t, onCancel }: { t: Transfer; onCancel?: () => void }) {
               const d = names.device(s.device_id);
               return (
                 <span key={s.device_id}>
+                  {d && <PlatformIcon platform={d.platform} size={13} />}{' '}
                   {d ? computerName(d.user, d.name) : 'A computer'}
                   <VerifiedMark on={d && names.verified(d.user_id)} />: {rate(s.rate)}
                 </span>

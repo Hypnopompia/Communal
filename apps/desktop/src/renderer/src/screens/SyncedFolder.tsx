@@ -7,7 +7,7 @@ import { api, type SyncFolderState } from '../api';
 import { plural } from '../format';
 import { useNames } from '../hubs';
 import { useApi } from '../query';
-import { FolderIcon } from '../ui/icons';
+import { FolderIcon, PlatformIcon } from '../ui/icons';
 import { Dialog, ErrorNote, useAction } from '../ui/kit';
 
 export function SyncedFolderPanel() {
@@ -87,7 +87,7 @@ function Peers({ state }: { state: SyncFolderState }) {
                   : null;
         return (
           <span key={d.device_id} className="small">
-            <b>{name}</b>
+            <PlatformIcon platform={names.device(d.device_id)?.platform} size={13} /> <b>{name}</b>
             {note && <span className="muted"> ({note})</span>}
           </span>
         );

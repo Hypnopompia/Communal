@@ -200,7 +200,9 @@ describe('access matrix (HANDOFF §6)', () => {
 });
 
 describe('access control: library', () => {
-  type Listing = { devices: { device_id: string; user: { user_id: string }; online: boolean }[] };
+  type Listing = {
+    devices: { device_id: string; platform: string; user: { user_id: string }; online: boolean }[];
+  };
   const devices = async (c: Client) =>
     body<Listing>(await c.request('library', {}))
       .devices.map((d) => d.device_id)
@@ -216,6 +218,11 @@ describe('access control: library', () => {
         .sort(),
     );
     expect(laptop.devices.every((d) => d.user.user_id === w.alice.userId)).toBe(true);
+    // Each says what kind of device it is, for the desktop's icons.
+    for (const d of laptop.devices)
+      expect(d.platform).toBe(
+        t.db.listDevices(w.alice.userId).find((x) => x.id === d.device_id)?.platform,
+      );
     // Everyone else sees alice's device (it shares with the hub), but not her empty laptop, and
     // not each other's devices: they share nothing.
     for (const p of [w.bob, w.dave, w.carol, w.erin])

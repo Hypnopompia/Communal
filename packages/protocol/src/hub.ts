@@ -399,6 +399,8 @@ export const hubBodies = {
         z.object({
           device_id: DeviceId,
           device_name: DeviceName,
+          /** What kind of computer or phone it is, for an icon. Hubs before 0.1.9 leave it out. */
+          platform: Platform.optional(),
           user: UserSummary,
           online: z.boolean(),
           seen: Seen,

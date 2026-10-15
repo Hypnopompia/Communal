@@ -67,6 +67,55 @@ export function Mark({ size = 22 }: { size?: number }) {
 }
 
 /**
+ * What kind of device something is (ADR 0023: Mac, Windows, Linux or Android), drawn as line
+ * marks in the same style as the other icons. Anything else gets the plain computer.
+ */
+const PLATFORM_PATHS: Record<string, string> = {
+  darwin:
+    'M10 6.6c-.9-.7-2-1-3-.8-1.9.4-3 2.2-2.8 4.5.3 3 2 6.2 3.7 6.2.9 0 1.2-.5 2.1-.5s1.2.5 2.1.5c1.7 0 3.4-3.2 3.7-6.2.2-2.3-.9-4.1-2.8-4.5-1-.2-2.1.1-3 .8zM10.2 5.6c.1-1.5 1-2.6 2.5-3-.1 1.5-1 2.6-2.5 3z',
+  win32:
+    'M3.5 3.5h5.3v5.3H3.5zM11.2 3.5h5.3v5.3h-5.3zM3.5 11.2h5.3v5.3H3.5zM11.2 11.2h5.3v5.3h-5.3z',
+  linux:
+    'M10 2.5c-1.9 0-3 1.5-3 3.6 0 1.3-.4 2.1-1.2 3.3-1 1.5-1.8 3-1.5 4.6.3 1.6 2 2.5 5.7 2.5s5.4-.9 5.7-2.5c.3-1.6-.5-3.1-1.5-4.6-.8-1.2-1.2-2-1.2-3.3 0-2.1-1.1-3.6-3-3.6zM10 9.5c-1.6 0-2.5 1.7-2.5 3.5s.9 2.9 2.5 2.9 2.5-1.1 2.5-2.9-.9-3.5-2.5-3.5zM8.9 5.4v.4M11.1 5.4v.4M9.2 7.2h1.6L10 8z',
+  android: 'M4 14.5a6 6 0 0 1 12 0zM6.6 9.4 5 6.8M13.4 9.4 15 6.8M7.9 12v.1M12.1 12v.1',
+};
+
+export function platformLabel(platform: string | undefined): string {
+  return platform === 'darwin'
+    ? 'Mac'
+    : platform === 'win32'
+      ? 'Windows'
+      : platform === 'linux'
+        ? 'Linux'
+        : platform === 'android'
+          ? 'Android'
+          : 'Computer';
+}
+
+/** A device's kind as an icon, with its name ("Mac") as the tooltip and accessible label. */
+export function PlatformIcon({ platform, size = 18 }: { platform?: string; size?: number }) {
+  const label = platformLabel(platform);
+  return (
+    <svg
+      className="platform-icon"
+      width={size}
+      height={size}
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      role="img"
+      aria-label={label}
+    >
+      <title>{label}</title>
+      <path d={PLATFORM_PATHS[platform ?? ''] ?? paths.device} />
+    </svg>
+  );
+}
+
+/**
  * File icons by the core's icon id (`iconFor()`): a page with a coloured band and a short,
  * readable label, so "PDF" or "ZIP" says what the file is without any guessing.
  */

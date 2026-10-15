@@ -195,7 +195,16 @@ export const hubFixtures: { [T in HubType]: HubBody<T> } = {
   'library.changed': {},
   'sources.list': { hash, sources: [source] },
   'library.listing': {
-    devices: [{ device_id: did2, device_name: 'bob-laptop', user, online: false, seen: 'week' }],
+    devices: [
+      {
+        device_id: did2,
+        device_name: 'bob-laptop',
+        platform: 'darwin',
+        user,
+        online: false,
+        seen: 'week',
+      },
+    ],
   },
   'watch.event': { device_id: did2, path: 'Photos/', rev: 9, added: [entry], removed: [] },
   presence: { device_id: did2, user_id: uid2, online: false },

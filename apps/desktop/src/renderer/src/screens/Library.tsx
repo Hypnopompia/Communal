@@ -25,8 +25,8 @@ import {
   useThumbs,
   type FileLike,
 } from '../ui/files';
-import { FolderIcon, Icon } from '../ui/icons';
-import { Empty, ErrorNote } from '../ui/kit';
+import { FolderIcon, Icon, PlatformIcon, platformLabel } from '../ui/icons';
+import { Empty, ErrorNote, FileName } from '../ui/kit';
 
 type View = 'grid' | 'list';
 const VIEW_KEY = 'library.view';
@@ -144,7 +144,7 @@ function People({ devices, error }: { devices: LibraryDevice[] | undefined; erro
                   e.key === 'Enter' && go({ screen: 'library', hub: d.hub, device: d.device_id })
                 }
               >
-                <Icon name="device" size={22} />
+                <PlatformIcon platform={d.platform} size={22} />
                 <div className="grow">
                   <div className="title">{d.device_name}</div>
                 </div>
@@ -225,9 +225,17 @@ function Browse({
             {device ? computerName(device.user.display_name, device.device_name) : 'Computer'}
             <VerifiedMark on={device?.user.verified} />
           </h1>
-          <span className={`status${online ? ' on' : ''}`}>
-            {device ? seenLabel(online ? 'now' : device.seen) : online ? 'Online' : 'Offline'}
-          </span>
+          <div className="device-kind">
+            {device && (
+              <>
+                <PlatformIcon platform={device.platform} size={15} />
+                {platformLabel(device.platform)}
+              </>
+            )}
+            <span className={`status${online ? ' on' : ''}`}>
+              {device ? seenLabel(online ? 'now' : device.seen) : online ? 'Online' : 'Offline'}
+            </span>
+          </div>
         </div>
         <div className="actions">
           {device && !mine && (
@@ -320,7 +328,9 @@ function Browse({
           {listing.data?.dirs.map((d) => (
             <div key={d.name} className="row clickable" onClick={() => open(`${path}${d.name}/`)}>
               <FolderIcon size={30} />
-              <div className="grow title">{d.name}</div>
+              <div className="grow title" title={d.name}>
+                {d.name}
+              </div>
             </div>
           ))}
           {files.map((f) => {
@@ -331,7 +341,7 @@ function Browse({
                   <FileArt file={f} hasThumb={thumb} iconSize={30} />
                 </div>
                 <div className="grow">
-                  <div className="title">{f.name}</div>
+                  <FileName name={f.name} />
                   <div className="sub">{describe(f.kind, f.meta, f.size)}</div>
                 </div>
                 <div className="end">

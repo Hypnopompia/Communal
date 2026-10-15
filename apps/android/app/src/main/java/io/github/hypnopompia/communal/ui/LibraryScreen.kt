@@ -10,7 +10,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -113,7 +112,7 @@ private fun DeviceRow(d: LibraryDevice, onOpen: (Place) -> Unit) {
     ListItem(
         headlineContent = { Text(d.device_name) },
         supportingContent = { Text(seenLabel(d.seen)) },
-        leadingContent = { Icon(Icons.Default.Computer, null, tint = if (d.online) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.outline) },
+        leadingContent = { Icon(platformIcon(d.platform), null, tint = if (d.online) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.outline) },
         modifier = Modifier.clickableRow { onOpen(Place(d.hub, d.device_id, d.device_name)) },
     )
 }

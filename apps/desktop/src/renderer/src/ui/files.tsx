@@ -23,7 +23,7 @@ import {
 import { baseName, date, duration, plural, size } from '../format';
 import { useApi } from '../query';
 import { Dialog, ErrorNote, useAction, useConfirm } from './kit';
-import { FileIcon, FolderIcon, Icon } from './icons';
+import { FileIcon, FolderIcon, Icon, PlatformIcon } from './icons';
 
 /**
  * Fetches a batch of thumbnails from one device into the core's cache (one peer request for a
@@ -302,6 +302,7 @@ export function DownloadButton({
                       onRemote!(d);
                     }}
                   >
+                    <PlatformIcon platform={d.platform} size={14} />
                     Download on {d.name}
                   </button>,
                 ]
@@ -314,6 +315,7 @@ export function DownloadButton({
                       onRemote!(d, dest === 'Downloads' ? undefined : dest);
                     }}
                   >
+                    <PlatformIcon platform={d.platform} size={14} />
                     On {d.name}: {dest}
                   </button>
                 )),

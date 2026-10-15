@@ -57,6 +57,8 @@ data class LibraryDevice(
     val hub: String,
     val device_id: String,
     val device_name: String,
+    /** darwin, win32, linux or android; hubs before 0.1.9 leave it out. */
+    val platform: String? = null,
     val user: Person,
     val online: Boolean,
     val seen: String,

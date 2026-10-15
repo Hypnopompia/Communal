@@ -348,6 +348,9 @@ textarea.input {
   gap: 2px;
 }
 .segmented button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border: 0;
   background: none;
   padding: 4px 11px;
@@ -396,6 +399,8 @@ textarea.input {
 
 .rows {
   display: grid;
+  /* An auto column would grow to fit a long nowrap name and push the row's end off the panel. */
+  grid-template-columns: minmax(0, 1fr);
 }
 .row {
   display: flex;
@@ -424,6 +429,22 @@ textarea.input {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* FileName: the head gives way with an ellipsis, the tail (the extension) always shows. */
+.name-cut {
+  display: flex;
+  min-width: 0;
+}
+.name-cut > span {
+  white-space: pre;
+}
+.name-cut .name-head {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.name-cut .name-tail {
+  flex-shrink: 0;
+}
 .row.clickable {
   cursor: pointer;
 }
@@ -435,6 +456,29 @@ textarea.input {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+
+.device-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* Inline in a line of text, the icon sits on the text's middle. */
+.sub .platform-icon,
+.small .platform-icon,
+p .platform-icon {
+  vertical-align: -2px;
+}
+
+.device-kind {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.device-kind .status {
+  margin-left: 6px;
 }
 
 .muted {
@@ -625,6 +669,8 @@ textarea.input {
   text-align: left;
   cursor: pointer;
   min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
 }
 .tile:hover,
 .tile[aria-selected='true'] {
@@ -647,9 +693,13 @@ textarea.input {
 .tile .name {
   font-size: 14px;
   font-weight: 600;
+  /* Two lines, broken anywhere (release names have no spaces); the tile's tooltip has it all. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .tile .meta {
   font-size: 12px;
@@ -707,6 +757,10 @@ textarea.input {
   box-shadow: var(--shadow-pop);
 }
 .menu button {
+  display: flex;
+  white-space: nowrap;
+  align-items: center;
+  gap: 8px;
   text-align: left;
   padding: 7px 10px;
   border: 0;
@@ -744,6 +798,12 @@ textarea.input {
   padding: 24px;
   display: grid;
   gap: 16px;
+}
+.dialog > * {
+  min-width: 0;
+}
+.dialog h2 {
+  overflow-wrap: anywhere;
 }
 .dialog.wide {
   width: min(900px, 100%);

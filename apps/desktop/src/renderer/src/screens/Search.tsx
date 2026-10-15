@@ -18,7 +18,7 @@ import {
   type FileLike,
 } from '../ui/files';
 import { Icon } from '../ui/icons';
-import { Empty, ErrorNote } from '../ui/kit';
+import { Empty, ErrorNote, FileName } from '../ui/kit';
 import { useRemoteDownload } from '../ui/remote';
 import { VerifiedMark } from '../ui/VerifiedMark';
 
@@ -245,7 +245,7 @@ function HitRow({ hit }: { hit: Hit }) {
         <FileArt file={file} hasThumb={hasThumb(hit.hash)} iconSize={34} />
       </div>
       <div className="grow">
-        <div className="title">{hit.name}</div>
+        <FileName name={hit.name} />
         <div className="sub">
           {describe(hit.kind, hit.meta, hit.size)}. From{' '}
           {owners.slice(0, 3).map((o, i) => (

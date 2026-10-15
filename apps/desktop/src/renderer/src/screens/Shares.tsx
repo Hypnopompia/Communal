@@ -19,7 +19,7 @@ import { effective } from '../access';
 import { useHubs, useStatus } from '../hubs';
 import { useApi } from '../query';
 import { FileIcon, FolderIcon, Icon } from '../ui/icons';
-import { Dialog, Empty, ErrorNote, Progress, useAction } from '../ui/kit';
+import { Dialog, Empty, ErrorNote, FileName, Progress, useAction } from '../ui/kit';
 import { VerifiedMark } from '../ui/VerifiedMark';
 import { SyncedFolderPanel } from './SyncedFolder';
 
@@ -461,7 +461,7 @@ function InsideDialog({
       >
         {folder ? <FolderIcon size={28} /> : <FileIcon icon={icon ?? 'file'} size={28} />}
         <div className="grow">
-          <div className="title">{name}</div>
+          <FileName name={name} />
           <div className="sub">
             <AudienceGlyph audience={e.audience} /> {label(e.audience)}
             {inherited && e.from && <span className="faint"> (same as {baseName(e.from)})</span>}

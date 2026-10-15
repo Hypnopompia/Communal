@@ -17,7 +17,7 @@ import { ago, date, hubName, plural, size } from '../format';
 import { useHubs, useStatus } from '../hubs';
 import { useNav, type ManageTab } from '../nav';
 import { useApi } from '../query';
-import { Icon } from '../ui/icons';
+import { Icon, PlatformIcon, platformLabel } from '../ui/icons';
 import { Dialog, Empty, ErrorNote, useAction } from '../ui/kit';
 import { VerifiedMark } from '../ui/VerifiedMark';
 import { layoutGraph } from '../graph-layout';
@@ -303,17 +303,11 @@ function PersonDetails({ u }: { u: AdminUser }) {
       <div className="rows">
         {u.devices.map((d) => (
           <div key={d.device_id} className="row" style={{ padding: '8px 0' }}>
-            <Icon name="device" size={18} />
+            <PlatformIcon platform={d.platform} size={18} />
             <div className="grow" style={{ minWidth: 0 }}>
               <div className="title">{d.name}</div>
               <div className="sub">
-                {d.platform === 'darwin'
-                  ? 'Mac'
-                  : d.platform === 'win32'
-                    ? 'Windows'
-                    : d.platform === 'android'
-                      ? 'Android'
-                      : 'Linux'}
+                {platformLabel(d.platform)}
                 {' · '}
                 {d.files > 0 ? `${plural(d.files, 'file')}, ${size(d.bytes)}` : 'shares nothing'}
                 {d.nat

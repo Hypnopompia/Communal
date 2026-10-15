@@ -7,7 +7,7 @@ import { api, qs, type UploadLogRow } from '../api';
 import { ago, size } from '../format';
 import { useNames } from '../hubs';
 import { useApi } from '../query';
-import { Dialog, Empty, ErrorNote, useAction } from '../ui/kit';
+import { Dialog, Empty, ErrorNote, FileName, useAction } from '../ui/kit';
 import { VerifiedMark } from '../ui/VerifiedMark';
 
 const STATUS: Record<UploadLogRow['status'], string> = {
@@ -85,7 +85,7 @@ export function Activity() {
           {rows.map((r) => (
             <div key={r.id} className="row">
               <div className="grow">
-                <div className="title">{r.path}</div>
+                <FileName name={r.path} />
                 <div className="sub">
                   {names.user(r.requester_user)}
                   <VerifiedMark on={names.verified(r.requester_user)} />
