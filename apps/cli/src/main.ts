@@ -250,6 +250,15 @@ function humanSize(n: number): string {
   return `${n.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
+// A reader that stops early (`communal status | head -1`) closes our stdout: exit quietly, as
+// other Unix tools do, rather than crash on the write.
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EPIPE') process.exit(0);
+    throw err;
+  });
+}
+
 const program = new Command()
   .name('communal')
   .description('Communal headless client')
